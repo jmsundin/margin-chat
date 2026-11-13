@@ -380,8 +380,8 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
             onChange={(next) => changeIn(sheet.step.roadmapId, next)}
             onToggleSub={() => toggleSub(sheet.step)} onEnter={() => enter(sheet.step)} onOpen={onOpen}
             onRelink={() => setRelinking(sheet.step)} renderDocument={renderDocument}
-            onExplain={onExplain ? (context) => { const error = onExplain(sheetNode.target.docId, context, sheet.step.roadmapId === conversation.id ? undefined : sheet.step.roadmapId); setMessage(error); return !error; } : undefined}
-            onDiveDeeper={onDiveDeeper ? () => { const error = onDiveDeeper(sheetNode.target.docId, sheet.step.roadmapId === conversation.id ? undefined : sheet.step.roadmapId); setMessage(error); return !error; } : undefined} /> : null}
+            onExplain={onExplain ? (context) => { const busy = Boolean(writingIds?.[sheetNode.target.docId]); const error = onExplain(sheetNode.target.docId, context, sheet.step.roadmapId === conversation.id ? undefined : sheet.step.roadmapId); setMessage(error); if (!error && busy) setToast("Explain starts when AI finishes writing here"); return !error; } : undefined}
+            onDiveDeeper={onDiveDeeper ? () => { const busy = Boolean(writingIds?.[sheetNode.target.docId]); const error = onDiveDeeper(sheetNode.target.docId, sheet.step.roadmapId === conversation.id ? undefined : sheet.step.roadmapId); setMessage(error); if (!error && busy) setToast("Dive deeper starts when AI finishes writing here"); return !error; } : undefined} /> : null}
         </div>
       </aside> : null}
       {toast ? <p className="roadmap-toast" role="status" style={{ bottom: 64 + cover.bottom }}>{toast}</p> : null}
@@ -523,33 +523,79 @@ function StepSheet({ node, graph, owner, conversations, pending, writing, order,
     </span>)}
   </div> : null;
 
+  // One row: status, where it sits, Previous and Next, and everything else in a menu, so the document gets the space.
+  const [menu, setMenu] = useState<"status" | "more" | null>(null);
+  const stripRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!menu) return;
+    const close = (event: PointerEvent) => { if (!stripRef.current?.contains(event.target as Node)) setMenu(null); };
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); setMenu(null); } };
+    window.addEventListener("pointerdown", close);
+    window.addEventListener("keydown", key);
+    return () => { window.removeEventListener("pointerdown", close); window.removeEventListener("keydown", key); };
+  }, [menu]);
+  const pick = (action: () => void) => () => { setMenu(null); action(); };
+  const linkItems = (ids: string[], label: string) => ids.length ? <>
+    <p className="roadmap-strip-menu-label">{label}</p>
+    {ids.map((id) => <button key={id} type="button" role="menuitem" onClick={pick(() => onGo(id))}>
+      <StatusMark status={roadmapStatus(graph.nodesById.get(id)!)} /><span>{titleOf(id)}</span>
+    </button>)}
+  </> : null;
+  const where = `${stage?.title ?? "Unstaged"} · ${owner.title || "Untitled roadmap"}`;
+  const chevron = <svg className="roadmap-strip-chevron" viewBox="0 0 10 10" aria-hidden="true"><path d="M2.5 4l2.5 2.5L7.5 4" /></svg>;
+
   return <>
-    <div className="roadmap-strip">
+    <div className="roadmap-strip" ref={stripRef}>
       <div className="roadmap-strip-row">
-        <p className="roadmap-strip-where">{stage?.title ?? "Unstaged"} · {owner.title || "Untitled roadmap"}</p>
-        <button type="button" disabled={index <= 0} onClick={() => onGo(order[index - 1])} title={index > 0 ? `Previous: ${titleOf(order[index - 1])}` : undefined}>← Prev</button>
-        <button type="button" disabled={index < 0 || index >= order.length - 1} onClick={() => onGo(order[index + 1])} title={index >= 0 && index < order.length - 1 ? `Next: ${titleOf(order[index + 1])}` : undefined}>Next →</button>
+        {missing || pending ? null : <div className="roadmap-strip-pop">
+          <button type="button" className={`roadmap-strip-status is-${status}`} aria-haspopup="menu" aria-expanded={menu === "status"}
+            aria-label={`Status: ${ROADMAP_STATUS_LABELS[status]}. Change`} onClick={() => setMenu(menu === "status" ? null : "status")}>
+            <StatusMark status={status} /><span>{ROADMAP_STATUS_LABELS[status]}</span>{chevron}
+          </button>
+          {menu === "status" ? <div className="roadmap-strip-menu" role="menu" aria-label="Status">
+            {STATUSES.map((item: RoadmapStatus) => <button key={item} type="button" role="menuitemradio" aria-checked={status === item}
+              onClick={pick(() => onChange({ kind: "status", nodeId: node.id, status: item }))}>
+              <StatusMark status={item} /><span>{ROADMAP_STATUS_LABELS[item]}</span>
+            </button>)}
+          </div> : null}
+        </div>}
+        {writing ? <span className="roadmap-strip-writing" role="status" title="AI is writing in this step's document"><span aria-hidden="true" />Writing</span> : null}
+        <p className="roadmap-strip-where" title={where}>{where}</p>
+        <button type="button" className="roadmap-strip-icon" disabled={index <= 0} onClick={() => onGo(order[index - 1])}
+          aria-label="Previous step" title={index > 0 ? `Previous: ${titleOf(order[index - 1])}` : undefined}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3.5 5.5 8l4.5 4.5" /></svg>
+        </button>
+        <button type="button" className="roadmap-strip-icon" disabled={index < 0 || index >= order.length - 1} onClick={() => onGo(order[index + 1])}
+          aria-label="Next step" title={index >= 0 && index < order.length - 1 ? `Next: ${titleOf(order[index + 1])}` : undefined}>
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" /></svg>
+        </button>
+        <div className="roadmap-strip-pop">
+          <button type="button" className="roadmap-strip-icon" aria-haspopup="menu" aria-expanded={menu === "more"} aria-label="More for this step"
+            title="What it needs and unlocks, AI and settings" onClick={() => setMenu(menu === "more" ? null : "more")}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="3.5" cy="8" r=".9" /><circle cx="8" cy="8" r=".9" /><circle cx="12.5" cy="8" r=".9" /></svg>
+          </button>
+          {menu === "more" ? <div className="roadmap-strip-menu is-end" role="menu" aria-label="This step">
+            {linkItems(needs, "Needs first")}
+            {linkItems(unlocks, "Unlocks")}
+            {missing || pending ? null : <>
+              {needs.length || unlocks.length ? <hr /> : null}
+              {sub ? <>
+                <button type="button" role="menuitem" onClick={pick(onToggleSub)}>{subOpen ? "Hide its roadmap" : `Show its roadmap (${subSteps} ${subSteps === 1 ? "step" : "steps"})`}</button>
+                <button type="button" role="menuitem" onClick={pick(onEnter)}>Go into its roadmap <span aria-hidden="true">↘</span></button>
+              </> : null}
+              {onDiveDeeper && !node.target.blockId ? <button type="button" role="menuitem"
+                title={writing ? "Starts as soon as AI finishes writing in this step's document" : "AI breaks this topic into its own roadmap, inside the step's document, for you to approve"}
+                onClick={pick(() => { onDiveDeeper(); })}>{sub ? "Dive deeper again" : "Dive deeper"}</button> : null}
+              {onExplain && !node.target.blockId ? <button type="button" role="menuitem"
+                title={writing ? "Starts as soon as AI finishes writing in this step's document" : "AI writes an explanation of this topic into the step's document"}
+                onClick={pick(() => { onExplain(context()); })}>Explain with AI</button> : null}
+              <button type="button" role="menuitem" onClick={pick(() => setSettings(!settings))}>{settings ? "Hide step settings" : "Step settings"}</button>
+            </>}
+          </div> : null}
+        </div>
       </div>
-      {missing || pending ? null : <div className="roadmap-status-picker" role="radiogroup" aria-label="Status">
-        {STATUSES.map((item: RoadmapStatus) => <button key={item} type="button" role="radio" aria-checked={status === item}
-          className={`is-${item}`} onClick={() => onChange({ kind: "status", nodeId: node.id, status: item })}>
-          <StatusMark status={item} />{ROADMAP_STATUS_LABELS[item]}
-        </button>)}
-      </div>}
-      {chips(needs, "Needs first", settings)}
-      {chips(unlocks, "Unlocks", false)}
-      {missing || pending ? null : <div className="roadmap-strip-actions">
-        {sub ? <>
-          <button type="button" aria-expanded={subOpen} onClick={onToggleSub}>{subOpen ? "Hide its roadmap" : `Show its roadmap (${subSteps} ${subSteps === 1 ? "step" : "steps"})`}</button>
-          <button type="button" onClick={onEnter}>Go into its roadmap <span aria-hidden="true">↘</span></button>
-        </> : onDiveDeeper && !node.target.blockId ? <button type="button" disabled={writing} title="AI breaks this topic into its own roadmap, inside the step's document, for you to approve"
-          onClick={() => onDiveDeeper()}>Dive deeper</button> : null}
-        {onExplain && !node.target.blockId ? <button type="button" disabled={writing} title="AI writes an explanation of this topic into the step's document"
-          onClick={() => onExplain(context())}>Explain with AI</button> : null}
-        <button type="button" aria-expanded={settings} onClick={() => setSettings(!settings)}>Step settings</button>
-      </div>}
-      {writing ? <p className="roadmap-sheet-muted" role="status">AI is writing in this step's document…</p> : null}
       {settings && !missing && !pending ? <div className="roadmap-strip-settings">
+        {needs.length ? <div className="roadmap-strip-settings-wide">{chips(needs, "Needs first", true)}</div> : null}
         <label>
           <span>Name on the roadmap</span>
           <input defaultValue={node.title ?? ""} placeholder={target?.title || "Untitled document"} maxLength={200} key={node.title ?? ""}

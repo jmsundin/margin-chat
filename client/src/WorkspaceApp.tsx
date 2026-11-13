@@ -884,6 +884,17 @@ function WorkspaceAppContent({
     return tab === "account" || tab === "billing" || tab === "api-keys" || tab === "agents" || tab === "appearance" || tab === "voice" || tab === "storage" ? tab : null;
   });
   const previousPendingChats = useRef(pendingConversationIds);
+  /** Roadmap Explain and Dive deeper asks waiting for AI to finish writing in their step's document. */
+  const roadmapAIQueueRef = useRef(new Map<string, () => string | null>());
+  useEffect(() => {
+    for (const [key, run] of [...roadmapAIQueueRef.current]) {
+      const docId = key.slice(0, key.lastIndexOf(":"));
+      if (pendingConversationIds[docId] || chatExecutions.has(docId)) continue;
+      roadmapAIQueueRef.current.delete(key);
+      run();
+      break;
+    }
+  }, [pendingConversationIds, chatExecutions]);
   const refreshBillingAfterChat = useEffectEvent(() => { void onRefreshBilling(); });
   useEffect(() => {
     const completed = Object.keys(previousPendingChats.current).some((id) => !pendingConversationIds[id]);
@@ -5524,15 +5535,18 @@ function WorkspaceAppContent({
     if (!conversation) return "Open this step's document first, then try again.";
     if (isHiddenFromAI(conversation)) return HIDDEN_FROM_AI_MESSAGE;
     if (action === "deeper" && !supportsAgentMode(conversation.serviceId)) return "Diving deeper needs Agent mode. Open the step's document, choose a model that supports it in Ask AI, then try again.";
-    if (chatExecutions.has(docId)) return "AI is still writing in that document. Try again when it finishes.";
+    // Never locked: while AI is still writing in the document, the ask waits its turn and starts when that answer ends.
+    if (chatExecutions.has(docId) || pendingConversationIds[docId]) {
+      roadmapAIQueueRef.current.set(`${docId}:${action}`, () => handleRoadmapStepAI(roadmapId, docId, action, context));
+      return null;
+    }
     const last = getEditableDocument(conversation).blocks.at(-1);
     if (!last) return "That document can't take an AI reply yet. Open it and type something, then try again.";
     const topic = conversation.title || "this topic";
     handleDocumentSubmit(docId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", background: true,
       ...(action === "deeper" ? { agent: true as const } : {}),
       prompt: action === "deeper" ? roadmapDiveDeeperPrompt(topic, roadmapDocument?.title ?? "") : roadmapExplainPrompt(topic, roadmapDocument?.title ?? "", context) });
-    // The sub-roadmap is proposed under the answer in the step's document, so that is where to look.
-    if (action === "deeper") handleNavigateDocumentConnector({ conversationId: docId });
+    // The sub-roadmap is proposed under the answer in the step's document, which is open beside the roadmap.
     return null;
   }
 
