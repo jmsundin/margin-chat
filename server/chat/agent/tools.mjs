@@ -132,6 +132,11 @@ export function createAgentToolExecutor({ chatRequest, workspace = null, signal,
     } else if (vaultTools?.has(name)) {
       result = await vaultTools.run(name, args);
     } else result = { ok: false, error: "Unknown workspace tool." };
+    // A list that doesn't fit what's left is shortened to its best entries rather than refused outright.
+    const list = ["results", "matches", "conversations", "related"].find((key) => Array.isArray(result?.[key]));
+    while (list && result[list].length > 1 && JSON.stringify(result).length > remainingCharacters) {
+      result = { ...result, [list]: result[list].slice(0, -1), truncated: true };
+    }
     const size = JSON.stringify(result).length;
     if (size > remainingCharacters) return { ok: false, truncated: true, error: "The context budget for workspace tools is exhausted. Answer from the supplied context and disclose any missing information." };
     remainingCharacters -= size;

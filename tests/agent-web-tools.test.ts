@@ -134,3 +134,16 @@ describe("read_webpage", () => {
     expect(result.agent.steps).toEqual([{ kind: "tool", tool: "read_webpage", label: "Read “How urban trees cool streets”", detail: "example.org", ok: true }]);
   });
 });
+
+describe("the room workspace tools share", () => {
+  test("a list too long for what's left is shortened to its first entries instead of refused", async () => {
+    const note = (index: number) => ({ id: `note-${index}`, kind: "note", title: `Pricing note ${index} ${"x".repeat(900)}`, parentId: null, updatedAt: "2026-11-01T00:00:00.000Z", messages: [] });
+    const run = createAgentToolExecutor({ chatRequest: { ai: { mode: "fast", contextScope: "workspace", selectedConversationIds: [] }, workspaceContext: Array.from({ length: 6 }, (_, index) => note(index)),
+      conversation: { id: "chat", ancestorContext: [] }, messages: [{ role: "user", content: "pricing?" }] } });
+    const first: any = await run("search_conversations", { query: "pricing" });
+    expect(first.matches.length).toBe(5);
+    expect(first.truncated).toBe(true);
+    const second: any = await run("search_conversations", { query: "pricing" });
+    expect(second).toMatchObject({ ok: false, truncated: true });
+  });
+});
