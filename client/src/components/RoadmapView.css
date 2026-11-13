@@ -122,6 +122,21 @@ span.roadmap-node-mark { cursor: default; font-size: .8rem; }
   .roadmap-picker-card { border-radius: 14px 14px 0 0; max-width: none; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
 }
 .roadmap-node.is-pending { opacity: .65; }
+.roadmap-build { background: var(--panel-strong, var(--bg)); border: 1px solid var(--line-strong); border-radius: 12px; display: flex; flex-direction: column; gap: 10px; padding: 12px 14px; }
+.roadmap-build.is-live { border-color: var(--accent); }
+.roadmap-build-head { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; }
+.roadmap-build-head strong { flex: 1 1 auto; font-size: .84rem; }
+.roadmap-build-count { color: var(--muted); font-size: .74rem; }
+.roadmap-build-head button { background: transparent; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); cursor: pointer; font-size: .76rem; min-height: 32px; padding: 4px 12px; }
+.roadmap-build-head button.is-primary { background: var(--accent-soft); border-color: var(--accent); }
+.roadmap-build-stages { display: flex; flex-direction: column; gap: 10px; max-height: min(46vh, 420px); overflow-y: auto; overscroll-behavior: contain; }
+.roadmap-build-stage h3 { font-size: .8rem; font-weight: 600; margin: 0 0 6px; }
+.roadmap-build-steps { display: flex; flex-wrap: wrap; gap: 6px; }
+.roadmap-build-step { animation: roadmap-build-in .25s ease-out; background: var(--bg); border: 1px solid var(--line-strong); border-radius: 8px; font-size: .76rem; padding: 4px 9px; }
+.roadmap-build-step.is-writing { animation: roadmap-build-pulse 1s ease-in-out infinite; border-style: dashed; color: var(--muted); }
+@keyframes roadmap-build-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes roadmap-build-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .roadmap-build-step, .roadmap-build-step.is-writing { animation: none; } }
 .roadmap-draft { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
 .roadmap-draft input { background: var(--input-bg, transparent); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); flex: 1 1 220px; font-size: .8rem; min-height: 34px; min-width: 0; padding: 4px 10px; }
 .roadmap-draft button { background: transparent; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); cursor: pointer; font-size: .76rem; min-height: 34px; padding: 4px 12px; }

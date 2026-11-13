@@ -121,3 +121,47 @@ describe("roadmap steps that make new documents", () => {
     expect(applyRoadmapDraft(state, proposal, roadmapDraftIds(proposal), { updatedAt: at })).toMatchObject({ added: 1, skipped: 2, created: 0 });
   });
 });
+
+describe("a roadmap written live", () => {
+  const originalFetch = globalThis.fetch;
+  const sse = (events: unknown[]) => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
+  const step = (key: string, title: string) => ({ key, document_id: "", title, notes: `- About ${title}`, why: "", needs: [] });
+  const whole = { roadmap_id: "", goal: "FastAPI", stages: [{ title: "Introduction", steps: [step("a", "Python Basics"), step("b", "Web Concepts")] },
+    { title: "Core", steps: [step("c", "Path Parameters"), step("d", "Request Body")] }], summary: "Follows the page." };
+
+  async function run(written: string, status: "completed" | "incomplete") {
+    const drafts: any[] = [];
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls > 1) return sse([{ type: "response.completed", response: { status: "completed", output_text: "Here is the roadmap.", output: [] } }]);
+      const pieces = written.match(/[\s\S]{1,40}/gu) ?? [];
+      return sse([{ type: "response.output_item.added", item: { id: "item_1", type: "function_call", name: "propose_roadmap" } },
+        ...pieces.map((delta) => ({ type: "response.function_call_arguments.delta", item_id: "item_1", delta })),
+        { type: `response.${status}`, response: { status, output: [{ id: "item_1", type: "function_call", name: "propose_roadmap", call_id: "call_1", arguments: written }] } }]);
+    }) as typeof fetch;
+    try {
+      const { runAgent } = await import("../server/chat/agent/runner.mjs");
+      const result = await runAgent({ provider: "meta", apiKey: "meta", model: "muse-wonder-1.0", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null, proposals: true,
+        chatRequest: { ai: { mode: "balanced" }, conversation: { id: "roadmap", ancestorContext: [] }, messages: [{ role: "user", content: "Build this roadmap" }] },
+        onRoadmapDraft: (draft: unknown) => { drafts.push(draft); } });
+      return { drafts, result };
+    } finally { globalThis.fetch = originalFetch; }
+  }
+
+  test("each finished step is sent on while the model is still writing the call", async () => {
+    const { drafts, result } = await run(JSON.stringify(whole), "completed");
+    expect(drafts.map((draft) => draft.stages.map((stage: any) => stage.steps.length))).toEqual([[1], [2], [2, 1], [2, 2]]);
+    expect(drafts.at(-1)).toEqual({ goal: "FastAPI", count: 6, stages: [{ title: "Introduction", steps: [{ title: "Python Basics" }, { title: "Web Concepts" }] },
+      { title: "Core", steps: [{ title: "Path Parameters" }, { title: "Request Body" }] }] });
+    expect(result.agent.proposals).toHaveLength(1);
+  });
+
+  test("a call cut off at the output limit keeps the steps it finished instead of failing the run", async () => {
+    const written = JSON.stringify(whole);
+    const { result } = await run(written.slice(0, written.indexOf("Request Body")), "incomplete");
+    const [proposal] = result.agent.proposals;
+    expect(proposal.stages.map((stage: any) => stage.steps.map((item: any) => item.title))).toEqual([["Python Basics", "Web Concepts"], ["Path Parameters"]]);
+    expect(result.reply).toBe("Here is the roadmap.");
+  });
+});

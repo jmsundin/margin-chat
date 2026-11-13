@@ -30,7 +30,31 @@ export type AgentEvent =
   | { type: "retract" }
   | { type: "documents"; documents: ImportedWebDocument[] }
   | { type: "thinking"; delta: string }
-  | { type: "activity"; activity: AgentActivity; label?: string };
+  | { type: "activity"; activity: AgentActivity; label?: string }
+  | { type: "roadmap"; draft: RoadmapDraftPreview };
+
+/** A roadmap as far as the agent has written it: stages and the steps finished so far. */
+export interface RoadmapDraftPreview {
+  goal: string;
+  stages: { title: string; steps: { title?: string; documentId?: string }[] }[];
+}
+
+function roadmapDraftPreview(input: unknown): RoadmapDraftPreview | null {
+  if (!input || typeof input !== "object") return null;
+  const { goal, stages } = input as Record<string, unknown>;
+  if (!Array.isArray(stages)) return null;
+  const short = (value: unknown) => typeof value === "string" ? value.trim().slice(0, 200) : "";
+  const kept = stages.slice(0, 12).flatMap((stage) => {
+    if (!stage || typeof stage !== "object" || !short((stage as { title?: unknown }).title)) return [];
+    const steps = Array.isArray((stage as { steps?: unknown }).steps) ? (stage as { steps: unknown[] }).steps : [];
+    return [{ title: short((stage as { title?: unknown }).title), steps: steps.slice(0, 60).flatMap((step) => {
+      if (!step || typeof step !== "object") return [];
+      const title = short((step as { title?: unknown }).title), documentId = short((step as { documentId?: unknown }).documentId);
+      return title || documentId ? [{ ...(title ? { title } : {}), ...(documentId ? { documentId } : {}) }] : [];
+    }) }];
+  });
+  return kept.length ? { goal: short(goal), stages: kept } : null;
+}
 
 /** A page the agent saved with import_webpage, for the browser to create as a document. */
 export interface ImportedWebDocument {
@@ -54,6 +78,7 @@ function importedWebDocuments(input: unknown): ImportedWebDocument[] {
 
 interface ChatStreamEvent {
   documents?: unknown;
+  draft?: unknown;
   delta?: string;
   step?: unknown;
   spentMicros?: unknown;
@@ -62,7 +87,7 @@ interface ChatStreamEvent {
   error?: string;
   metadata?: ChatReplyResponse["metadata"];
   statusCode?: number;
-  type?: "metadata" | "delta" | "retract" | "step" | "thinking" | "activity" | "documents" | "done" | "error";
+  type?: "metadata" | "delta" | "retract" | "step" | "thinking" | "activity" | "documents" | "roadmap" | "done" | "error";
 }
 
 export async function readChatReplyStream(
@@ -120,6 +145,10 @@ export async function readChatReplyStream(
     if (event.type === "activity" && AGENT_ACTIVITIES.includes(event.activity as AgentActivity)) {
       const label = typeof event.label === "string" && event.label.trim() ? event.label.trim().slice(0, 200) : undefined;
       onAgentEvent?.({ type: "activity", activity: event.activity as AgentActivity, ...(label ? { label } : {}) });
+    }
+    if (event.type === "roadmap") {
+      const draft = roadmapDraftPreview(event.draft);
+      if (draft) onAgentEvent?.({ type: "roadmap", draft });
     }
     if (event.type === "documents") {
       const documents = importedWebDocuments(event.documents);

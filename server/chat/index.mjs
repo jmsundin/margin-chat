@@ -35,6 +35,8 @@ const PROVIDERS = Object.freeze({
 });
 /** Automatic routing runs Agent mode on Muse Wonder when Meta is available; plain replies never use it. */
 const AGENT_DEFAULT_SERVICE_ID = "meta-api";
+/** A roadmap of 60 steps with notes is about 8,000 tokens of tool call, before the model's thinking. */
+const AGENT_OUTPUT_TOKENS = 16_000;
 const PREPAID_BALANCE_REQUIRED = "Your prepaid AI balance is empty. Add money in Billing or subscribe for $20/month to use hosted models. You can also use your own provider API key.";
 const SEMANTIC_CONTEXT_LIMIT = 24;
 /** Vault passages added to a plain reply with "Search my workspace", by AI mode. */
@@ -121,6 +123,12 @@ export function createChatService({ database, documentService, env, runtimeConfi
   const automaticServicePriority = [...new Set([
     runtimeConfig.defaultBackendProvider, "openai-api", "anthropic-api", "gemini-api", "huggingface-api", "xai-api", AGENT_DEFAULT_SERVICE_ID,
   ])].filter((id) => PROVIDERS[id] && id !== "openai-agent");
+
+  /** Output tokens one hosted agent call may use (thinking, text and tool calls together). */
+  function agentOutputTokens() {
+    const configured = Number(env.HOSTED_AGENT_MAX_OUTPUT_TOKENS);
+    return Number.isSafeInteger(configured) && configured > 0 ? configured : AGENT_OUTPUT_TOKENS;
+  }
 
   function getHostedApiKey(serviceId) {
     const provider = providerName(serviceId);
@@ -453,7 +461,9 @@ export function createChatService({ database, documentService, env, runtimeConfi
         apiKey: credential.apiKey,
         chatRequest: prepared.chatRequest,
         database,
-        maxOutputTokens: credential.source === "hosted" ? context.hostedMaxOutputTokens : undefined,
+        // An agent call writes its thinking and whole tool calls (a roadmap's every stage and step) inside
+        // this limit, so it gets more room than a plain answer; the run's budget still caps what is spent.
+        maxOutputTokens: credential.source === "hosted" ? agentProvider ? Math.max(context.hostedMaxOutputTokens, agentOutputTokens()) : context.hostedMaxOutputTokens : undefined,
         maxInputCharacters: prepared.chatRequest.contextCharacterBudget,
         model: route.model,
         signal: context.signal,
@@ -486,6 +496,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
             onStep: async (event) => { await ensureReady(); await handlers.onStep?.(event); },
             onThinking: async (delta) => { await ensureReady(); await handlers.onThinking?.(delta); },
             onActivity: async (activity, details) => { await ensureReady(); await handlers.onActivity?.(activity, details); },
+            onRoadmapDraft: async (draft) => { await ensureReady(); await handlers.onRoadmapDraft?.(draft); },
             ...(chatRequest.acceptsDocuments && handlers.onDocuments ? {
               onDocuments: async (documents) => { await ensureReady(); await handlers.onDocuments(documents); },
             } : {}),

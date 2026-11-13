@@ -3,6 +3,8 @@ import { HttpError } from "../../lib/errors.mjs";
 import { createAgentAdapter } from "./adapters.mjs";
 import { ASK_TOOL_DEFINITION, agentQuestion } from "./askTool.mjs";
 import { agentToolActivity, agentToolDefinitions, createAgentToolExecutor, describeAgentStep } from "./tools.mjs";
+import { PROPOSE_ROADMAP_DEFINITION } from "./proposalTools.mjs";
+import { parsePartialJson } from "./partialJson.mjs";
 
 /** Model calls per run, the last of which must answer without tools. */
 export const AGENT_MAX_MODEL_CALLS = 12;
@@ -59,8 +61,36 @@ function webAddress(value) {
  * With `proposals`, it may draft edits and new documents, returned as the run's
  * `proposals` for the user to approve.
  */
+const short = (value) => typeof value === "string" ? value.replace(/\s+/gu, " ").trim().slice(0, 200) : "";
+
+/** What a propose_roadmap call has written so far, for showing while it is still being written. */
+export function roadmapDraftSoFar(args) {
+  if (!args || typeof args !== "object" || !Array.isArray(args.stages)) return null;
+  const stages = args.stages.filter((stage) => stage && typeof stage === "object" && short(stage.title)).slice(0, 12).map((stage) => ({
+    title: short(stage.title),
+    steps: (Array.isArray(stage.steps) ? stage.steps : []).filter((step) => step && typeof step === "object" && (short(step.title) || short(step.document_id))).slice(0, 60)
+      .map((step) => ({ ...(short(step.title) ? { title: short(step.title) } : {}), ...(short(step.document_id) ? { documentId: short(step.document_id) } : {}) })),
+  }));
+  if (!stages.length) return null;
+  return { goal: short(args.goal), stages, count: stages.length + stages.reduce((sum, stage) => sum + stage.steps.length, 0) };
+}
+
+/** A cut-off propose_roadmap call's finished part: whole steps only, with needs that point at steps that made it. */
+function finishedRoadmap(args) {
+  if (!args || typeof args !== "object" || !Array.isArray(args.stages)) return null;
+  const whole = (step) => step && typeof step === "object" && typeof step.key === "string" && typeof step.title === "string" && typeof step.document_id === "string"
+    && (step.document_id.trim() || typeof step.notes === "string");
+  const stages = args.stages.filter((stage) => stage && typeof stage === "object" && typeof stage.title === "string")
+    .map((stage) => ({ title: stage.title, steps: (Array.isArray(stage.steps) ? stage.steps : []).filter(whole) })).filter((stage) => stage.steps.length);
+  if (!stages.length) return null;
+  const keys = new Set(stages.flatMap((stage) => stage.steps.map((step) => step.key)));
+  return { roadmap_id: typeof args.roadmap_id === "string" ? args.roadmap_id : "", goal: short(args.goal) || "Roadmap", summary: short(args.summary),
+    stages: stages.map((stage) => ({ ...stage, steps: stage.steps.map((step) => ({ ...step, why: typeof step.why === "string" ? step.why : "",
+      needs: (Array.isArray(step.needs) ? step.needs : []).filter((key) => keys.has(key)) })) })) };
+}
+
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, workspace = null, webSearch = false, questions = false, proposals = false, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity }) {
+  signal, usageMeter, workspace = null, webSearch = false, questions = false, proposals = false, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity, onRoadmapDraft }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
   const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter, webSearch },
     agentToolDefinitions(chatRequest, workspace, { documents: Boolean(onDocuments), questions, proposals }));
@@ -86,11 +116,21 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
   };
   // The current call's text sent to onDelta so far.
   let streamed = "";
+  // Stages and steps of the roadmap being written that the caller has been shown.
+  let draftShown = -1;
   const live = {
     thinking: async (delta) => { await onThinking?.(delta); },
     writing: async () => { await onActivity?.("writing"); },
     searching: async (query) => { await onActivity?.("searching", { label: query ? `Searching the web for ${quote(query)}` : "Searching the web" }); },
     tool: async (name) => { await onActivity?.("tool", { label: agentToolActivity(name) }); },
+    // A roadmap is shown as it is written: each time another step is finished, what there is so far.
+    toolArguments: async (name, text) => {
+      if (name !== PROPOSE_ROADMAP_DEFINITION.name || !onRoadmapDraft) return;
+      const draft = roadmapDraftSoFar(parsePartialJson(text));
+      if (!draft || draft.count === draftShown) return;
+      draftShown = draft.count;
+      await onRoadmapDraft(draft);
+    },
     text: async (delta) => {
       const piece = streamed ? delta : delta.trimStart();
       if (!piece || !onDelta) return;
@@ -166,9 +206,14 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     for (const toolCall of result.toolCalls) {
       signal?.throwIfAborted();
       if (toolCall.name !== ASK_TOOL_DEFINITION.name) await onActivity?.("tool", { label: agentToolActivity(toolCall.name, toolCall.arguments) });
-      const output = toolCall.name === ASK_TOOL_DEFINITION.name
+      // A call cut off at the output limit: a roadmap keeps the stages it finished; anything else is sent again, smaller.
+      const cutRoadmap = toolCall.cutOff && toolCall.name === PROPOSE_ROADMAP_DEFINITION.name ? finishedRoadmap(toolCall.arguments) : null;
+      let output = toolCall.name === ASK_TOOL_DEFINITION.name
         ? { ok: false, error: questions ? "Write the question in the question field." : "Questions aren't available here. Answer with your best reading of the request and say what you assumed." }
-        : await executeTool(toolCall.name, toolCall.arguments);
+        : toolCall.cutOff && !cutRoadmap ? { ok: false, error: "Your call was cut off before it finished because it was too long. Send it again with less text." }
+        : await executeTool(toolCall.name, cutRoadmap ?? toolCall.arguments);
+      if (cutRoadmap && output?.ok) output = { ...output, note: `${output.note} The call was cut off for length: only the first ${cutRoadmap.stages.length} stage(s) were kept. Tell the user which sections are missing; don't call propose_roadmap again.` };
+      draftShown = -1;
       outputs.push({ id: toolCall.id, output });
       if (output?.truncated || output?.conversation?.truncated) toolTruncated = true;
       await record(describeAgentStep(toolCall.name, toolCall.arguments, output));

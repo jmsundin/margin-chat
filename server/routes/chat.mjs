@@ -73,6 +73,9 @@ export async function handleChatRequest({ request, response, user, executeChatRe
         onActivity(activity, details = {}) {
           send({ activity, ...(details.label ? { label: details.label } : {}), ...(details.call ? { call: details.call } : {}), type: "activity" });
         },
+        onRoadmapDraft(draft) {
+          send({ draft, type: "roadmap" });
+        },
         onDocuments(documents) {
           run?.documents(documents);
           send({ documents, type: "documents" });

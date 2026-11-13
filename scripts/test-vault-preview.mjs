@@ -325,7 +325,20 @@ const server = createServer(async (request, response) => {
             if (roadmapRun) {
               response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
               response.write(`${JSON.stringify({ type: "metadata", metadata })}\n`);
-              for (const step of roadmapRun.steps) { response.write(`${JSON.stringify({ type: "step", step })}\n`); await new Promise((resolve) => setTimeout(resolve, 150)); }
+              const write = (event) => response.write(`${JSON.stringify(event)}\n`);
+              const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+              write({ type: "activity", activity: "thinking", label: "Reading your request" });
+              for (const piece of ["**Reading the page**\n\n", "The page lists sections with topics under each. ", "I'll keep its order: sections become stages, topics become steps."]) { write({ type: "thinking", delta: piece }); await pause(250); }
+              for (const step of roadmapRun.steps.slice(0, -1)) { write({ type: "step", step }); await pause(300); }
+              write({ type: "activity", activity: "tool", label: "Drafting the roadmap" });
+              // The roadmap arrives a step at a time, as it does while a model writes the call.
+              const stages = roadmapRun.proposals[0]?.stages ?? [];
+              for (let stage = 0; stage < stages.length; stage += 1) for (let step = 1; step <= stages[stage].steps.length; step += 1) {
+                write({ type: "roadmap", draft: { goal: roadmapRun.proposals[0].goal, stages: [...stages.slice(0, stage), { ...stages[stage], steps: stages[stage].steps.slice(0, step) }]
+                  .map((item) => ({ title: item.title, steps: item.steps.map((entry) => ({ title: entry.title })) })) } });
+                await pause(controls.chatDelayMs ? 120 : 30);
+              }
+              write({ type: "step", step: roadmapRun.steps.at(-1) });
               response.write(`${JSON.stringify({ type: "delta", delta: roadmapRun.reply })}\n`);
               response.end(`${JSON.stringify({ type: "done", metadata: { ...metadata, execution: { schemaVersion: 1, model: metadata.model, provider: "meta-api",
                 agent: { steps: roadmapRun.steps, stopReason: "answered", proposals: roadmapRun.proposals } } } })}\n`);

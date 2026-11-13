@@ -173,6 +173,7 @@ export function agentToolActivity(name, args = {}) {
     case "import_webpage": return url ? `Saving${url} as documents` : "Saving a webpage as documents";
     case "propose_edit": return "Drafting a change for you to approve";
     case "propose_document": return "Drafting a new document for you to approve";
+    case "propose_roadmap": return "Writing the roadmap, stage by stage";
     case "ask_user": return "Writing a question for you";
     default: return "Using a tool";
   }
