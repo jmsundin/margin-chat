@@ -66,6 +66,28 @@ function citedPages(output) {
     .map((annotation) => ({ url: annotation.url, title: typeof annotation.title === "string" ? annotation.title : "" }));
 }
 
+/** What stands in for a tool result dropped from the history to make room. */
+const DROPPED_RESULT = JSON.stringify({ note: "This result was dropped from the history to save room. Work from what you already took from it." });
+const CLIPPED_STRING = 120;
+/** A tool call's arguments with long strings shortened: the call's shape stays, its prose goes. */
+function clipStrings(value) {
+  if (typeof value === "string") return value.length > CLIPPED_STRING ? `${value.slice(0, CLIPPED_STRING - 1)}…` : value;
+  if (Array.isArray(value)) return value.map(clipStrings);
+  if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, clipStrings(item)]));
+  return value;
+}
+
+/**
+ * Shrinks a run's history until `fits()`: first the prose inside tool calls the model already made and had
+ * answered (a proposed roadmap's notes, a drafted document), then whole tool results, oldest first.
+ * The model's own turns and its reasoning stay, since providers reject a history with those removed.
+ */
+function makeRoom(fits, calls, results) {
+  for (const shorten of calls) { if (fits()) return true; shorten(); }
+  for (const drop of results) { if (fits()) return true; drop(); }
+  return fits();
+}
+
 /**
  * OpenAI, xAI and Meta share the Responses API: function_call items in, function_call_output items back.
  * Each call streams so the model's reasoning summary, or any reasoning text it shares, reaches
@@ -163,6 +185,15 @@ function createResponsesAdapter(provider, args, tools) {
     addToolResults(results) {
       for (const result of results) input.push({ type: "function_call_output", call_id: result.id, output: JSON.stringify(result.output) });
     },
+    compact(limit) {
+      const answered = new Set(input.filter((item) => item?.type === "function_call_output").map((item) => item.call_id));
+      const replace = (item, change) => () => { input[input.indexOf(item)] = { ...item, ...change(item) }; };
+      return makeRoom(() => this.size <= limit,
+        input.filter((item) => item?.type === "function_call" && answered.has(item.call_id) && item.arguments?.length > CLIPPED_STRING * 2)
+          .map((item) => replace(item, () => { try { return { arguments: JSON.stringify(clipStrings(JSON.parse(item.arguments))) }; } catch { return {}; } })),
+        input.filter((item) => item?.type === "function_call_output" && item.output.length > DROPPED_RESULT.length)
+          .map((item) => replace(item, () => ({ output: DROPPED_RESULT }))));
+    },
   };
 }
 
@@ -217,6 +248,16 @@ function createAnthropicAdapter(args, tools) {
       messages.push({ role: "user", content: results.map((result) => ({
         type: "tool_result", tool_use_id: result.id, content: JSON.stringify(result.output),
       })) });
+    },
+    compact(limit) {
+      const blocks = (role, type) => messages.filter((message) => message.role === role && Array.isArray(message.content))
+        .flatMap((message) => message.content.map((block, index) => ({ block, index, content: message.content })).filter(({ block }) => block?.type === type));
+      const answered = new Set(blocks("user", "tool_result").map(({ block }) => block.tool_use_id));
+      return makeRoom(() => this.size <= limit,
+        blocks("assistant", "tool_use").filter(({ block }) => answered.has(block.id) && JSON.stringify(block.input ?? {}).length > CLIPPED_STRING * 2)
+          .map(({ block, index, content }) => () => { content[index] = { ...block, input: clipStrings(block.input) }; }),
+        blocks("user", "tool_result").filter(({ block }) => typeof block.content === "string" && block.content.length > DROPPED_RESULT.length)
+          .map(({ block, index, content }) => () => { content[index] = { ...block, content: DROPPED_RESULT }; }));
     },
   };
 }

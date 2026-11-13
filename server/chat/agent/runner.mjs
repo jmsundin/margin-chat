@@ -151,8 +151,19 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
 
   for (let call = 1; call <= AGENT_MAX_MODEL_CALLS; call += 1) {
     signal?.throwIfAborted();
-    if (Number.isSafeInteger(maxInputCharacters) && adapter.size > maxInputCharacters) {
-      throw new HttpError(413, "Workspace tool history exceeded the allowed context budget. Narrow the selected context and try again.");
+    // The model's own tool calls count toward the history too (a 47-step roadmap is thousands of characters),
+    // so a run that outgrows its room first sheds what it no longer needs; work already drafted is never thrown away.
+    if (Number.isSafeInteger(maxInputCharacters) && adapter.size > maxInputCharacters && !adapter.compact(maxInputCharacters)) {
+      const drafted = executeTool.proposals();
+      if (!drafted.length) throw new HttpError(413, "Workspace tool history exceeded the allowed context budget. Narrow the selected context and try again.");
+      const reply = drafted.some((proposal) => proposal.kind === "roadmap") ? "The roadmap is drafted and ready for you to review." : "The draft is ready for you to review.";
+      await onDelta?.(reply);
+      return {
+        model, reply, steps, toolTruncated: true,
+        agent: { steps, stopReason: "answered", reasoning: reasoningShared ? "shared" : "not-shared", modelCalls: call - 1,
+          ...(usageMeter ? { spentMicros: spent() } : {}), ...(metered ? { budgetMicros } : {}),
+          ...(cited.size ? { webSources: [...cited.values()] } : {}), proposals: drafted },
+      };
     }
     const stopReason = metered && spent() >= budgetMicros ? "budget"
       : now() - startedAt >= timeLimitMs ? "time-limit"

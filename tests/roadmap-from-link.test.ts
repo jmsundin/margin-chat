@@ -126,14 +126,17 @@ describe("a roadmap written live", () => {
   const originalFetch = globalThis.fetch;
   const sse = (events: unknown[]) => new Response(events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""), { headers: { "Content-Type": "text/event-stream" } });
   const step = (key: string, title: string) => ({ key, document_id: "", title, notes: `- About ${title}`, why: "", needs: [] });
+  const sent: any[] = [];
   const whole = { roadmap_id: "", goal: "FastAPI", stages: [{ title: "Introduction", steps: [step("a", "Python Basics"), step("b", "Web Concepts")] },
     { title: "Core", steps: [step("c", "Path Parameters"), step("d", "Request Body")] }], summary: "Follows the page." };
 
-  async function run(written: string, status: "completed" | "incomplete") {
+  async function run(written: string, status: "completed" | "incomplete", maxInputCharacters?: number) {
     const drafts: any[] = [];
+    sent.length = 0;
     let calls = 0;
-    globalThis.fetch = (async () => {
+    globalThis.fetch = (async (_url: any, init: any) => {
       calls += 1;
+      sent.push(JSON.parse(init.body));
       if (calls > 1) return sse([{ type: "response.completed", response: { status: "completed", output_text: "Here is the roadmap.", output: [] } }]);
       const pieces = written.match(/[\s\S]{1,40}/gu) ?? [];
       return sse([{ type: "response.output_item.added", item: { id: "item_1", type: "function_call", name: "propose_roadmap" } },
@@ -142,7 +145,7 @@ describe("a roadmap written live", () => {
     }) as typeof fetch;
     try {
       const { runAgent } = await import("../server/chat/agent/runner.mjs");
-      const result = await runAgent({ provider: "meta", apiKey: "meta", model: "muse-wonder-1.0", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null, proposals: true,
+      const result = await runAgent({ provider: "meta", apiKey: "meta", model: "muse-wonder-1.0", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null, proposals: true, maxInputCharacters,
         chatRequest: { ai: { mode: "balanced" }, conversation: { id: "roadmap", ancestorContext: [] }, messages: [{ role: "user", content: "Build this roadmap" }] },
         onRoadmapDraft: (draft: unknown) => { drafts.push(draft); } });
       return { drafts, result };
@@ -163,5 +166,23 @@ describe("a roadmap written live", () => {
     const [proposal] = result.agent.proposals;
     expect(proposal.stages.map((stage: any) => stage.steps.map((item: any) => item.title))).toEqual([["Python Basics", "Web Concepts"], ["Path Parameters"]]);
     expect(result.reply).toBe("Here is the roadmap.");
+  });
+
+  const long = { ...whole, stages: whole.stages.map((stage) => ({ ...stage, steps: stage.steps.map((item) => ({ ...item, notes: `- ${"Learn this well. ".repeat(60)}` })) })) };
+
+  test("a roadmap longer than the room left in the history is still kept, and the model's next call gets a shortened copy", async () => {
+    const { result } = await run(JSON.stringify(long), "completed", 2_500);
+    expect(result.agent.proposals[0].stages.flatMap((stage: any) => stage.steps).every((item: any) => item.notes.length > 900)).toBe(true);
+    expect(result.reply).toBe("Here is the roadmap.");
+    const resent = sent[1].input.find((item: any) => item.type === "function_call");
+    expect(JSON.parse(resent.arguments).stages[0].steps[0].notes.length).toBeLessThanOrEqual(120);
+    expect(JSON.stringify(sent[1].input).length).toBeLessThan(2_500);
+  });
+
+  test("when nothing more can be shed, the run ends with the drafted roadmap instead of an error", async () => {
+    const { result } = await run(JSON.stringify(long), "completed", 300);
+    expect(sent).toHaveLength(1);
+    expect(result.agent.proposals).toHaveLength(1);
+    expect(result.reply).toBe("The roadmap is drafted and ready for you to review.");
   });
 });
