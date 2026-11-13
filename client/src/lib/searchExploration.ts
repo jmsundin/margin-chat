@@ -49,6 +49,8 @@ export interface SearchExplorationOptions {
   categories?: Record<string, ThreadCategoryId>;
   /** Omit to return every match; counts and matchedConversationIds are never capped. */
   limit?: number;
+  /** False skips counting facets and suggesting directions, for callers that only list results. */
+  facets?: boolean;
 }
 export interface SearchExploration {
   results: SearchPassageResult[];
@@ -70,6 +72,12 @@ const CONTEXT_PREFIX = getStandaloneNoteContextMessageId("");
 const facetGroupId = (id: string) => `group:id:${encodeURIComponent(id)}`;
 const escapePattern = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const normalizedWords = (value: string) => ` ${value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()} `;
+const normalizedKeywords = new Map<string, string>();
+const normalizedKeyword = (keyword: string) => {
+  let value = normalizedKeywords.get(keyword);
+  if (value === undefined) { value = normalizedWords(keyword); normalizedKeywords.set(keyword, value); }
+  return value;
+};
 
 function contextWords(conversation?: Conversation) {
   if (!conversation) return new Set<string>();
@@ -102,9 +110,17 @@ function passages(content: string) {
   return result;
 }
 
+// Formatting a date is slow and every passage of a document shares one, so labels are kept.
+const dateLabels = new Map<string, string>();
 function dateLabel(value: string) {
-  const time = Date.parse(value);
-  return Number.isFinite(time) ? new Date(time).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+  let label = dateLabels.get(value);
+  if (label === undefined) {
+    const time = Date.parse(value);
+    label = Number.isFinite(time) ? new Date(time).toLocaleDateString(undefined, { month: "short", day: "numeric" }) : "";
+    if (dateLabels.size >= 5000) dateLabels.clear();
+    dateLabels.set(value, label);
+  }
+  return label;
 }
 
 function headingTopics(content: string) {
@@ -130,7 +146,7 @@ function headingTopics(content: string) {
 type ParsedSource = {
   content: string;
   headings: ReturnType<typeof headingTopics>;
-  parts: Array<ReturnType<typeof passages>[number] & { plain: string; purposeIds: SearchPurposeId[] }>;
+  parts: Array<ReturnType<typeof passages>[number] & { plain: string; purposeIds: SearchPurposeId[]; topics?: { key: string; ids: string[] } }>;
 };
 // Query/filter changes should not parse every message's Markdown again. Immutable
 // conversation objects keep this cache bounded to currently referenced workspace data.
@@ -159,8 +175,39 @@ function parseSource(conversation: Conversation, source: SearchEvidenceRef, cont
   return parsed;
 }
 
+type SourceVisitor = (content: string, source: SearchEvidenceRef, matchLabel: string, updatedAt: string, localOnly?: boolean) => void;
+/** Every searchable text of a conversation: its title, its primary sources, then its private notes. */
+function forEachSearchSource(conversation: Conversation, visit: SourceVisitor) {
+  visit(conversation.title, { conversationId: conversation.id, sourceKind: "conversation" }, conversation.document ? "Document title" : conversation.kind === "note" ? "Note title" : "Chat title", conversation.updatedAt);
+  for (const source of getPrimaryDocumentSources(conversation)) {
+    visit(source.content, { conversationId: conversation.id, sourceKind: source.sourceKind, sourceBlockId: source.sourceBlockId, messageId: source.messageId, noteId: source.noteId },
+      source.sourceKind === "document" ? "Document passage" : source.sourceKind === "standalone-note" ? "Note content" : source.role === "assistant" ? "Assistant message" : "Your message", source.updatedAt);
+  }
+  const primaryNote = getStandaloneNote(conversation);
+  for (const note of conversation.notes ?? []) {
+    if (note === primaryNote) continue;
+    visit(note.content, { conversationId: conversation.id, sourceKind: "annotation", noteId: note.id }, note.kind === "side-chat" ? "Private side note" : "Private margin note", note.updatedAt, true);
+  }
+}
+
+/**
+ * Splits and reads documents ahead of the first search, a few at a time while
+ * `hasTime()` holds, so typing the first letter does not wait on the whole vault.
+ * Returns true once every document is ready.
+ */
+export function prepareSearchSources(conversations: Record<string, Conversation>, hasTime: () => boolean) {
+  for (const conversation of Object.values(conversations)) {
+    if (preparedConversations.has(conversation)) continue;
+    if (!hasTime()) return false;
+    forEachSearchSource(conversation, (content, source) => { parseSource(conversation, source, content); });
+    preparedConversations.add(conversation);
+  }
+  return true;
+}
+const preparedConversations = new WeakSet<Conversation>();
+
 /** All classification here uses local text rules or supplied categories, never an AI claim. */
-export function buildSearchExploration({ conversations, groups = {}, query, activeFacetIds = [], currentConversationId, contextual = false, categories = {}, limit }: SearchExplorationOptions): SearchExploration {
+export function buildSearchExploration({ conversations, groups = {}, query, activeFacetIds = [], currentConversationId, contextual = false, categories = {}, limit, facets: withFacets = true }: SearchExplorationOptions): SearchExploration {
   const definitions = new Map<string, Omit<SearchFacet, "count" | "selected">>();
   const define = (id: string, kind: SearchFacetKind, label: string) => definitions.set(id, { id, kind, label });
   for (const category of THREAD_CATEGORY_DEFINITIONS) define(`topic:${category.id}`, "topic", category.label);
@@ -178,7 +225,9 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
   const terms = [...new Set(query.trim().split(/\s+/).filter(Boolean))].map((term) => new RegExp(escapePattern(term), "iu"));
   const exactQuery = query.trim() ? new RegExp(escapePattern(query.trim()), "iu") : null;
   const currentWords = contextual ? contextWords(conversations[currentConversationId ?? ""]) : new Set<string>();
+  // Only matching passages are kept; the rest are only counted, so a search costs little beyond the matching itself.
   const corpus: Array<SearchPassageResult & { rank: number }> = [];
+  let corpusSize = 0;
 
   for (const conversation of Object.values(conversations)) {
     const rootId = getConversationRootId(conversations, conversation.id) ?? conversation.id;
@@ -193,21 +242,28 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
       for (const part of parts) {
         const plain = part.plain;
         if (!plain) continue;
-        const words = normalizedWords(`${conversation.title} ${plain}`);
-        const topics = THREAD_CATEGORY_DEFINITIONS.filter((category) => category.id !== "general" &&
-          (category.id === assignedCategory || category.keywords.some((keyword) => words.includes(normalizedWords(keyword))))).map((category) => `topic:${category.id}`);
-        if (!topics.length) topics.push("topic:general");
+        corpusSize++;
         while (headingIndex + 1 < headings.length && headings[headingIndex + 1].offset < part.end) headingIndex++;
         const heading = headings[headingIndex];
-        if (heading) {
-          define(heading.id, "topic", heading.label);
-          topics.push(heading.id);
+        // Defined even when nothing under it matches, so a chosen heading filter stays listed.
+        if (heading) define(heading.id, "topic", heading.label);
+        const matchedTerms = terms.map((term) => term.exec(part.text));
+        const matches = matchedTerms.every(Boolean);
+        if (!matches) continue;
+        // Topics depend only on the title, the passage and the assigned category, so they are kept with the parsed passage.
+        const topicKey = `${assignedCategory ?? ""}\u0000${conversation.title}`;
+        if (part.topics?.key !== topicKey) {
+          const words = normalizedWords(`${conversation.title} ${plain}`);
+          const ids = THREAD_CATEGORY_DEFINITIONS.filter((category) => category.id !== "general" &&
+            (category.id === assignedCategory || category.keywords.some((keyword) => words.includes(normalizedKeyword(keyword))))).map((category) => `topic:${category.id}`);
+          if (!ids.length) ids.push("topic:general");
+          part.topics = { key: topicKey, ids };
         }
+        const topics = [...part.topics.ids];
+        if (heading) topics.push(heading.id);
         const purposeIds = part.purposeIds;
         const type = localOnly ? "annotation" : conversation.kind === "note" ? "note" : "chat";
         const evidence: SearchEvidenceRef = { ...source, quote: part.text, startOffset: part.start, endOffset: part.end };
-        const matchedTerms = terms.map((term) => term.exec(part.text));
-        const matches = matchedTerms.every(Boolean);
         const firstMatch = terms.map((term) => term.exec(plain)).find(Boolean)?.index ?? 0;
         let previewStart = Math.max(0, firstMatch - 72);
         const nextWord = plain.indexOf(" ", previewStart);
@@ -215,7 +271,10 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
         const previewText = plain.slice(previewStart);
         const previewLimit = previewStart ? 419 : 420;
         const preview = `${previewStart ? "…" : ""}${previewText.length <= previewLimit ? previewText : `${previewText.slice(0, previewLimit - 1).trimEnd()}…`}`;
-        const relatedWords = currentWords.size ? [...currentWords].filter((word) => words.includes(normalizedWords(word))).length : 0;
+        const relatedWords = currentWords.size ? (() => {
+          const words = normalizedWords(`${conversation.title} ${plain}`);
+          return [...currentWords].filter((word) => words.includes(normalizedWords(word))).length;
+        })() : 0;
         corpus.push({
           id: JSON.stringify([conversation.id, source.sourceKind, source.sourceBlockId ?? source.messageId ?? source.noteId ?? "", part.start]),
           conversationId: conversation.id, title: conversation.title, rootTitle, locationLabel, matchLabel,
@@ -223,22 +282,12 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
           passage: part.text, evidence, updatedAt, updatedLabel: dateLabel(updatedAt),
           facetIds: [...topics, ...memberships, `type:${type}`, ...purposeIds.map((id) => `purpose:${id}`)],
           purposeIds, localOnly,
-          rank: matches ? (exactQuery?.test(part.text) ? 10 : 0) + (source.sourceKind === "conversation" && terms.length ? 2 : 0) + Math.min(relatedWords, 6) : -1,
+          rank: (exactQuery?.test(part.text) ? 10 : 0) + (source.sourceKind === "conversation" && terms.length ? 2 : 0) + Math.min(relatedWords, 6),
         });
       }
     }
 
-    add(conversation.title, { conversationId: conversation.id, sourceKind: "conversation" }, conversation.document ? "Document title" : conversation.kind === "note" ? "Note title" : "Chat title", conversation.updatedAt);
-    for (const source of getPrimaryDocumentSources(conversation)) {
-      add(source.content, { conversationId: conversation.id, sourceKind: source.sourceKind, sourceBlockId: source.sourceBlockId, messageId: source.messageId, noteId: source.noteId },
-        source.sourceKind === "document" ? "Document passage" : source.sourceKind === "standalone-note" ? "Note content" : source.role === "assistant" ? "Assistant message" : "Your message", source.updatedAt);
-    }
-    const primaryNote = getStandaloneNote(conversation);
-    for (const note of conversation.notes ?? []) {
-      const primary = note === primaryNote;
-      if (primary) continue;
-      add(note.content, { conversationId: conversation.id, sourceKind: "annotation", noteId: note.id }, note.kind === "side-chat" ? "Private side note" : "Private margin note", note.updatedAt, true);
-    }
+    forEachSearchSource(conversation, add);
   }
 
   const selected = [...new Set(activeFacetIds)];
@@ -251,10 +300,10 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
     }
     return [...selections.values()].every((ids) => ids.some((id) => result.facetIds.includes(id)));
   };
-  const queryMatches = corpus.filter((result) => result.rank >= 0);
+  const queryMatches = corpus;
   const matches = queryMatches.filter((result) => matchesFilters(result, selected)).sort((a, b) =>
     b.rank - a.rank || b.updatedAt.localeCompare(a.updatedAt) || a.id.localeCompare(b.id));
-  const facets = [...definitions.values()].map((facet): SearchFacet => ({ ...facet, selected: selected.includes(facet.id),
+  const facets = !withFacets ? [] : [...definitions.values()].map((facet): SearchFacet => ({ ...facet, selected: selected.includes(facet.id),
     count: queryMatches.filter((result) => result.facetIds.includes(facet.id) && matchesFilters(result, selected, facet.kind)).length,
   })).filter((facet) => facet.count > 0 || facet.selected)
     .sort((a, b) => {
@@ -266,7 +315,7 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
     });
 
   const directions: SearchDirection[] = [];
-  if (matches.length) {
+  if (withFacets && matches.length) {
     const seenSets: Set<string>[] = [];
     const candidates = ["purpose", "topic", "group"].flatMap((kind) => facets.filter((facet) => facet.kind === kind && !facet.selected && facet.id !== "topic:general" && facet.id !== "group:ungrouped")
       .sort((a, b) => (kind === "topic" ? Number(b.id.startsWith("topic:heading:")) - Number(a.id.startsWith("topic:heading:")) : 0) || b.count - a.count || a.label.localeCompare(b.label)));
@@ -289,5 +338,5 @@ export function buildSearchExploration({ conversations, groups = {}, query, acti
   }
   const requestedLimit = limit === undefined || !Number.isFinite(limit) ? matches.length : Math.max(0, Math.floor(limit));
   return { results: matches.slice(0, requestedLimit).map(({ rank: _rank, ...result }) => result), facets, directions,
-    totalCount: matches.length, workspaceCount: corpus.length, matchedConversationIds: [...new Set(matches.map((result) => result.conversationId))] };
+    totalCount: matches.length, workspaceCount: corpusSize, matchedConversationIds: [...new Set(matches.map((result) => result.conversationId))] };
 }

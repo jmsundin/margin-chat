@@ -27,6 +27,7 @@ const cloudDocuments: VaultIndexEntry[] = [{ path: "school.md", id: "school", ty
 let provider = createLocalVaultSearchProvider(() => ({ conversations, cloudDocuments }));
 const opened: string[] = [];
 let explored = 0;
+let queryChanges = 0;
 const kept: string[] = [];
 let setOpen!: (value: boolean) => void;
 
@@ -34,7 +35,7 @@ function Host() {
   const [open, updateOpen] = useState(false), [query, setQuery] = useState("");
   setOpen = updateOpen;
   return createElement(VaultSearchPalette, {
-    isOpen: open, onClose() { updateOpen(false); }, query, onQueryChange: setQuery, provider, conversations,
+    isOpen: open, onClose() { updateOpen(false); }, query, onQueryChange(value: string) { queryChanges++; setQuery(value); }, provider, conversations,
     currentConversationId: "heat", currentFamilyTitle: "Urban heat draft",
     onOpenDocument(hit, mode) { opened.push(`${mode}:${hit.target.kind === "cloud" ? hit.target.path : hit.target.conversationId}`); updateOpen(false); },
     onOpenPassage(hit, mode) { opened.push(`${mode}:passage:${hit.conversationId}`); updateOpen(false); },
@@ -48,7 +49,9 @@ const dialog = () => browser.document.querySelector<HTMLElement>('[role="dialog"
 const input = () => dialog()!.querySelector<HTMLInputElement>('input[type="search"]')!;
 const rows = () => [...dialog()!.querySelectorAll<HTMLElement>(".vault-search-row")];
 const selectedTitle = () => dialog()!.querySelector(".vault-search-row.is-selected .vault-search-row-title")?.textContent;
-const type = async (value: string) => { await act(async () => { Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input(), value); input().dispatchEvent(new browser.Event("input", { bubbles: true })); }); };
+const type = async (value: string) => { await act(async () => { Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!.call(input(), value); input().dispatchEvent(new browser.Event("input", { bubbles: true })); });
+  // The palette waits for a short pause in typing before it searches.
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); }); };
 const key = async (value: string, init: Record<string, boolean> = {}) => { await act(async () => { input().dispatchEvent(new browser.KeyboardEvent("keydown", { key: value, bubbles: true, cancelable: true, ...init })); }); };
 const checks: string[] = [];
 
@@ -104,6 +107,19 @@ assert.equal(explored, 1);
 await key("Escape");
 assert.equal(dialog(), null);
 checks.push("filters and connections stay one click away, Escape closes");
+
+// Typing stays inside the search box: the workspace hears the query only when search hands off or closes.
+await act(async () => { setOpen(true); });
+assert.equal(input().value, "zzzz", "The last search is still there when search opens again.");
+const changesBefore = queryChanges;
+for (const value of ["s", "sh", "sha", "shad"]) await type(value);
+assert.equal(queryChanges, changesBefore, "Keystrokes do not redraw the workspace.");
+await key("Escape");
+assert.equal(queryChanges, changesBefore + 1);
+await act(async () => { setOpen(true); });
+assert.equal(input().value, "shad");
+await key("Escape");
+checks.push("typing redraws only the search box and the query is kept on close");
 
 await act(async () => { setOpen(true); });
 await type("shade");
