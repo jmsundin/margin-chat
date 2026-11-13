@@ -6020,7 +6020,7 @@ function WorkspaceAppContent({
   }
 
   /** A document's panel. `embedded`: opened beside a roadmap, so the page's own window controls stay with the roadmap. */
-  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat", dock?: GraphDockControls, embedded = false) {
+  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat", dock?: GraphDockControls, embedded = false, inMargin = false) {
     const maximized = !embedded && view === "chat" && maximizedDocument?.id === conversation.id;
     const dockHeader = !embedded && view === "chat" && !maximized && pinnedDocumentIds.includes(conversation.id);
     // On phones the workspace header names the document and holds its menu, which can minimize and close it.
@@ -6073,7 +6073,8 @@ function WorkspaceAppContent({
         <button type="button" className="version-clash-dismiss" aria-label="Dismiss: keep the document as it is"
           onClick={() => void vault.resolveConflict(vault.clashedDocuments?.[conversation.id], "current").catch(() => undefined)}>×</button>
       </p> : undefined}
-      bodyFooter={!embedded && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
+      // A note in the margin sits on the page it would point back to, so it has no "Keep reading".
+      bodyFooter={!embedded && !inMargin && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
       fullScreenToggle={!embedded && view === "chat" && !dockHeader && (maximized || !isMobileViewport) ? renderFullScreenButton(conversation) : undefined}
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
@@ -6197,7 +6198,7 @@ function WorkspaceAppContent({
         onResizePreview={(size) => setMarginResizePreviews((current) => ({ ...current, [note.id]: size ?? undefined }))}
         onPointerDownCapture={() => handleFocusVisibleDocument(note.id)}
         onFocusCapture={() => handleFocusVisibleDocument(note.id)}>
-        {renderConversationChatPanel(note, view)}
+        {renderConversationChatPanel(note, view, undefined, false, true)}
       </MarginDocumentFrame>
       {renderDocumentMarginNotes(note, view)}
     </div>;

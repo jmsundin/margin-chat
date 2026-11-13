@@ -79,6 +79,8 @@
 .is-quiet-page .margin-document-frame .document-header .document-origin { display: none; }
 .is-quiet-page .margin-document-frame .document-body { --document-top-padding: 10px; --document-left-padding: 10px; --document-right-padding: 8px; }
 .is-quiet-page .margin-document-frame .live-document-host { font-size: 14.5px; }
+/* Touch screens always show the header's buttons, so the words keep clear of them. */
+@media (hover: none) { .is-quiet-page .margin-document-frame .document-body { --document-right-padding: 36px; } }
 /* Notes keep Live Preview; ⌘E still switches them. */
 .is-quiet-page .margin-document-frame .live-document-modes { display: none; }
 
