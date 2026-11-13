@@ -85,8 +85,7 @@ export default function AgentRunLog({ steps, spentMicros, budgetMicros, stopReas
         </li>
         : <li key={index} className={`is-${step.kind}${step.ok ? "" : " is-failed"}`}>
           <span aria-hidden="true" className="agent-run-mark">{step.kind === "note" ? "·" : step.ok ? "✓" : "–"}</span>
-          <span className="agent-run-label">{step.label}</span>
-          {step.detail ? <small>{step.detail}</small> : null}
+          <span className="agent-run-text"><span className="agent-run-label">{step.label}</span>{step.detail ? <> <small>{step.detail}</small></> : null}</span>
         </li>)}
       {live ? <li className="is-working">
         <span aria-hidden="true" className="agent-run-mark">✱</span>

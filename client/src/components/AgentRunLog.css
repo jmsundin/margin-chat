@@ -6,7 +6,9 @@
 .agent-run-log li.is-thinking .agent-run-mark { color: var(--muted); }
 .agent-run-label { color: var(--ink); overflow-wrap: anywhere; }
 .agent-run-log li.is-note .agent-run-label { color: var(--muted); font-style: italic; }
-.agent-run-log li small { color: var(--muted); white-space: nowrap; }
+/* A step's label and its detail flow as one piece of text, so a long detail wraps under the label instead of squeezing it. */
+.agent-run-text { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.agent-run-log li small { color: var(--muted); font-size: inherit; }
 .agent-run-log li small::before { content: "· "; }
 .agent-run-elapsed { font-variant-numeric: tabular-nums; }
 .agent-run-log li.is-working .agent-run-mark { animation: agent-run-pulse 1.2s ease-in-out infinite; }

@@ -85,9 +85,11 @@ describe("roadmap steps that make new documents", () => {
     const saved = normalizeAIExecution({ schemaVersion: 1, model: "m", provider: "meta-api", agent: { steps: [], stopReason: "answered", proposals: [proposal] } });
     expect(saved?.agent?.proposals).toEqual([proposal]);
     const error = (step: unknown) => (tools().run("propose_roadmap", args([step])) as { error?: string }).error;
-    expect(error({ key: "a", document_id: "", title: "", notes: "- x", why: "", needs: [] })).toContain("needs a title");
-    expect(error({ key: "a", document_id: "", title: "A", notes: null, why: "", needs: [] })).toContain("give notes for a new document");
-    expect(error({ key: "a", document_id: "", title: "A", notes: "x".repeat(2_001), why: "", needs: [] })).toContain("under 2000 characters");
+    expect(error({ key: "a", document_id: "", title: "", notes: "- x", why: "", needs: [] })).toContain("no title");
+    // Missing notes make an empty new document, and long notes are cut to fit, rather than failing the roadmap.
+    const lenient = tools();
+    expect(lenient.run("propose_roadmap", args([{ key: "a", document_id: "", title: "A", notes: null, why: "", needs: [] }, { key: "b", document_id: "", title: "B", notes: "x".repeat(2_001), why: "", needs: [] }]))).toMatchObject({ ok: true });
+    expect(lenient.list()[0].stages[0].steps.map((item: any) => item.notes.length)).toEqual([0, 2_000]);
   });
 
   test("approving creates the documents under the roadmap and points the steps at them", () => {

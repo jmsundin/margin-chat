@@ -34,11 +34,16 @@ describe("propose_roadmap", () => {
     expect(describeProposalStep("propose_roadmap", draft([{ title: "A", steps: [step("a", "cells"), step("b", "dna")] }]), result).label).toBe("Proposed a roadmap for “Biology of aging”");
   });
 
-  test("refuses unreachable citations, unknown or looping needs, and duplicate keys", () => {
+  test("a step that cites nothing reachable becomes a new document when it has a title, and stray needs are dropped", () => {
+    const run = (stages: unknown) => { const made = tools(); const output = made.run("propose_roadmap", draft(stages)) as any; return { output, steps: made.list()[0]?.stages.flatMap((stage: any) => stage.steps) }; };
+    const invented = run([{ title: "A", steps: [step("x", "invented-doc", [], "Telomeres"), step("y", "roadmap", ["nope", "y", "x"], "Senescence")] }]);
+    expect(invented.steps).toEqual([{ key: "x", notes: "", title: "Telomeres", why: "About x", needs: [] }, { key: "y", notes: "", title: "Senescence", why: "About y", needs: ["x"] }]);
+    expect(invented.output.note).toContain("2 steps cited documents you can't reach");
+  });
+
+  test("refuses a step with nothing to go on, looping needs, and duplicate keys", () => {
     const error = (stages: unknown) => (tools().run("propose_roadmap", draft(stages)) as { error?: string }).error;
-    expect(error([{ title: "A", steps: [step("x", "invented-doc")] }])).toContain("doesn't point at a document you can reach");
-    expect(error([{ title: "A", steps: [step("x", "roadmap")] }])).toContain("other than the roadmap itself");
-    expect(error([{ title: "A", steps: [step("x", "cells", ["nope"])] }])).toContain("isn't another step's key");
+    expect(error([{ title: "A", steps: [step("x", "invented-doc")] }])).toContain("no document you can reach and no title");
     expect(error([{ title: "A", steps: [step("x", "cells"), step("x", "dna")] }])).toContain("used twice");
     expect(error([{ title: "A", steps: [step("x", "cells", ["y"]), step("y", "dna", ["x"])] }])).toContain("loop back");
     expect(error([{ title: "Empty", steps: [] }])).toContain("has no steps");
