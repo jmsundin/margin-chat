@@ -16,35 +16,54 @@ const SHELL_PATHS = new Set(SHELL_FILES);
 const SHELL_HTML = ${JSON.stringify(html)};
 (${installUpdateProtocol.toString()})(self);
 
+// Safari's Cache Storage can fail or never answer (storage pressure, a damaged cache). A
+// worker that waits on it forever leaves the page white, so every cache step has a limit and
+// falls back to the network.
+const CACHE_WAIT_MS = 4000;
+const INSTALL_WAIT_MS = 300000;
+const within = (promise, ms) => {
+  let timer;
+  const limit = new Promise((resolve, reject) => { timer = setTimeout(() => reject(new Error('Cache Storage did not answer')), ms); });
+  return Promise.race([promise, limit]).finally(() => clearTimeout(timer));
+};
+
 self.addEventListener('install', (event) => {
-  event.waitUntil((async () => {
-    const cache = await caches.open(CACHE_NAME);
-    // Build assets are named by their content, so a file an earlier build
-    // already cached is copied instead of downloaded again. Most of a
-    // deploy's 16 MB is unchanged libraries.
-    const earlier = [];
-    for (const name of await caches.keys()) {
-      if (name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME) earlier.push(await caches.open(name));
-    }
-    const download = [];
-    await Promise.all(SHELL_FILES.filter((path) => path !== '/index.html').map(async (path) => {
-      if (path.startsWith('/assets/') && /-[A-Za-z0-9_-]{8,}\\.[^/]+$/.test(path)) {
-        for (const old of earlier) {
-          const hit = await old.match(path);
-          if (hit) { await cache.put(path, hit); return; }
-        }
-      }
-      download.push(path);
-    }));
-    await cache.addAll(download.map((path) => new Request(path, { cache: 'reload' })));
-    // Embed this build's HTML so a deployment during installation cannot pair
-    // newer HTML with the previous build's precached JavaScript.
-    await cache.put('/index.html', new Response(SHELL_HTML, {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
-    }));
-  })());
+  event.waitUntil(within(precache(), INSTALL_WAIT_MS).catch(async (error) => {
+    // Without a working cache this worker still installs and takes over at once, so a worker
+    // stuck on a broken cache is replaced by one that loads the app from the network.
+    console.warn('Offline copy unavailable; loading Margin Chat from the network.', error);
+    try { await within(caches.delete(CACHE_NAME), CACHE_WAIT_MS); } catch { /* Nothing more to clean up. */ }
+    await self.skipWaiting();
+  }));
   // Wait by default. Restart now activates only after all open tabs are ready.
 });
+
+async function precache() {
+  const cache = await caches.open(CACHE_NAME);
+  // Build assets are named by their content, so a file an earlier build
+  // already cached is copied instead of downloaded again. Most of a
+  // deploy's 16 MB is unchanged libraries.
+  const earlier = [];
+  for (const name of await caches.keys()) {
+    if (name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME) earlier.push(await caches.open(name));
+  }
+  const download = [];
+  await Promise.all(SHELL_FILES.filter((path) => path !== '/index.html').map(async (path) => {
+    if (path.startsWith('/assets/') && /-[A-Za-z0-9_-]{8,}\\.[^/]+$/.test(path)) {
+      for (const old of earlier) {
+        const hit = await old.match(path);
+        if (hit) { await cache.put(path, hit); return; }
+      }
+    }
+    download.push(path);
+  }));
+  await cache.addAll(download.map((path) => new Request(path, { cache: 'reload' })));
+  // Embed this build's HTML so a deployment during installation cannot pair
+  // newer HTML with the previous build's precached JavaScript.
+  await cache.put('/index.html', new Response(SHELL_HTML, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  }));
+}
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
@@ -52,9 +71,13 @@ self.addEventListener('activate', (event) => {
     // Retain old chunks through a coordinated restart (and any new-tab race).
     // A later activation without live pages can safely reclaim old generations.
     if (!clients.length) {
-      const names = await caches.keys();
-      await Promise.all(names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
-        .map((name) => caches.delete(name)));
+      try {
+        await within((async () => {
+          const names = await caches.keys();
+          await Promise.all(names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME)
+            .map((name) => caches.delete(name)));
+        })(), CACHE_WAIT_MS);
+      } catch { /* Old copies are reclaimed on a later activation. */ }
     }
     await self.clients.claim();
   })());
@@ -70,7 +93,7 @@ self.addEventListener('fetch', (event) => {
   const isNavigation = request.mode === 'navigate';
   const isOldChunk = url.pathname.startsWith('/assets/') && /-[A-Za-z0-9_-]{8,}\\.[^/]+$/.test(url.pathname);
   if (!isNavigation && !SHELL_PATHS.has(url.pathname) && !isOldChunk) return;
-  event.respondWith((async () => {
+  const fromCache = async () => {
     const cache = await caches.open(CACHE_NAME);
     // HTML and all build assets come from the same generation, including online.
     // A new build is used only when its fully installed worker activates.
@@ -83,7 +106,13 @@ self.addEventListener('fetch', (event) => {
         if (old) return old;
       }
     }
-    return fetch(request);
+    return null;
+  };
+  event.respondWith((async () => {
+    // A cache that fails or hangs must never block the page: go to the network instead.
+    let cached = null;
+    try { cached = await within(fromCache(), CACHE_WAIT_MS); } catch { cached = null; }
+    return cached || fetch(request);
   })());
 });
 `;
