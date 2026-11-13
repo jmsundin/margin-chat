@@ -26,18 +26,20 @@ export interface MapLayoutStage { id: string; title: string; nodeIds: string[] }
 export interface MapLayoutRoadmap {
   id: string;
   stages: MapLayoutStage[];
+  /** Leave a "+ Add step" row at the foot of each stage. */
+  adds?: boolean;
   /** The open roadmap of one of this roadmap's steps, or null when it has none or it is closed. */
   sub: (nodeId: string) => MapLayoutRoadmap | null;
 }
 
-export type MapItemKind = "stage" | "step" | "sub";
+export type MapItemKind = "stage" | "step" | "sub" | "add";
 export interface MapItem {
   /** Unique across nested roadmaps: `<roadmapId>/<stage or node id>`, prefixed by kind. */
   key: string;
   kind: MapItemKind;
   /** Roadmap the stage or step belongs to; for a sub box, the roadmap it shows. */
   roadmapId: string;
-  /** Stage id, node id, or (for a sub box) the parent step's node id. */
+  /** Stage id, node id, (for a sub box) the parent step's node id, or (for an add row) its stage id. */
   id: string;
   /** For a sub box, the roadmap holding the parent step. */
   parentRoadmapId?: string;
@@ -48,11 +50,15 @@ export interface MapItem {
 export const mapStepKey = (roadmapId: string, nodeId: string) => `step:${roadmapId}/${nodeId}`;
 export const mapStageKey = (roadmapId: string, stageId: string) => `stage:${roadmapId}/${stageId}`;
 export const mapSubKey = (roadmapId: string, nodeId: string) => `sub:${roadmapId}/${nodeId}`;
+export const mapAddKey = (roadmapId: string, stageId: string) => `add:${roadmapId}/${stageId}`;
+const ADD_HEIGHT = 26;
 
 function placeStage(roadmap: MapLayoutRoadmap, stage: MapLayoutStage, x: number, top: number, out: MapItem[], depth: number) {
-  const h = STAGE_HEAD + Math.max(1, stage.nodeIds.length) * (MAP_STEP_HEIGHT + STEP_GAP) - STEP_GAP + STAGE_PAD;
+  const rows = roadmap.adds ? stage.nodeIds.length : Math.max(1, stage.nodeIds.length);
+  const h = STAGE_HEAD + rows * (MAP_STEP_HEIGHT + STEP_GAP) - (roadmap.adds ? 0 : STEP_GAP) + (roadmap.adds ? ADD_HEIGHT : 0) + STAGE_PAD;
   out.push({ key: mapStageKey(roadmap.id, stage.id), kind: "stage", roadmapId: roadmap.id, id: stage.id, x, y: top, w: MAP_STAGE_WIDTH, h, depth });
   let right = x + MAP_STAGE_WIDTH, bottom = top + h, subTop = top;
+  if (roadmap.adds) out.push({ key: mapAddKey(roadmap.id, stage.id), kind: "add", roadmapId: roadmap.id, id: stage.id, x: x + STAGE_PAD, y: top + h - STAGE_PAD - ADD_HEIGHT, w: MAP_STEP_WIDTH, h: ADD_HEIGHT, depth });
   stage.nodeIds.forEach((nodeId, index) => {
     const y = top + STAGE_HEAD + index * (MAP_STEP_HEIGHT + STEP_GAP);
     out.push({ key: mapStepKey(roadmap.id, nodeId), kind: "step", roadmapId: roadmap.id, id: nodeId, x: x + STAGE_PAD, y, w: MAP_STEP_WIDTH, h: MAP_STEP_HEIGHT, depth });
@@ -160,4 +166,45 @@ export function mapStageHue(id: string): number {
   let hash = 0;
   for (let index = 0; index < id.length; index++) hash = (hash * 31 + id.charCodeAt(index)) | 0;
   return Math.abs(hash) % 360;
+}
+
+/**
+ * The List layout of the same roadmap: the same stage boxes and steps, stacked one under
+ * another at one width, with an open sub-roadmap nested under its step. Switching layouts
+ * moves the very same items, so the two read as one roadmap arranged two ways.
+ */
+export function layoutRoadmapList(roadmap: MapLayoutRoadmap, width: number): { items: MapItem[]; width: number; height: number } {
+  const items: MapItem[] = [];
+  const indent = 18;
+  const place = (current: MapLayoutRoadmap, x: number, y: number, w: number, depth: number): number => {
+    let top = y;
+    for (const stage of current.stages) {
+      const slot = items.length;
+      items.push(null as unknown as MapItem);
+      let cursor = top + STAGE_HEAD;
+      for (const nodeId of stage.nodeIds) {
+        items.push({ key: mapStepKey(current.id, nodeId), kind: "step", roadmapId: current.id, id: nodeId, x: x + STAGE_PAD, y: cursor, w: w - STAGE_PAD * 2, h: MAP_STEP_HEIGHT, depth });
+        cursor += MAP_STEP_HEIGHT + STEP_GAP;
+        const sub = current.sub(nodeId);
+        if (!sub) continue;
+        const boxX = x + STAGE_PAD + indent, boxW = w - STAGE_PAD * 2 - indent, subSlot = items.length;
+        items.push(null as unknown as MapItem);
+        const inner = place(sub, boxX + SUB_PAD, cursor + SUB_HEAD, boxW - SUB_PAD * 2, depth + 1);
+        const h = Math.max(inner, 0) + SUB_HEAD + SUB_PAD;
+        items[subSlot] = { key: mapSubKey(current.id, nodeId), kind: "sub", roadmapId: sub.id, parentRoadmapId: current.id, id: nodeId, x: boxX, y: cursor, w: boxW, h, depth: depth + 1 };
+        cursor += h + STEP_GAP;
+      }
+      if (current.adds) {
+        items.push({ key: mapAddKey(current.id, stage.id), kind: "add", roadmapId: current.id, id: stage.id, x: x + STAGE_PAD, y: cursor, w: w - STAGE_PAD * 2, h: ADD_HEIGHT, depth });
+        cursor += ADD_HEIGHT;
+      } else if (stage.nodeIds.length) cursor -= STEP_GAP;
+      cursor += STAGE_PAD;
+      items[slot] = { key: mapStageKey(current.id, stage.id), kind: "stage", roadmapId: current.id, id: stage.id, x, y: top, w, h: cursor - top, depth };
+      top = cursor + SUB_GAP;
+    }
+    return current.stages.length ? top - SUB_GAP - y : 0;
+  };
+  const w = Math.max(MAP_STAGE_WIDTH, width);
+  const height = place(roadmap, 0, 0, w, 0);
+  return { items, width: w, height };
 }

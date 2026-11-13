@@ -1,13 +1,13 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { Conversation, RoadmapNode } from "../types";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { Conversation, RoadmapNode, RoadmapStatus } from "../types";
 import { getEditableDocument } from "../lib/editableDocument";
 import {
-  buildRoadmapGraph, getRoadmap, plainPreview, roadmapDraftLink, roadmapNodeTitle, roadmapStatus, ROADMAP_STATUS_LABELS, type RoadmapChange,
+  buildRoadmapGraph, getRoadmap, newRoadmapId, plainPreview, roadmapDraftLink, roadmapNodeTitle, roadmapStatus, ROADMAP_STATUS_LABELS, type RoadmapChange, type RoadmapGraph,
 } from "../lib/roadmap";
 import DocumentLinkPicker from "./DocumentLinkPicker";
 import AgentRunLog from "./AgentRunLog";
-import RoadmapMap, { openSubKey, roadmapOfStep, type RoadmapMapStep } from "./RoadmapMap";
-import StatusMark, { NEXT_ROADMAP_STATUS as NEXT_STATUS, ROADMAP_STATUSES as STATUSES } from "./RoadmapStatusMark";
+import RoadmapCanvas, { openSubKey, roadmapOfStep, type RoadmapFilter, type RoadmapLayoutMode, type RoadmapStep } from "./RoadmapCanvas";
+import StatusMark, { ROADMAP_STATUSES as STATUSES } from "./RoadmapStatusMark";
 import type { AgentProgress } from "../lib/useChatStreams";
 import "./RoadmapView.css";
 
@@ -32,8 +32,12 @@ export interface RoadmapViewProps {
   onDiveDeeper?: (docId: string, roadmapId?: string) => string | null;
   /** Applies one edit to another roadmap shown inside this one (a step's own roadmap); returns why it was refused, or null. */
   onChangeRoadmap?: (roadmapId: string, change: RoadmapChange) => string | null;
-  /** Shown inside another roadmap, under the step it belongs to: these roadmaps hold it, outermost first. */
-  nestedIn?: string[];
+  /** Make a new document and add it as a step; returns why it couldn't, or null. */
+  onCreateStep?: (roadmapId: string, stageId: string, title: string, nodeId: string) => string | null;
+  /** A document as it opens anywhere else, for the sheet beside the roadmap; null when it can't be shown here. */
+  renderDocument?: (docId: string) => ReactNode;
+  /** The roadmap is the whole page: it fills the space, and its own text opens beside it. */
+  fill?: boolean;
   /** Documents AI is writing in now. */
   writingIds?: Record<string, unknown>;
   /** The agent's live progress while it drafts this roadmap: its steps, thinking, and the roadmap so far. */
@@ -44,59 +48,96 @@ export interface RoadmapViewProps {
   onDraftDecision?: (messageId: string, proposalId: string, action: "approve" | "dismiss") => string | null;
 }
 
-export type RoadmapLayoutMode = "list" | "map";
 const LAYOUT_KEY = "margin-chat:roadmap-layout";
+const SHEET_KEY = "margin-chat:roadmap-sheet";
+type SheetMode = "beside" | "card" | "page";
+const phoneQuery = "(max-width: 720px)";
+const isPhone = () => typeof window !== "undefined" && Boolean(window.matchMedia?.(phoneQuery).matches);
 function savedLayout(): RoadmapLayoutMode {
-  try { return window.localStorage?.getItem(LAYOUT_KEY) === "map" ? "map" : "list"; } catch { return "list"; }
+  try {
+    const saved = window.localStorage?.getItem(LAYOUT_KEY);
+    if (saved === "map" || saved === "list") return saved;
+  } catch { /* nothing remembered */ }
+  return isPhone() ? "list" : "map";
 }
+function savedSheetMode(): SheetMode {
+  try { const saved = window.localStorage?.getItem(SHEET_KEY); return saved === "card" ? "card" : "beside"; } catch { return "beside"; }
+}
+const FILTERS: { id: RoadmapFilter; label: string }[] = [
+  { id: "all", label: "All steps" }, { id: "next", label: "Next up" }, { id: "open", label: "Not done" }, { id: "done", label: "Done" },
+];
 
-type Picker = { mode: "add"; stageId: string } | { mode: "relink"; nodeId: string };
-type EdgePath = { key: string; d: string; from: string; to: string };
+type Sheet = { kind: "step"; step: RoadmapStep } | { kind: "text"; roadmapId: string };
+type Adding = { roadmapId: string; stageId: string };
 
 function percent(finished: number, total: number) {
   return total ? Math.round((finished / total) * 100) : 0;
 }
 
-export default function RoadmapView({ conversation, conversations, onChange, onOpen, cloudDocuments, onLoadTargets, onDraft, drafting = false, onExplain, onDiveDeeper, writingIds, progress, budgetMicros, onStop, onDraftDecision, onChangeRoadmap, nestedIn }: RoadmapViewProps) {
-  const roadmap = useMemo(() => getRoadmap(conversation), [conversation]);
+/**
+ * A roadmap is a map of its own: stages are boxes of steps, lines run from what a
+ * step needs to the step, and List is the same map stacked one stage under another.
+ * A step opens its document beside the map, as documents open from the Map; the
+ * roadmap's own text opens the same way from its name.
+ */
+export default function RoadmapView({ conversation, conversations, onChange, onOpen, cloudDocuments, onLoadTargets, onDraft, drafting = false, onExplain, onDiveDeeper,
+  writingIds, progress, budgetMicros, onStop, onDraftDecision, onChangeRoadmap, onCreateStep, renderDocument, fill = false }: RoadmapViewProps) {
+  // ---- Which roadmap is on the canvas: this one, or a step's roadmap gone into ----
+  const [trail, setTrail] = useState<string[]>([]);
+  useEffect(() => { setTrail([]); }, [conversation.id]);
+  const path = useMemo(() => {
+    const ids = [conversation.id];
+    for (const id of trail) { const item = conversations[id]; if (!item || item.nodeType !== "roadmap" || ids.includes(id)) break; ids.push(id); }
+    return ids;
+  }, [conversation.id, trail, conversations]);
+  const shown = path.length > 1 ? conversations[path[path.length - 1]] : conversation;
+  const atRoot = shown.id === conversation.id;
+  const roadmap = useMemo(() => getRoadmap(shown), [shown]);
   const graph = useMemo(() => buildRoadmapGraph(roadmap, conversations), [roadmap, conversations]);
-  const nested = Boolean(nestedIn?.length);
-  const [layoutChoice, setLayoutChoice] = useState<RoadmapLayoutMode>(savedLayout);
-  const layout: RoadmapLayoutMode = nested ? "list" : layoutChoice;
+  const rootGraph = useMemo(() => atRoot ? graph : buildRoadmapGraph(getRoadmap(conversation), conversations), [atRoot, graph, conversation, conversations]);
+
+  const [layout, setLayout] = useState<RoadmapLayoutMode>(savedLayout);
   function chooseLayout(next: RoadmapLayoutMode) {
-    setLayoutChoice(next);
+    setLayout(next);
     try { window.localStorage?.setItem(LAYOUT_KEY, next); } catch { /* the choice just isn't remembered */ }
   }
+  const [filter, setFilter] = useState<RoadmapFilter>("all");
+  const [filterOpen, setFilterOpen] = useState(false);
   // Steps whose own roadmap is open: beside the step on the map, under it in the list.
   const [openSubs, setOpenSubs] = useState<Set<string>>(() => new Set());
-  const toggleSub = (step: RoadmapMapStep) => setOpenSubs((current) => {
+  const toggleSub = (step: RoadmapStep, force?: boolean) => setOpenSubs((current) => {
     const next = new Set(current), key = openSubKey(step.roadmapId, step.nodeId);
-    if (next.has(key)) next.delete(key); else next.add(key);
+    if (force ?? !next.has(key)) next.add(key); else next.delete(key);
     return next;
   });
-  // On the map a step of an open sub-roadmap can be selected too.
-  const [mapSelected, setMapSelected] = useState<RoadmapMapStep | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [picker, setPicker] = useState<Picker | null>(null);
+  const [sheet, setSheet] = useState<Sheet | null>(null);
+  const [sheetMode, setSheetModeState] = useState<SheetMode>(savedSheetMode);
+  const setSheetMode = (mode: SheetMode) => {
+    setSheetModeState(mode);
+    if (mode !== "page") try { window.localStorage?.setItem(SHEET_KEY, mode); } catch { /* not remembered */ }
+  };
+  const closeSheet = () => { setSheet(null); if (sheetMode === "page") setSheetModeState(savedSheetMode()); };
+  const [adding, setAdding] = useState<Adding | null>(null);
+  const [relinking, setRelinking] = useState<RoadmapStep | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(null), 2600); return () => window.clearTimeout(timer); }, [toast]);
   const [draftOpen, setDraftOpen] = useState(false);
   const [goal, setGoal] = useState("");
   const draftLink = useMemo(() => roadmapDraftLink(goal), [goal]);
   const draftLinkName = useMemo(() => {
     if (!draftLink) return "";
     const url = new URL(draftLink);
-    const path = url.pathname.replace(/\/$/u, "");
-    return `${url.hostname.replace(/^www\./u, "")}${path.length > 28 ? `${path.slice(0, 27)}…` : path}`;
+    const pathName = url.pathname.replace(/\/$/u, "");
+    return `${url.hostname.replace(/^www\./u, "")}${pathName.length > 28 ? `${pathName.slice(0, 27)}…` : pathName}`;
   }, [draftLink]);
-  const [edges, setEdges] = useState<EdgePath[]>([]);
-  const spineRef = useRef<HTMLDivElement>(null);
-  const selected = selectedId ? graph.nodesById.get(selectedId) ?? null : null;
+  useEffect(() => { setMessage(null); setSheet(null); setOpenSubs(new Set()); }, [conversation.id]);
+
   // A finished draft waits here, in the roadmap it is for, until it is added or discarded.
   const waitingDraft = useMemo(() => {
-    for (const message of [...conversation.messages].reverse()) {
-      const proposal = message.execution?.agent?.proposals?.find((item) => item.kind === "roadmap" && item.roadmapId === conversation.id && !item.status);
-      if (proposal?.kind === "roadmap") return { messageId: message.id, proposal };
+    for (const item of [...conversation.messages].reverse()) {
+      const proposal = item.execution?.agent?.proposals?.find((entry) => entry.kind === "roadmap" && entry.roadmapId === conversation.id && !entry.status);
+      if (proposal?.kind === "roadmap") return { messageId: item.id, proposal };
     }
     return null;
   }, [conversation.messages, conversation.id]);
@@ -107,14 +148,7 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
   const draftEnd = useRef<HTMLDivElement>(null);
   // While it is being written, the newest step stays in view.
   useEffect(() => { if (building) draftEnd.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" }); }, [building, draftSteps]);
-  const empty = !roadmap.nodes.length;
-  const showEditing = !nested && (editing || empty);
-  // A new roadmap opens ready to edit and stays that way after its first step.
-  useEffect(() => { if (empty && !nested) setEditing(true); }, [empty, nested]);
-  // The map is for reading and moving through a roadmap; changing its shape happens in the list.
-  const mapShown = layout === "map" && !empty && !showEditing;
 
-  useEffect(() => { if (selectedId && !graph.nodesById.has(selectedId)) setSelectedId(null); }, [graph, selectedId]);
   const cloudTitles = useMemo(() => new Map((cloudDocuments ?? []).map((entry) => [entry.id, entry.title])), [cloudDocuments]);
   // Steps and their prerequisites only draw the same everywhere once every
   // target is on this device, so a roadmap brings its documents in.
@@ -128,150 +162,131 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
     onLoadTargets(ids);
   }, [waiting, onLoadTargets]);
   const isWaiting = (node: RoadmapNode) => !conversations[node.target.docId] && cloudTitles.has(node.target.docId);
-  useEffect(() => { setMessage(null); }, [conversation.id]);
 
-  function change(next: RoadmapChange) {
-    const error = onChange(next);
-    setMessage(error);
+  /** Apply an edit to whichever roadmap on the canvas it belongs to. */
+  function changeIn(roadmapId: string, next: RoadmapChange, quiet = false) {
+    const error = roadmapId === conversation.id ? onChange(next) : onChangeRoadmap ? onChangeRoadmap(roadmapId, next) : "This roadmap can be changed from its own document.";
+    if (error) { if (quiet) setToast(error); else setMessage(error); }
     return !error;
   }
+  const graphOf = (roadmapId: string): RoadmapGraph | null => {
+    if (roadmapId === shown.id) return graph;
+    if (roadmapId === conversation.id) return rootGraph;
+    const item = conversations[roadmapId];
+    return item ? buildRoadmapGraph(getRoadmap(item), conversations) : null;
+  };
+  const stepTitle = (roadmapId: string, nodeId: string) => {
+    const node = graphOf(roadmapId)?.nodesById.get(nodeId);
+    return node ? isWaiting(node) ? node.title ?? cloudTitles.get(node.target.docId) ?? "Loading…" : roadmapNodeTitle(node, conversations) : "Missing step";
+  };
 
-  // Prerequisite lines are drawn between the cards where the browser laid them
-  // out, so they follow wrapping on any width.
+  // ---- The open document: beside the map, a card over it, or the whole page; a sheet from the bottom on phones ----
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const [surface, setSurface] = useState({ width: 1000, height: 640 });
+  const [phone, setPhone] = useState(isPhone);
   useLayoutEffect(() => {
-    const spine = spineRef.current;
-    if (!spine) return;
-    const measure = () => {
-      const box = spine.getBoundingClientRect();
-      const rects = new Map<string, DOMRect>();
-      for (const card of spine.querySelectorAll<HTMLElement>("[data-roadmap-node]")) rects.set(card.dataset.roadmapNode!, card.getBoundingClientRect());
-      const next: EdgePath[] = [];
-      for (const edge of graph.edges) {
-        // Stages already read in order, so lines between stages show only for the selected step.
-        const across = graph.nodesById.get(edge.from)?.stage !== graph.nodesById.get(edge.to)?.stage;
-        if (across && selectedId !== edge.from && selectedId !== edge.to) continue;
-        const from = rects.get(edge.to);
-        const to = rects.get(edge.from);
-        if (!from || !to) continue;
-        const down = to.top >= from.bottom - 1;
-        const x1 = from.left + from.width / 2 - box.left, x2 = to.left + to.width / 2 - box.left;
-        const y1 = (down ? from.bottom : from.top) - box.top, y2 = (down ? to.top : to.bottom) - box.top;
-        const bend = Math.max(18, Math.abs(y2 - y1) / 2) * (down ? 1 : -1);
-        next.push({ key: `${edge.from}>${edge.to}`, from: edge.to, to: edge.from, d: `M${x1},${y1} C${x1},${y1 + bend} ${x2},${y2 - bend} ${x2},${y2}` });
-      }
-      setEdges((current) => current.length === next.length && current.every((edge, index) => edge.d === next[index].d && edge.key === next[index].key) ? current : next);
-    };
+    const el = surfaceRef.current; if (!el) return;
+    const measure = () => setSurface((current) => current.width === el.clientWidth && current.height === el.clientHeight ? current : { width: el.clientWidth, height: el.clientHeight });
     measure();
     const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
-    observer?.observe(spine);
-    return () => observer?.disconnect();
-  }, [graph, showEditing, selectedId, mapShown, openSubs]);
+    observer?.observe(el);
+    const media = window.matchMedia?.(phoneQuery);
+    const onMedia = () => setPhone(Boolean(media?.matches));
+    media?.addEventListener?.("change", onMedia);
+    return () => { observer?.disconnect(); media?.removeEventListener?.("change", onMedia); };
+  }, []);
+  const narrow = phone || surface.width < 640;
+  const besideWidth = Math.round(Math.min(560, Math.max(320, surface.width * .46)));
+  const cover = !sheet || sheetMode === "page" ? { right: 0, bottom: 0 }
+    : narrow ? { right: 0, bottom: Math.round(surface.height * .62) }
+    : sheetMode === "card" ? { right: Math.min(420, surface.width * .5) + 16, bottom: 0 } : { right: besideWidth, bottom: 0 };
 
-  const titleOf = (id: string) => { const node = graph.nodesById.get(id); return node ? roadmapNodeTitle(node, conversations) : "Missing step"; };
-
-  // A step's own roadmap, unless it would show a roadmap that already holds this one.
-  function subRoadmapOf(node: RoadmapNode) {
-    const sub = roadmapOfStep(node, conversations);
-    return sub && sub.id !== conversation.id && !nestedIn?.includes(sub.id) ? sub : null;
-  }
-
-  function renderCard(node: RoadmapNode) {
-    const status = roadmapStatus(node);
-    const pending = isWaiting(node);
-    const missing = graph.missing.has(node.id) && !pending;
-    const next = graph.nextUp.has(node.id);
-    const locked = !missing && !pending && !next && status !== "done" && status !== "skipped";
-    const title = pending ? (node.title ?? cloudTitles.get(node.target.docId) ?? "Loading…") : missing ? (node.title ?? "Missing document") : roadmapNodeTitle(node, conversations);
-    const sub = subRoadmapOf(node);
-    const subSteps = sub ? getRoadmap(sub).nodes.length : 0;
-    const subOpen = Boolean(sub) && openSubs.has(openSubKey(conversation.id, node.id));
-    const classes = ["roadmap-node", `is-${status}`, next ? "is-next" : "", locked ? "is-locked" : "", missing ? "is-missing" : "", pending ? "is-pending" : "", node.id === selectedId ? "is-selected" : ""].filter(Boolean).join(" ");
-    return <div key={node.id} className={classes} data-roadmap-node={node.id}>
-      {missing ? <span className="roadmap-node-mark" aria-hidden="true">?</span> : pending ? <span className="roadmap-node-mark" aria-hidden="true"><StatusMark status={status} /></span> : <button type="button" className="roadmap-node-mark"
-        aria-label={`${title}: ${ROADMAP_STATUS_LABELS[status]}. Mark ${ROADMAP_STATUS_LABELS[NEXT_STATUS[status]].toLowerCase()}`}
-        title={`Mark ${ROADMAP_STATUS_LABELS[NEXT_STATUS[status]].toLowerCase()}`}
-        onClick={() => change({ kind: "status", nodeId: node.id, status: NEXT_STATUS[status] })}>
-        <StatusMark status={status} />
-      </button>}
-      <button type="button" className="roadmap-node-open" aria-pressed={node.id === selectedId}
-        aria-label={`${title}${missing ? ", target missing" : next ? ", next up" : ""}. Show details`}
-        onClick={() => setSelectedId((current) => current === node.id ? null : node.id)}>
-        <span className="roadmap-node-title">{title}</span>
-        {pending ? <span className="roadmap-node-tag">Loading</span> : next ? <span className="roadmap-node-tag">Next up</span> : missing ? <span className="roadmap-node-tag">Missing</span> : null}
-      </button>
-      {sub && !showEditing ? <button type="button" className="roadmap-node-chip" aria-expanded={subOpen}
-        title={subOpen ? "Close its roadmap" : "Show its roadmap here"}
-        aria-label={`${subOpen ? "Close" : "Show"} the roadmap of ${title} (${subSteps} ${subSteps === 1 ? "step" : "steps"})`}
-        onClick={() => toggleSub({ roadmapId: conversation.id, nodeId: node.id })}>
-        {subSteps} {subSteps === 1 ? "step" : "steps"}<svg viewBox="0 0 10 10" aria-hidden="true"><path d="M3.5 2l3 3-3 3" /></svg>
-      </button> : null}
-    </div>;
-  }
-
-  /** Details of a step in this roadmap or, on the map, in one of the sub-roadmaps open inside it. */
-  function renderDetail(owner: Conversation, ownerGraph: ReturnType<typeof buildRoadmapGraph>, node: RoadmapNode, onClose: () => void, onSubToggle?: () => void, subOpen = false): ReactNode {
-    const own = owner.id === conversation.id;
-    const changeIn = (next: RoadmapChange) => {
-      if (own) return change(next);
-      const error = onChangeRoadmap ? onChangeRoadmap(owner.id, next) : "This roadmap can be changed from its own document.";
-      setMessage(error);
-      return !error;
+  // Escape closes the open document, or brings a full page back beside the map.
+  useEffect(() => {
+    if (!sheet) return;
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("[contenteditable='true'], input, textarea, select, [role='dialog']")) return;
+      if (sheetMode === "page") setSheetModeState(savedSheetMode()); else setSheet(null);
     };
-    const ownerTitleOf = (id: string) => { const item = ownerGraph.nodesById.get(id); return item ? roadmapNodeTitle(item, conversations) : "Missing step"; };
-    const roadmapId = own ? undefined : owner.id;
-    return <RoadmapDetail key={`${owner.id}/${node.id}`} node={node} graph={ownerGraph} pending={isWaiting(node)} conversations={conversations} editing={own && showEditing}
-      stages={getRoadmap(owner).stages} titleOf={ownerTitleOf} onChange={changeIn} onOpen={onOpen} onClose={onClose}
-      onRelink={() => setPicker({ mode: "relink", nodeId: node.id })}
-      writing={Boolean(writingIds?.[node.target.docId])}
-      subRoadmap={onSubToggle ? { open: subOpen, onToggle: onSubToggle } : undefined}
-      onExplain={onExplain ? () => {
-        // Where the step sits, so the explanation is pitched for this roadmap and not written in a vacuum.
-        const stage = getRoadmap(owner).stages.find((item) => item.id === node.stage)?.title;
-        const before = (ownerGraph.needs.get(node.id) ?? []).map(ownerTitleOf);
-        const after = (ownerGraph.neededBy.get(node.id) ?? []).map(ownerTitleOf);
-        const context = [stage ? `It is in the stage “${stage}”.` : "", before.length ? `I learn these first: ${before.join(", ")}.` : "",
-          after.length ? `It leads on to: ${after.join(", ")}.` : ""].filter(Boolean).join(" ");
-        const error = onExplain(node.target.docId, context, roadmapId); setMessage(error); return !error;
-      } : undefined}
-      onDiveDeeper={onDiveDeeper ? () => { const error = onDiveDeeper(node.target.docId, roadmapId); setMessage(error); return !error; } : undefined} />;
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [sheet, sheetMode]);
+
+  // A step that went away (removed, or its roadmap closed) closes its document.
+  const sheetGraph = sheet?.kind === "step" ? graphOf(sheet.step.roadmapId) : null;
+  const sheetNode = sheet?.kind === "step" ? sheetGraph?.nodesById.get(sheet.step.nodeId) ?? null : null;
+  useEffect(() => { if (sheet?.kind === "step" && !sheetNode) setSheet(null); }, [sheet, sheetNode]);
+
+  function openStep(step: RoadmapStep) {
+    setSheet((current) => current?.kind === "step" && current.step.roadmapId === step.roadmapId && current.step.nodeId === step.nodeId && !narrow ? current : { kind: "step", step });
+  }
+  function enter(step: RoadmapStep) {
+    const node = graphOf(step.roadmapId)?.nodesById.get(step.nodeId);
+    const sub = node ? roadmapOfStep(node, conversations) : null;
+    if (!sub) return;
+    const at = path.indexOf(step.roadmapId);
+    setTrail([...path.slice(1, at + 1), sub.id]);
+    setSheet(null);
   }
 
-  // The selected step opens in place, under its row, so what it says is read where it was clicked.
-  const detail = selected && !mapShown ? renderDetail(conversation, graph, selected, () => setSelectedId(null)) : null;
+  const stages = roadmap.stages;
+  const empty = !stages.length && !roadmap.nodes.length;
+  const order = (target: RoadmapGraph) => target.stages.flatMap((stage) => stage.rows.flatMap((row) => row.nodeIds));
 
-  // On the map the selected step can be in any roadmap open on it.
-  const mapOwner = mapSelected ? mapSelected.roadmapId === conversation.id ? conversation : conversations[mapSelected.roadmapId] : null;
-  const mapOwnerGraph = useMemo(() => !mapOwner ? null : mapOwner.id === conversation.id ? graph : buildRoadmapGraph(getRoadmap(mapOwner), conversations),
-    [mapOwner, conversation.id, graph, conversations]);
-  const mapNode = mapSelected && mapOwnerGraph ? mapOwnerGraph.nodesById.get(mapSelected.nodeId) ?? null : null;
-  useEffect(() => { if (mapSelected && !mapNode) setMapSelected(null); }, [mapSelected, mapNode]);
-  const mapDetail = mapShown && mapOwner && mapOwnerGraph && mapNode ? renderDetail(mapOwner, mapOwnerGraph, mapNode, () => setMapSelected(null),
-    roadmapOfStep(mapNode, conversations) ? () => toggleSub(mapSelected!) : undefined, openSubs.has(openSubKey(mapOwner.id, mapNode.id))) : null;
+  function addStage() {
+    const stageId = newRoadmapId("stage");
+    if (changeIn(shown.id, { kind: "add-stage", title: `Stage ${stages.length + 1}`, stageId }, true)) setToast(`Added a stage. Double-click its name to rename it.`);
+  }
 
-  return <section className={`roadmap${selected && !mapShown ? " has-detail" : ""}${nested ? " is-nested" : ""}`} aria-label={`Roadmap: ${conversation.title || "Untitled roadmap"}`}>
-    <header className="roadmap-head">
-      <div className="roadmap-progress" role="group" aria-label="Progress">
-        <span className="roadmap-progress-label">{graph.total ? `${graph.finished} of ${graph.total} done` : "No steps yet"}</span>
+  return <section className={`roadmap${fill ? " is-fill" : ""}${narrow ? " is-narrow" : ""}`} aria-label={`Roadmap: ${conversation.title || "Untitled roadmap"}`}>
+    <header className="roadmap-toolbar">
+      <nav className="roadmap-trail" aria-label="Roadmap path">
+        {path.map((id, index) => {
+          const last = index === path.length - 1, item = conversations[id];
+          const name = item?.title || "Untitled roadmap";
+          return <span key={id} className="roadmap-trail-item">
+            {index ? <span className="roadmap-trail-sep" aria-hidden="true">›</span> : null}
+            <button type="button" className={last ? "is-current" : undefined} aria-current={last ? "page" : undefined}
+              title={last ? "Open this roadmap's own text" : `Back to ${name}`}
+              onClick={() => { if (last) setSheet({ kind: "text", roadmapId: id }); else { setTrail(path.slice(1, index + 1)); setSheet(null); } }}>
+              {index && !last ? <span className="roadmap-trail-back" aria-hidden="true">‹</span> : null}{name}
+            </button>
+          </span>;
+        })}
+      </nav>
+      {graph.total ? <div className="roadmap-progress" role="group" aria-label="Progress">
+        <span className="roadmap-progress-label"><strong>{graph.finished} of {graph.total}</strong> done</span>
         <span className="roadmap-bar" aria-hidden="true"><span style={{ width: `${percent(graph.finished, graph.total)}%` }} /></span>
         {graph.nextUp.size ? <span className="roadmap-progress-next">{graph.nextUp.size} next up</span> : null}
+      </div> : <span className="roadmap-toolbar-gap" />}
+      <div className="roadmap-layout-switch" role="group" aria-label="Layout">
+        <button type="button" aria-pressed={layout === "map"} onClick={() => chooseLayout("map")} title="Stages side by side, like the Map" aria-label="Map layout">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2" width="4.5" height="12" rx="1.2" /><rect x="10" y="2" width="4.5" height="7" rx="1.2" /><path d="M6 5.5h4" /></svg><span>Map</span>
+        </button>
+        <button type="button" aria-pressed={layout === "list"} onClick={() => chooseLayout("list")} title="The same stages, one under another" aria-label="List layout">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5h8M5 8h8M5 12.5h8M2.5 3.5h0M2.5 8h0M2.5 12.5h0" strokeLinecap="round" /></svg><span>List</span>
+        </button>
       </div>
-      {!nested && !empty ? <div className="roadmap-layout-switch" role="group" aria-label="Layout">
-        <button type="button" aria-pressed={layout === "list"} onClick={() => chooseLayout("list")} title="Stages as a list, one under another">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5 3.5h8M5 8h8M5 12.5h8M2.5 3.5h0M2.5 8h0M2.5 12.5h0" strokeLinecap="round" /></svg>List
+      {graph.total ? <div className="roadmap-menu-wrap">
+        <button type="button" className={`roadmap-tool${filter !== "all" ? " is-on" : ""}`} aria-haspopup="menu" aria-expanded={filterOpen} onClick={() => setFilterOpen(!filterOpen)}>
+          {filter === "all" ? "Filter" : FILTERS.find((item) => item.id === filter)!.label}
         </button>
-        <button type="button" aria-pressed={layout === "map"} onClick={() => { chooseLayout("map"); setEditing(false); }} title="Stages as connected boxes, with sub-roadmaps beside their steps">
-          <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1.5" y="2" width="4.5" height="12" rx="1.2" /><rect x="10" y="2" width="4.5" height="7" rx="1.2" /><path d="M6 5.5h4" /></svg>Map
-        </button>
+        {filterOpen ? <div className="roadmap-menu" role="menu" onKeyDown={(event) => { if (event.key === "Escape") setFilterOpen(false); }}>
+          {FILTERS.map((item) => <button key={item.id} type="button" role="menuitemradio" aria-checked={filter === item.id}
+            onClick={() => { setFilter(item.id); setFilterOpen(false); }}>{item.label}</button>)}
+        </div> : null}
       </div> : null}
-      {onDraft && !draftOpen && !nested ? <button type="button" className="roadmap-edit-toggle" disabled={drafting}
-        title="AI proposes stages and steps for you to approve, from your documents or from a link you paste" onClick={() => { setDraftOpen(true); setMessage(null); }}>
-        {drafting ? "Drafting…" : "Draft with AI"}
+      {onDraft && atRoot ? <button type="button" className="roadmap-tool" disabled={drafting}
+        title="AI proposes stages and steps for you to approve, from your documents or from a link you paste" onClick={() => { setDraftOpen(!draftOpen); setMessage(null); }}>
+        {drafting ? "Drafting…" : <><span className="roadmap-tool-long">Draft with </span>AI</>}
       </button> : null}
-      {!empty && !nested ? <button type="button" className="roadmap-edit-toggle" aria-pressed={editing} onClick={() => { setEditing(!editing); setMessage(null); }}>
-        {editing ? "Done" : "Edit"}
-      </button> : null}
+      <button type="button" className="roadmap-tool is-icon" aria-label="Add a stage" title="Add a stage" onClick={addStage}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" strokeLinecap="round" /></svg>
+      </button>
     </header>
-    {draftOpen && onDraft ? <form className="roadmap-draft" onSubmit={(event) => {
+    {draftOpen && onDraft && atRoot ? <form className="roadmap-draft" onSubmit={(event) => {
       event.preventDefault();
       if (!goal.trim()) return;
       const error = onDraft(goal.trim());
@@ -284,14 +299,14 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
       <button type="button" onClick={() => setDraftOpen(false)}>Cancel</button>
       {draftLink
         ? <p>AI reads <strong>{draftLinkName}</strong> and proposes its sections as stages and its topics as steps, using your documents where they fit and new ones for the rest. Nothing is added until you approve it.</p>
-        : <p>AI searches your documents and proposes stages and steps below the roadmap. Paste a link to a roadmap, an article or an X post to build from that page instead. Nothing is added until you approve it.</p>}
+        : <p>AI searches your documents and proposes stages and steps for this roadmap. Paste a link to a roadmap, an article or an X post to build from that page instead. Nothing is added until you approve it.</p>}
     </form> : null}
     {message ? <p className="roadmap-message" role="alert">{message}<button type="button" aria-label="Dismiss" onClick={() => setMessage(null)}>×</button></p> : null}
     {graph.cycleEdges.length ? <p className="roadmap-message" role="note">
       Some prerequisites loop back on each other, so {graph.cycleEdges.length === 1 ? "one is" : `${graph.cycleEdges.length} are`} ignored:{" "}
-      {graph.cycleEdges.map((edge) => `${titleOf(edge.from)} needs ${titleOf(edge.to)}`).join("; ")}.
+      {graph.cycleEdges.map((edge) => `${stepTitle(shown.id, edge.from)} needs ${stepTitle(shown.id, edge.to)}`).join("; ")}.
     </p> : null}
-    {working || draftStages ? <section className={`roadmap-build${working ? " is-live" : ""}`} aria-label="Roadmap draft" aria-busy={working}>
+    {atRoot && (working || draftStages) ? <section className={`roadmap-build${working ? " is-live" : ""}`} aria-label="Roadmap draft" aria-busy={working}>
       <header className="roadmap-build-head">
         <strong>{working ? draftStages ? "Building the roadmap…" : "Agent is working…" : `Draft ready: ${draftStages!.length} ${draftStages!.length === 1 ? "stage" : "stages"}, ${draftSteps} ${draftSteps === 1 ? "step" : "steps"}`}</strong>
         {working && draftStages ? <span className="roadmap-build-count">{draftSteps} {draftSteps === 1 ? "step" : "steps"} so far</span> : null}
@@ -313,237 +328,269 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
         <div ref={draftEnd} />
       </div> : null}
     </section> : null}
-    {mapShown ? <RoadmapMap conversation={conversation} graph={graph} conversations={conversations} open={openSubs} onToggle={toggleSub}
-      selected={mapNode ? mapSelected : null} onSelect={setMapSelected} isWaiting={isWaiting} cloudTitles={cloudTitles} writingIds={writingIds} detail={mapDetail}
-      onStatus={(step, status) => {
-        if (step.roadmapId === conversation.id) { change({ kind: "status", nodeId: step.nodeId, status }); return; }
-        setMessage(onChangeRoadmap ? onChangeRoadmap(step.roadmapId, { kind: "status", nodeId: step.nodeId, status }) : null);
-      }} /> : <div className="roadmap-layout">
-      <div className="roadmap-spine" ref={spineRef}>
-        <svg className="roadmap-edges" aria-hidden="true">
-          {edges.map((edge) => <path key={edge.key} d={edge.d}
-            className={selectedId && (edge.from === selectedId || edge.to === selectedId) ? "is-active" : undefined} />)}
-        </svg>
-        {graph.stages.map((stage, stageIndex) => <section key={stage.id || "unstaged"} className="roadmap-stage" aria-label={stage.title}>
-          <header className="roadmap-stage-head">
-            {showEditing && !stage.unknown ? <input className="roadmap-stage-title-input" aria-label="Stage name" defaultValue={stage.title}
-              key={stage.title} onBlur={(event) => { if (event.target.value.trim() && event.target.value !== stage.title) change({ kind: "rename-stage", stageId: stage.id, title: event.target.value }); }}
-              onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
-              : <h3 className="roadmap-stage-title">{stage.title}</h3>}
-            <span className="roadmap-stage-count">{stage.finished}/{stage.total}</span>
-            <span className="roadmap-bar is-small" aria-hidden="true"><span style={{ width: `${percent(stage.finished, stage.total)}%` }} /></span>
-            {showEditing && !stage.unknown ? <span className="roadmap-stage-actions">
-              <button type="button" aria-label={`Move ${stage.title} up`} title="Move up" disabled={stageIndex === 0}
-                onClick={() => change({ kind: "move-stage", stageId: stage.id, direction: -1 })}>↑</button>
-              <button type="button" aria-label={`Move ${stage.title} down`} title="Move down" disabled={stageIndex >= roadmap.stages.length - 1}
-                onClick={() => change({ kind: "move-stage", stageId: stage.id, direction: 1 })}>↓</button>
-              <button type="button" aria-label={`Remove ${stage.title}`} title="Remove stage"
-                onClick={() => change({ kind: "remove-stage", stageId: stage.id })}>×</button>
-            </span> : null}
-          </header>
-          {stage.rows.map((row, rowIndex) => <Fragment key={rowIndex}>
-            <div className="roadmap-row">{row.nodeIds.map((id) => renderCard(graph.nodesById.get(id)!))}</div>
-            {selectedId && row.nodeIds.includes(selectedId) ? detail : null}
-            {showEditing ? null : row.nodeIds.map((id) => {
-              const node = graph.nodesById.get(id)!, sub = subRoadmapOf(node);
-              if (!sub || !openSubs.has(openSubKey(conversation.id, id))) return null;
-              return <div key={`sub-${id}`} className="roadmap-nested">
-                <p className="roadmap-nested-title">Roadmap of <strong>{sub.title || "Untitled roadmap"}</strong></p>
-                <RoadmapView conversation={sub} conversations={conversations} nestedIn={[...(nestedIn ?? []), conversation.id]}
-                  onChange={(next) => onChangeRoadmap ? onChangeRoadmap(sub.id, next) : "This roadmap can be changed from its own document."}
-                  onChangeRoadmap={onChangeRoadmap} onOpen={onOpen} cloudDocuments={cloudDocuments} onLoadTargets={onLoadTargets} writingIds={writingIds}
-                  onExplain={onExplain ? (docId, context, roadmapId) => onExplain(docId, context, roadmapId ?? sub.id) : undefined}
-                  onDiveDeeper={onDiveDeeper ? (docId, roadmapId) => onDiveDeeper(docId, roadmapId ?? sub.id) : undefined} />
-              </div>;
-            })}
-          </Fragment>)}
-          {showEditing && !stage.unknown ? <button type="button" className="roadmap-add" onClick={() => setPicker({ mode: "add", stageId: stage.id })}>+ Add step</button> : null}
-        </section>)}
-        {showEditing ? <button type="button" className="roadmap-add is-stage" onClick={() => change({ kind: "add-stage", title: `Stage ${roadmap.stages.length + 1}` })}>+ Add stage</button> : null}
-        {empty ? <p className="roadmap-empty">Add steps from your documents, then mark what each one needs first. Done and skipped steps unlock the ones after them.</p> : null}
-      </div>
-    </div>}
-    {picker ? <div className="roadmap-picker" role="dialog" aria-modal="true" aria-label={picker.mode === "add" ? "Add a step" : "Relink step"}
-      onPointerDown={(event) => { if (event.target === event.currentTarget) setPicker(null); }}>
+    <div className={`roadmap-surface${sheet ? ` has-sheet is-sheet-${narrow && sheetMode !== "page" ? "bottom" : sheetMode}` : ""}`} ref={surfaceRef}>
+      {empty ? <div className="roadmap-empty">
+        <strong>An empty roadmap</strong>
+        <p>Add a stage, then add steps to it from your documents. Drag a step's dot onto a step that needs it first; done steps unlock the ones after them.</p>
+        <div>
+          <button type="button" onClick={addStage}>+ Add a stage</button>
+          {onDraft && atRoot ? <button type="button" onClick={() => setDraftOpen(true)}>Draft with AI</button> : null}
+        </div>
+      </div> : <RoadmapCanvas roadmap={shown} graph={graph} conversations={conversations} layout={layout} filter={filter}
+        open={openSubs} onToggle={(step) => toggleSub(step)} onEnter={enter}
+        selected={sheet?.kind === "step" ? sheet.step : null} onSelect={openStep}
+        onStatus={(step, status) => changeIn(step.roadmapId, { kind: "status", nodeId: step.nodeId, status }, true)}
+        onMove={(step, stageId) => {
+          const owner = conversations[step.roadmapId] ?? shown;
+          const stage = getRoadmap(owner).stages.find((item) => item.id === stageId);
+          if (stage && changeIn(step.roadmapId, { kind: "move-node", nodeId: step.nodeId, stageId }, true)) setToast(`Moved “${stepTitle(step.roadmapId, step.nodeId)}” to ${stage.title}`);
+        }}
+        onLink={(before, step) => {
+          if (changeIn(step.roadmapId, { kind: "add-prerequisite", nodeId: step.nodeId, prerequisiteId: before.nodeId }, true))
+            setToast(`“${stepTitle(step.roadmapId, step.nodeId)}” now needs “${stepTitle(before.roadmapId, before.nodeId)}” first`);
+        }}
+        onAddStep={(roadmapId, stageId) => setAdding({ roadmapId, stageId })}
+        onRenameStage={(roadmapId, stageId, title) => changeIn(roadmapId, { kind: "rename-stage", stageId, title }, true)}
+        onMoveStage={(roadmapId, stageId, direction) => changeIn(roadmapId, { kind: "move-stage", stageId, direction }, true)}
+        onRemoveStage={(roadmapId, stageId) => changeIn(roadmapId, { kind: "remove-stage", stageId }, true)}
+        cloudTitles={cloudTitles} writingIds={writingIds} cover={cover} fitKey={`${shown.id}|${layout}${layout === "list" ? `|${cover.right}` : ""}`} />}
+      {sheet ? <aside className="roadmap-sheet" style={!narrow && sheetMode === "beside" ? { width: besideWidth } : undefined}
+        aria-label={sheet.kind === "text" ? `${conversations[sheet.roadmapId]?.title || "Roadmap"}: its own text` : `Step: ${stepTitle(sheet.step.roadmapId, sheet.step.nodeId)}`}>
+        <div className="roadmap-sheet-bar">
+          <span className="roadmap-sheet-name">{sheet.kind === "text" ? conversations[sheet.roadmapId]?.title || "Untitled roadmap" : stepTitle(sheet.step.roadmapId, sheet.step.nodeId)}</span>
+          {narrow ? null : <button type="button" aria-pressed={sheetMode === "card"} title="A card over the roadmap" aria-label="Show as a card" onClick={() => setSheetMode("card")}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1.5" /></svg></button>}
+          {narrow ? null : <button type="button" aria-pressed={sheetMode === "beside"} title="Beside the roadmap" aria-label="Show beside the roadmap" onClick={() => setSheetMode("beside")}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M9 3v10" /></svg></button>}
+          <button type="button" aria-pressed={sheetMode === "page"} title={sheetMode === "page" ? "Back beside the roadmap" : "Full page"} aria-label={sheetMode === "page" ? "Back to the roadmap" : "Show as a full page"}
+            onClick={() => sheetMode === "page" ? setSheetModeState(savedSheetMode()) : setSheetModeState("page")}>
+            <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M9.5 2.5h4v4M6.5 13.5h-4v-4M13.5 2.5 9 7M2.5 13.5 7 9" /></svg></button>
+          <button type="button" aria-label="Close" title="Close" onClick={closeSheet}>×</button>
+        </div>
+        <div className="roadmap-sheet-scroll">
+          {sheet.kind === "text" ? <>
+            <div className="roadmap-strip"><p className="roadmap-strip-where">This roadmap's own text{graphOf(sheet.roadmapId)?.total ? ` · ${graphOf(sheet.roadmapId)!.finished} of ${graphOf(sheet.roadmapId)!.total} steps done` : ""}</p></div>
+            {(fill || sheet.roadmapId !== conversation.id) && renderDocument ? renderDocument(sheet.roadmapId) ?? <SheetFallback conversation={conversations[sheet.roadmapId]} onOpen={() => onOpen({ docId: sheet.roadmapId })} />
+              : <SheetFallback conversation={conversations[sheet.roadmapId]} onOpen={() => onOpen({ docId: sheet.roadmapId })} note={fill ? undefined : "This roadmap's text is right below it."} />}
+          </> : sheetNode && sheetGraph ? <StepSheet key={`${sheet.step.roadmapId}/${sheet.step.nodeId}`} step={sheet.step} node={sheetNode} graph={sheetGraph}
+            owner={conversations[sheet.step.roadmapId] ?? shown} conversations={conversations} pending={isWaiting(sheetNode)}
+            writing={Boolean(writingIds?.[sheetNode.target.docId])} order={order(sheetGraph)} titleOf={(id) => stepTitle(sheet.step.roadmapId, id)}
+            subOpen={openSubs.has(openSubKey(sheet.step.roadmapId, sheet.step.nodeId))}
+            onGo={(nodeId) => openStep({ roadmapId: sheet.step.roadmapId, nodeId })}
+            onChange={(next) => changeIn(sheet.step.roadmapId, next)}
+            onToggleSub={() => toggleSub(sheet.step)} onEnter={() => enter(sheet.step)} onOpen={onOpen}
+            onRelink={() => setRelinking(sheet.step)} renderDocument={renderDocument}
+            onExplain={onExplain ? (context) => { const error = onExplain(sheetNode.target.docId, context, sheet.step.roadmapId === conversation.id ? undefined : sheet.step.roadmapId); setMessage(error); return !error; } : undefined}
+            onDiveDeeper={onDiveDeeper ? () => { const error = onDiveDeeper(sheetNode.target.docId, sheet.step.roadmapId === conversation.id ? undefined : sheet.step.roadmapId); setMessage(error); return !error; } : undefined} /> : null}
+        </div>
+      </aside> : null}
+      {toast ? <p className="roadmap-toast" role="status" style={{ bottom: 64 + cover.bottom }}>{toast}</p> : null}
+    </div>
+    {adding ? <AddStepDialog adding={adding} conversations={conversations} roadmapId={adding.roadmapId}
+      stageTitle={getRoadmap(conversations[adding.roadmapId] ?? shown).stages.find((stage) => stage.id === adding.stageId)?.title ?? "this stage"}
+      onCreate={onCreateStep ? (title) => {
+        const nodeId = newRoadmapId("node");
+        const error = onCreateStep(adding.roadmapId, adding.stageId, title, nodeId);
+        if (error) { setToast(error); return; }
+        setAdding(null);
+        setSheet({ kind: "step", step: { roadmapId: adding.roadmapId, nodeId } });
+      } : undefined}
+      onPick={(target) => {
+        const nodeId = newRoadmapId("node");
+        if (changeIn(adding.roadmapId, { kind: "add-node", stageId: adding.stageId, target, nodeId })) setAdding(null);
+      }} onCancel={() => setAdding(null)} /> : null}
+    {relinking ? <div className="roadmap-picker" role="dialog" aria-modal="true" aria-label="Relink step"
+      onPointerDown={(event) => { if (event.target === event.currentTarget) setRelinking(null); }}>
       <div className="roadmap-picker-card">
-        <DocumentLinkPicker conversations={conversations} sourceConversationId={conversation.id}
-          heading={picker.mode === "add" ? "Add a document or block as a step" : "Point this step at another document"}
-          onCancel={() => setPicker(null)}
+        <DocumentLinkPicker conversations={conversations} sourceConversationId={relinking.roadmapId} heading="Point this step at another document"
+          onCancel={() => setRelinking(null)}
           onSelect={(target) => {
-            const node = { docId: target.conversationId, ...(target.blockId ? { blockId: target.blockId } : {}) };
-            if (picker.mode === "add") change({ kind: "add-node", stageId: picker.stageId, target: node });
-            else change({ kind: "relink", nodeId: picker.nodeId, target: node });
-            setPicker(null);
+            changeIn(relinking.roadmapId, { kind: "relink", nodeId: relinking.nodeId, target: { docId: target.conversationId, ...(target.blockId ? { blockId: target.blockId } : {}) } });
+            setRelinking(null);
           }} />
       </div>
     </div> : null}
   </section>;
 }
 
-interface RoadmapDetailProps {
-  node: RoadmapNode;
-  pending: boolean;
-  graph: ReturnType<typeof buildRoadmapGraph>;
-  conversations: Record<string, Conversation>;
-  stages: { id: string; title: string }[];
-  editing: boolean;
-  titleOf: (id: string) => string;
-  onChange: (change: RoadmapChange) => boolean;
-  onOpen: (target: RoadmapNode["target"]) => void;
-  onClose: () => void;
-  onRelink: () => void;
-  /** AI is writing in the step's document. */
-  writing?: boolean;
-  onExplain?: () => boolean;
-  onDiveDeeper?: () => boolean;
-  /** On the map: show or hide the step's own roadmap beside it. */
-  subRoadmap?: { open: boolean; onToggle: () => void };
+function AddStepDialog({ adding, conversations, roadmapId, stageTitle, onCreate, onPick, onCancel }: {
+  adding: Adding; conversations: Record<string, Conversation>; roadmapId: string; stageTitle: string;
+  onCreate?: (title: string) => void; onPick: (target: RoadmapNode["target"]) => void; onCancel: () => void;
+}) {
+  const [title, setTitle] = useState("");
+  return <div className="roadmap-picker" role="dialog" aria-modal="true" aria-label={`Add a step to ${stageTitle}`}
+    onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
+    <div className="roadmap-picker-card" data-stage={adding.stageId}>
+      {onCreate ? <form className="roadmap-new-step" onSubmit={(event) => { event.preventDefault(); if (title.trim()) onCreate(title.trim()); }}>
+        <label htmlFor="roadmap-new-step">New step in <strong>{stageTitle}</strong></label>
+        <div>
+          <input id="roadmap-new-step" autoFocus value={title} maxLength={200} placeholder="What to learn or do" onChange={(event) => setTitle(event.target.value)}
+            onKeyDown={(event) => { if (event.key === "Escape") onCancel(); }} />
+          <button type="submit" disabled={!title.trim()}>Add</button>
+        </div>
+        <p>Makes a new document for it. Or pick one you already have:</p>
+      </form> : null}
+      <DocumentLinkPicker conversations={conversations} sourceConversationId={roadmapId}
+        heading={onCreate ? "Use a document or block" : "Add a document or block as a step"} onCancel={onCancel}
+        onSelect={(target) => onPick({ docId: target.conversationId, ...(target.blockId ? { blockId: target.blockId } : {}) })} />
+    </div>
+  </div>;
 }
 
-function RoadmapDetail({ node, pending, graph, conversations, stages, editing, titleOf, onChange, onOpen, onClose, onRelink, writing = false, onExplain, onDiveDeeper, subRoadmap }: RoadmapDetailProps) {
+/** What a document says, read here when it can't be opened beside the roadmap. */
+function SheetFallback({ conversation, onOpen, note, blockId }: { conversation?: Conversation; onOpen: () => void; note?: string; blockId?: string }) {
+  const paragraphs = useMemo(() => {
+    if (!conversation) return [];
+    const blocks = getEditableDocument(conversation).blocks;
+    const text = blockId ? blocks.find((block) => block.id === blockId)?.content ?? "" : blocks.map((block) => block.content).join("\n\n");
+    return text.split(/\n+/u).map((line) => ({ text: plainPreview(line),
+      kind: /^\s*#{1,6}\s/u.test(line) ? "heading" : /^\s*(?:[-+*]|\d+[.)])\s/u.test(line) ? "item" : "text" })).filter((line) => line.text).slice(0, 200);
+  }, [conversation, blockId]);
+  return <div className="roadmap-sheet-reading">
+    {note ? <p className="roadmap-sheet-muted">{note}</p> : null}
+    {paragraphs.length ? paragraphs.map((line, index) => <p key={index} className={`is-${line.kind}`}>{line.text}</p>) : <p className="roadmap-sheet-muted">Nothing written here yet.</p>}
+    <button type="button" className="roadmap-sheet-action" onClick={onOpen}>Open {blockId ? "passage" : "document"}<span aria-hidden="true"> ↗</span></button>
+  </div>;
+}
+
+interface StepSheetProps {
+  step: RoadmapStep;
+  node: RoadmapNode;
+  graph: RoadmapGraph;
+  owner: Conversation;
+  conversations: Record<string, Conversation>;
+  pending: boolean;
+  writing: boolean;
+  /** The roadmap's steps in reading order, for Previous and Next. */
+  order: string[];
+  titleOf: (nodeId: string) => string;
+  subOpen: boolean;
+  onGo: (nodeId: string) => void;
+  onChange: (change: RoadmapChange) => boolean;
+  onToggleSub: () => void;
+  onEnter: () => void;
+  onOpen: (target: RoadmapNode["target"]) => void;
+  onRelink: () => void;
+  renderDocument?: (docId: string) => ReactNode;
+  onExplain?: (context: string) => boolean;
+  onDiveDeeper?: () => boolean;
+}
+
+/** A step's document, under a strip that says where it sits on the roadmap and what it needs and unlocks. */
+function StepSheet({ node, graph, owner, conversations, pending, writing, order, titleOf, subOpen, onGo, onChange, onToggleSub, onEnter, onOpen, onRelink, renderDocument, onExplain, onDiveDeeper }: StepSheetProps) {
   const status = roadmapStatus(node);
   const target = conversations[node.target.docId];
   const missing = graph.missing.has(node.id) && !pending;
+  const index = order.indexOf(node.id);
+  const stage = getRoadmap(owner).stages.find((item) => item.id === node.stage);
+  const position = useMemo(() => new Map(order.map((id, at) => [id, at])), [order]);
+  const inOrder = (ids: string[]) => [...ids].sort((a, b) => (position.get(a) ?? 0) - (position.get(b) ?? 0));
+  const needs = inOrder(graph.needs.get(node.id) ?? []);
+  const unlocks = inOrder(graph.neededBy.get(node.id) ?? []);
+  const others = graph.roadmap.nodes.filter((item) => item.id !== node.id && !needs.includes(item.id));
+  const sub = roadmapOfStep(node, conversations);
+  const subSteps = sub ? getRoadmap(sub).nodes.length : 0;
+  const [settings, setSettings] = useState(false);
   const [proof, setProof] = useState(node.proof ?? "");
   useEffect(() => { setProof(node.proof ?? ""); }, [node.proof]);
-  const position = useMemo(() => new Map(graph.stages.flatMap((stage) => stage.rows.flatMap((row) => row.nodeIds)).map((id, index) => [id, index])), [graph]);
-  const inReadingOrder = (ids: string[]) => [...ids].sort((a, b) => (position.get(a) ?? 0) - (position.get(b) ?? 0));
-  const needs = inReadingOrder(graph.needs.get(node.id) ?? []);
-  const neededBy = inReadingOrder(graph.neededBy.get(node.id) ?? []);
-  const others = graph.roadmap.nodes.filter((item) => item.id !== node.id && !needs.includes(item.id));
-  // A step that was dived into holds a roadmap of its own, which can be dived into in turn.
-  const hasRoadmap = target?.nodeType === "roadmap" && !node.target.blockId ? getRoadmap(target).nodes.length : 0;
-  // The step's text is read here, a paragraph per line of the document.
-  const [reading, setReading] = useState(true);
-  const { preview, paragraphs, long, thin } = useMemo(() => {
-    if (!target) return { preview: "", paragraphs: [] as { text: string; kind: string }[], long: false, thin: false };
-    const editable = getEditableDocument(target);
-    const blocks = editable.blocks;
-    const text = node.target.blockId ? blocks.find((block) => block.id === node.target.blockId)?.content ?? ""
-      : blocks.map((block) => block.content).join("\n\n");
-    const plain = plainPreview(text);
-    return { preview: plain.length > 360 ? `${plain.slice(0, 360).trimEnd()}…` : plain, long: plain.length > 360,
-      // Only a title or an outline so far, and AI hasn't written in it: there is nothing to learn from yet.
-      thin: !node.target.blockId && !editable.generations.length && plain.length < 600,
-      paragraphs: text.split(/\n+/u).map((line) => ({ text: plainPreview(line),
-        kind: /^\s*#{1,6}\s/u.test(line) ? "heading" : /^\s*(?:[-+*]|\d+[.)])\s/u.test(line) ? "item" : "text" }))
-        .filter((line) => line.text).slice(0, 200) };
-  }, [target, node.target.blockId]);
-  const resources = (target?.relations ?? []).filter((relation) => relation.type === "cites" && relation.targetConversationId && conversations[relation.targetConversationId]);
-  const notes = target ? Object.values(conversations).filter((item) => item.parentId === target.id && item.document?.marginNote
-    && (!node.target.blockId || item.branchAnchor?.sourceBlockId === node.target.blockId)) : [];
+
+  const context = () => {
+    const before = needs.map(titleOf), after = unlocks.map(titleOf);
+    return [stage ? `It is in the stage “${stage.title}”.` : "", before.length ? `I learn these first: ${before.join(", ")}.` : "",
+      after.length ? `It leads on to: ${after.join(", ")}.` : ""].filter(Boolean).join(" ");
+  };
   // Opening a step whose document has nothing to read yet asks AI for the explanation, once.
+  const thin = useMemo(() => {
+    if (!target || node.target.blockId) return false;
+    const editable = getEditableDocument(target);
+    return !editable.generations.length && plainPreview(editable.blocks.map((block) => block.content).join("\n\n")).length < 600;
+  }, [target, node.target.blockId]);
   const asked = useRef(false);
   useEffect(() => {
     if (asked.current || !thin || writing || pending || missing || !onExplain) return;
     asked.current = true;
-    onExplain();
+    onExplain(context());
+    // context reads the same graph; asking once is the point.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [thin, writing, pending, missing, onExplain]);
-  const title = pending ? (node.title ?? "Loading…") : missing ? (node.title ?? "Missing document") : roadmapNodeTitle(node, conversations);
-  const row = graph.stages.flatMap((stage) => stage.rows).find((item) => item.nodeIds.includes(node.id));
-  const rowIndex = row?.nodeIds.indexOf(node.id) ?? 0;
 
-  return <aside className="roadmap-detail" aria-label={`Step: ${title}`}>
-    <header className="roadmap-detail-head">
-      <h3>{title}</h3>
-      <button type="button" className="roadmap-detail-close" aria-label="Close step details" onClick={onClose}>×</button>
-    </header>
-    {pending ? <p className="roadmap-detail-muted">Bringing this document in from your cloud vault…</p> : missing ? <div className="roadmap-detail-missing">
-      <p>The {node.target.blockId ? "block" : "document"} this step pointed at was deleted or moved.</p>
-      <div className="roadmap-detail-actions">
-        <button type="button" onClick={onRelink}>Relink</button>
-        <button type="button" onClick={() => onChange({ kind: "remove-node", nodeId: node.id })}>Remove step</button>
+  const chips = (ids: string[], label: string, removable: boolean) => ids.length ? <div className="roadmap-strip-links">
+    <span>{label}</span>
+    {ids.map((id) => <span key={id} className="roadmap-strip-chip">
+      <button type="button" onClick={() => onGo(id)} title={`Open ${titleOf(id)}`}><StatusMark status={roadmapStatus(graph.nodesById.get(id)!)} />{titleOf(id)}</button>
+      {removable ? <button type="button" className="roadmap-strip-remove" aria-label={`Remove prerequisite ${titleOf(id)}`} title="Doesn't need this first"
+        onClick={() => onChange({ kind: "remove-prerequisite", nodeId: node.id, prerequisiteId: id })}>×</button> : null}
+    </span>)}
+  </div> : null;
+
+  return <>
+    <div className="roadmap-strip">
+      <div className="roadmap-strip-row">
+        <p className="roadmap-strip-where">{stage?.title ?? "Unstaged"} · {owner.title || "Untitled roadmap"}</p>
+        <button type="button" disabled={index <= 0} onClick={() => onGo(order[index - 1])} title={index > 0 ? `Previous: ${titleOf(order[index - 1])}` : undefined}>← Prev</button>
+        <button type="button" disabled={index < 0 || index >= order.length - 1} onClick={() => onGo(order[index + 1])} title={index >= 0 && index < order.length - 1 ? `Next: ${titleOf(order[index + 1])}` : undefined}>Next →</button>
       </div>
-    </div> : <>
-      {reading && paragraphs.length ? <div className="roadmap-detail-preview is-reading">{paragraphs.map((line, index) => <p key={index} className={`is-${line.kind}`}>{line.text}</p>)}</div>
-        : preview ? <p className="roadmap-detail-preview">{preview}</p> : null}
-      {writing ? <p className="roadmap-detail-muted" role="status">AI is writing an explanation…</p> : null}
-      <div className="roadmap-detail-actions">
-        {long || reading ? <button type="button" aria-expanded={reading} onClick={() => setReading(!reading)}>{reading ? "Show less" : "Read here"}</button> : null}
-        <button type="button" onClick={() => onOpen(node.target)}>
-          Open {node.target.blockId ? "passage" : "document"}<span aria-hidden="true"> ↗</span>
-        </button>
-        {onExplain && !node.target.blockId ? <button type="button" disabled={writing} title="AI writes an explanation of this topic into the step's document"
-          onClick={() => { if (onExplain()) setReading(true); }}>Explain with AI</button> : null}
-        {hasRoadmap && subRoadmap ? <button type="button" aria-expanded={subRoadmap.open} onClick={subRoadmap.onToggle}>
-          {subRoadmap.open ? "Hide its roadmap" : `Show its roadmap (${hasRoadmap} ${hasRoadmap === 1 ? "step" : "steps"})`}
-        </button> : null}
-        {hasRoadmap ? <button type="button" title="This step has a roadmap of its own" onClick={() => onOpen({ docId: node.target.docId })}>
-          {subRoadmap ? <>Open its roadmap<span aria-hidden="true"> ↗</span></> : `Open its roadmap (${hasRoadmap} ${hasRoadmap === 1 ? "step" : "steps"})`}
-        </button>
-          : onDiveDeeper && !node.target.blockId ? <button type="button" disabled={writing} title="AI breaks this topic into its own roadmap, inside the step's document, for you to approve"
-            onClick={() => {
-              // On a phone the step is a sheet over the page; it steps aside for the document the answer is written in.
-              if (onDiveDeeper() && window.matchMedia?.("(max-width: 720px)").matches) onClose();
-            }}>Dive deeper</button> : null}
-      </div>
-      <div className="roadmap-status-picker" role="radiogroup" aria-label="Status">
-        {STATUSES.map((item) => <button key={item} type="button" role="radio" aria-checked={status === item}
+      {missing || pending ? null : <div className="roadmap-status-picker" role="radiogroup" aria-label="Status">
+        {STATUSES.map((item: RoadmapStatus) => <button key={item} type="button" role="radio" aria-checked={status === item}
           className={`is-${item}`} onClick={() => onChange({ kind: "status", nodeId: node.id, status: item })}>
           <StatusMark status={item} />{ROADMAP_STATUS_LABELS[item]}
         </button>)}
+      </div>}
+      {chips(needs, "Needs first", settings)}
+      {chips(unlocks, "Unlocks", false)}
+      {missing || pending ? null : <div className="roadmap-strip-actions">
+        {sub ? <>
+          <button type="button" aria-expanded={subOpen} onClick={onToggleSub}>{subOpen ? "Hide its roadmap" : `Show its roadmap (${subSteps} ${subSteps === 1 ? "step" : "steps"})`}</button>
+          <button type="button" onClick={onEnter}>Go into its roadmap <span aria-hidden="true">↘</span></button>
+        </> : onDiveDeeper && !node.target.blockId ? <button type="button" disabled={writing} title="AI breaks this topic into its own roadmap, inside the step's document, for you to approve"
+          onClick={() => onDiveDeeper()}>Dive deeper</button> : null}
+        {onExplain && !node.target.blockId ? <button type="button" disabled={writing} title="AI writes an explanation of this topic into the step's document"
+          onClick={() => onExplain(context())}>Explain with AI</button> : null}
+        <button type="button" aria-expanded={settings} onClick={() => setSettings(!settings)}>Step settings</button>
+      </div>}
+      {writing ? <p className="roadmap-sheet-muted" role="status">AI is writing in this step's document…</p> : null}
+      {settings && !missing && !pending ? <div className="roadmap-strip-settings">
+        <label>
+          <span>Name on the roadmap</span>
+          <input defaultValue={node.title ?? ""} placeholder={target?.title || "Untitled document"} maxLength={200} key={node.title ?? ""}
+            onBlur={(event) => { if (event.target.value !== (node.title ?? "")) onChange({ kind: "rename-node", nodeId: node.id, title: event.target.value }); }}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+        </label>
+        <label>
+          <span>Stage</span>
+          <select value={node.stage} onChange={(event) => onChange({ kind: "move-node", nodeId: node.id, stageId: event.target.value })}>
+            {stage ? null : <option value={node.stage}>Unstaged</option>}
+            {getRoadmap(owner).stages.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+          </select>
+        </label>
+        <label>
+          <span>Proof</span>
+          <input value={proof} placeholder="Built X, can explain Y…" maxLength={500} onChange={(event) => setProof(event.target.value)}
+            onBlur={() => { if (proof !== (node.proof ?? "")) onChange({ kind: "proof", nodeId: node.id, proof }); }}
+            onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+        </label>
+        {others.length ? <label>
+          <span>Needs first</span>
+          <select aria-label="Add a step it needs first" value="" onChange={(event) => { if (event.target.value) onChange({ kind: "add-prerequisite", nodeId: node.id, prerequisiteId: event.target.value }); }}>
+            <option value="">Add a step it needs…</option>
+            {others.map((item) => <option key={item.id} value={item.id}>{titleOf(item.id)}</option>)}
+          </select>
+        </label> : null}
+        <div className="roadmap-strip-actions">
+          <button type="button" onClick={onRelink}>Point at another document</button>
+          <button type="button" className="is-danger" onClick={() => onChange({ kind: "remove-node", nodeId: node.id })}>Remove from roadmap</button>
+        </div>
+      </div> : null}
+    </div>
+    {pending ? <p className="roadmap-sheet-muted roadmap-sheet-pad">Bringing this document in from your cloud vault…</p>
+      : missing ? <div className="roadmap-sheet-pad">
+        <p>The {node.target.blockId ? "block" : "document"} this step pointed at was deleted or moved.</p>
+        <div className="roadmap-strip-actions">
+          <button type="button" onClick={onRelink}>Relink</button>
+          <button type="button" className="is-danger" onClick={() => onChange({ kind: "remove-node", nodeId: node.id })}>Remove step</button>
+        </div>
       </div>
-      <label className="roadmap-detail-field">
-        <span>Proof</span>
-        <input value={proof} placeholder="Built X, can explain Y…" maxLength={500}
-          onChange={(event) => setProof(event.target.value)}
-          onBlur={() => { if (proof !== (node.proof ?? "")) onChange({ kind: "proof", nodeId: node.id, proof }); }}
-          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
-      </label>
-    </>}
-    {needs.length || editing ? <div className="roadmap-detail-section">
-      <h4>Needs first</h4>
-      {needs.length ? <ul>{needs.map((id) => <li key={id}>
-        <StatusMark status={roadmapStatus(graph.nodesById.get(id)!)} /><span>{titleOf(id)}</span>
-        {editing ? <button type="button" aria-label={`Remove prerequisite ${titleOf(id)}`} title="Remove"
-          onClick={() => onChange({ kind: "remove-prerequisite", nodeId: node.id, prerequisiteId: id })}>×</button> : null}
-      </li>)}</ul> : <p className="roadmap-detail-muted">Nothing. This step can start any time.</p>}
-      {editing && others.length ? <select aria-label="Add a prerequisite" value=""
-        onChange={(event) => { if (event.target.value) onChange({ kind: "add-prerequisite", nodeId: node.id, prerequisiteId: event.target.value }); }}>
-        <option value="">Add a step it needs…</option>
-        {others.map((item) => <option key={item.id} value={item.id}>{titleOf(item.id)}</option>)}
-      </select> : null}
-    </div> : null}
-    {neededBy.length ? <div className="roadmap-detail-section">
-      <h4>Unlocks</h4>
-      <ul>{neededBy.map((id) => <li key={id}><StatusMark status={roadmapStatus(graph.nodesById.get(id)!)} /><span>{titleOf(id)}</span></li>)}</ul>
-    </div> : null}
-    {resources.length ? <div className="roadmap-detail-section">
-      <h4>Resources</h4>
-      <ul>{resources.map((relation) => <li key={relation.targetConversationId}>
-        <button type="button" className="roadmap-detail-link" onClick={() => onOpen({ docId: relation.targetConversationId!, ...(relation.targetBlockId ? { blockId: relation.targetBlockId } : {}) })}>
-          {conversations[relation.targetConversationId!].title || "Untitled document"}
-        </button>
-      </li>)}</ul>
-    </div> : null}
-    {notes.length ? <div className="roadmap-detail-section">
-      <h4>Margin notes</h4>
-      <ul>{notes.map((note) => <li key={note.id}>
-        <button type="button" className="roadmap-detail-link" onClick={() => onOpen({ docId: note.id })}>
-          {plainPreview(getEditableDocument(note).blocks.map((block) => block.content).join(" ")).slice(0, 120) || note.title || "Empty note"}
-        </button>
-      </li>)}</ul>
-    </div> : null}
-    {editing ? <div className="roadmap-detail-section roadmap-detail-edit">
-      <label className="roadmap-detail-field">
-        <span>Name on the roadmap</span>
-        <input defaultValue={node.title ?? ""} placeholder={target?.title || "Untitled document"} maxLength={200} key={node.title ?? ""}
-          onBlur={(event) => { if (event.target.value !== (node.title ?? "")) onChange({ kind: "rename-node", nodeId: node.id, title: event.target.value }); }}
-          onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
-      </label>
-      <label className="roadmap-detail-field">
-        <span>Stage</span>
-        <select value={node.stage} onChange={(event) => onChange({ kind: "move-node", nodeId: node.id, stageId: event.target.value })}>
-          {stages.some((stage) => stage.id === node.stage) ? null : <option value={node.stage}>Unstaged</option>}
-          {stages.map((stage) => <option key={stage.id} value={stage.id}>{stage.title}</option>)}
-        </select>
-      </label>
-      <div className="roadmap-detail-actions">
-        <button type="button" disabled={rowIndex <= 0} onClick={() => onChange({ kind: "move-node", nodeId: node.id, direction: -1 })}>← Earlier</button>
-        <button type="button" disabled={!row || rowIndex >= row.nodeIds.length - 1} onClick={() => onChange({ kind: "move-node", nodeId: node.id, direction: 1 })}>Later →</button>
-        {!missing ? <button type="button" onClick={onRelink}>Relink</button> : null}
-        {!missing ? <button type="button" className="is-danger" onClick={() => onChange({ kind: "remove-node", nodeId: node.id })}>Remove step</button> : null}
-      </div>
-    </div> : null}
-  </aside>;
+      : node.target.blockId ? <SheetFallback conversation={target} blockId={node.target.blockId} onOpen={() => onOpen(node.target)} />
+      : renderDocument?.(node.target.docId) ?? <SheetFallback conversation={target} onOpen={() => onOpen(node.target)} />}
+  </>;
 }
