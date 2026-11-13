@@ -143,7 +143,28 @@ describe("the room workspace tools share", () => {
     const first: any = await run("search_conversations", { query: "pricing" });
     expect(first.matches.length).toBe(5);
     expect(first.truncated).toBe(true);
+    expect(first.room_note).toContain("nearly used up");
     const second: any = await run("search_conversations", { query: "pricing" });
     expect(second).toMatchObject({ ok: false, truncated: true });
+    expect(second.error).toContain("Proposal tools still work");
+  });
+
+  test("lookups sent together after the room ran out show as one step", async () => {
+    const steps: any[] = [];
+    const originalFetch = globalThis.fetch;
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      const response = calls === 1 ? { status: "completed", output: [1, 2, 3].map((index) => ({ type: "function_call", name: "search_conversations", call_id: `call_${index}`, arguments: JSON.stringify({ query: "pricing" }) })) }
+        : { status: "completed", output_text: "Done.", output: [] };
+      return new Response(`data: ${JSON.stringify({ type: "response.completed", response })}\n\n`, { headers: { "Content-Type": "text/event-stream" } });
+    }) as typeof fetch;
+    try {
+      const { runAgent } = await import("../server/chat/agent/runner.mjs");
+      await runAgent({ provider: "openai", apiKey: "key", model: "gpt", systemInstruction: "Help.", maxOutputTokens: 500, usageMeter: null, onStep: ({ step }: any) => { steps.push(step); },
+        chatRequest: { ai: { mode: "fast", contextScope: "workspace", selectedConversationIds: [] }, conversation: { id: "chat", ancestorContext: [] }, messages: [{ role: "user", content: "pricing?" }],
+          workspaceContext: Array.from({ length: 6 }, (_, index) => ({ id: `note-${index}`, kind: "note", title: `Pricing note ${index} ${"x".repeat(900)}`, parentId: null, updatedAt: "2026-11-01T00:00:00.000Z", messages: [] })) } });
+    } finally { globalThis.fetch = originalFetch; }
+    expect(steps.filter((step) => step.kind === "tool").map((step) => step.detail)).toEqual(["7 matches", "Context budget for tools used up"]);
   });
 });

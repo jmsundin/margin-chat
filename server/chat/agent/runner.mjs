@@ -108,6 +108,7 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
   const metered = Boolean(usageMeter) && Number.isSafeInteger(budgetMicros) && budgetMicros > 0;
   const steps = [];
   let toolTruncated = false;
+  let outOfRoomShown = false;
   let thinkingSaved = 0;
   let reasoningShared = false;
   const record = async (step) => {
@@ -227,7 +228,10 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
       draftShown = -1;
       outputs.push({ id: toolCall.id, output });
       if (output?.truncated || output?.conversation?.truncated) toolTruncated = true;
-      await record(describeAgentStep(toolCall.name, toolCall.arguments, output));
+      // Several lookups sent in one round can all run out of room; one line says so.
+      const outOfRoom = output?.ok === false && output?.truncated === true;
+      if (!outOfRoom || !outOfRoomShown) await record(describeAgentStep(toolCall.name, toolCall.arguments, output));
+      outOfRoomShown ||= outOfRoom;
     }
     adapter.addToolResults(outputs);
   }
