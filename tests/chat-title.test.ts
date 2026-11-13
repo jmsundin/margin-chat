@@ -169,6 +169,39 @@ describe("graph cluster labels", () => {
     expect(result.categories).toEqual([{ cluster: 1, name: "Angular" }, { cluster: 2, name: "Angular" }, { cluster: 3, name: "React hooks" }]);
   });
 
+  test("label the Map's themes, topics and blocks in one request", async () => {
+    let requestBody: Record<string, any> | null = null;
+    globalThis.fetch = (async (_input, init) => {
+      requestBody = JSON.parse(String(init?.body));
+      return Response.json({ output_text: [
+        "T1: Longevity drugs | Which drugs slow aging, and how strong the evidence is.",
+        "- **P1**: \"How senescent cells drive aging and what clears them.\"",
+        "B1: Senolytics",
+        "B2) Rapamycin | extra words the model was not asked for",
+        "T2: Only a name",
+        "P2: Topic name | The sentence after a name it was not asked for.",
+        "not a level line",
+        "B1: Duplicate",
+      ].join("\n") });
+    }) as typeof fetch;
+
+    const result = await createService().generateTitle({
+      kind: "map-levels",
+      prompt: "T1 (40 notes): Topics: Drugs; Trials\nP1 (12 notes): Senescence: SASP; p16\nB1 (3 notes) in Senescence: Dasatinib; Fisetin",
+    });
+
+    expect(requestBody?.model).toBe("gpt-6-luna");
+    expect(JSON.stringify(requestBody)).toContain("T<number>: <name> | <sentence>");
+    expect(result.levels).toEqual([
+      { code: "T1", name: "Longevity drugs", summary: "Which drugs slow aging, and how strong the evidence is." },
+      { code: "P1", summary: "How senescent cells drive aging and what clears them." },
+      { code: "B1", name: "Senolytics" },
+      { code: "B2", name: "Rapamycin" },
+      { code: "T2", name: "Only a name" },
+      { code: "P2", summary: "The sentence after a name it was not asked for." },
+    ]);
+  });
+
   test("sort documents into categories with Muse Wonder", async () => {
     let requestUrl = "";
     let requestBody: Record<string, any> | null = null;

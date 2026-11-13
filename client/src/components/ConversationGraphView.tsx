@@ -70,9 +70,12 @@ import { GraphLibraryBar, GraphLibraryWorkCard, libraryWorkMarkdown } from "./Gr
 import { GraphLandscapeLayer, type LandscapeLabel } from "./GraphLandscapeLayer";
 import { fitNetworkMapViewport } from "../lib/networkMapLayout";
 import MapLensBar from "./MapLensBar";
-import CanvasGroupBoxes from "./CanvasGroupBoxes";
+import CanvasGroupBoxes, { blockLabelFrame } from "./CanvasGroupBoxes";
 import { documentSimilarity } from "../lib/similarityBlocks";
-import { canvasBoxAt, canvasGroupDropChanges, canvasTopicDropMoves, layoutCanvasGroupBoxes, topicCanvasGroups, type CanvasGroupBox, type CanvasTopic } from "../lib/canvasGroupBoxes";
+import { canvasBoxAt, canvasGroupDropChanges, canvasTopicDropMoves, layoutCanvasGroupBoxes, topicCanvasGroups, type CanvasBlock, type CanvasGroupBox, type CanvasThemeBox, type CanvasTopic } from "../lib/canvasGroupBoxes";
+import { blockFallbackName, groupTopicsIntoThemes, mapZoomLevel, mapZoomLevelScale, mapZoomScales, reachableMapZoomLevels, type MapZoomLevel } from "../lib/mapZoomLevels";
+import { useMapLevelLabels, type MapLevelTarget } from "../lib/useMapLevelLabels";
+import { MapZoomLadder, MapZoomTrail, type MapZoomCrumb } from "./MapZoomLevels";
 import { describeSpotlight, spotlightHeat, spotlightNeighbours, type MapSpotlight, type SpotlightHeat } from "../lib/mapSpotlight";
 import { countConnections, EMPTY_MAP_LENS, matchMapLens, newLensFilter, readMapLens, type MapLens, type SavedMapLens } from "../lib/mapLens";
 import { mapColoring, MAP_COLOR_BY_OPTIONS, readMapColorBy, type MapColorBy } from "../lib/mapColorBy";
@@ -215,6 +218,10 @@ const EMPTY_SUBJECTS: SubjectCluster[] = [];
 const EMPTY_PLACEMENTS: ConversationGraphNodePlacement[] = [];
 const EMPTY_TERRITORY_LAYOUT: ReturnType<typeof layoutMapTerritoryOverview> = [];
 const EMPTY_GROUP_BOXES: CanvasGroupBox[] = [];
+const EMPTY_THEME_BOXES: CanvasThemeBox[] = [];
+const EMPTY_LEVEL_TARGETS: MapLevelTarget[] = [];
+const EMPTY_NAMES: ReadonlyMap<string, string> = new Map();
+
 const EMPTY_CANVAS_TOPICS: CanvasTopic[] = [];
 const EMPTY_IDS: string[] = [];
 const EMPTY_BOX_GROUPS: Record<string, ConversationGroup> = {};
@@ -243,7 +250,7 @@ function readCanvasGrouping(workspaceKey?: string): CanvasGrouping {
   return saved ?? readStoredJson<CanvasGrouping>(workspaceKey && `margin-map-canvas-groups:${workspaceKey}`, (value) => value === false ? "none" : "topics", "topics");
 }
 /** A group box as a placement, so the camera can fit it like a card. */
-function groupBoxPlacement(box: CanvasGroupBox): ConversationGraphNodePlacement {
+function groupBoxPlacement(box: Pick<CanvasGroupBox, "id" | "x" | "y" | "width" | "height">): ConversationGraphNodePlacement {
   return { conversationId: box.id, depth: 0, x: box.x, y: box.y, width: box.width, height: box.height };
 }
 
@@ -1784,11 +1791,54 @@ export default function ConversationGraphView({
     vectors: topicEmbeddings.vectors, neighbours: topicEmbeddings.neighbours }) : undefined,
   // eslint-disable-next-line react-hooks/exhaustive-deps -- revision says when vectors or neighbours changed in place
   [showCanvasGroupBoxes, conversations, documentConnections, topicEmbeddings.vectors, topicEmbeddings.neighbours, topicEmbeddings.revision]);
+  // With many topics, those alike in meaning are gathered into a few broad themes: one more level to zoom out to.
+  const mapThemes = useMemo(() => showCanvasGroupBoxes && canvasGrouping === "topics" && boxSimilarity
+    ? groupTopicsIntoThemes(canvasTopicList.filter((topic) => topic.hubId !== null && topic.memberIds.length)
+      .map((topic) => ({ id: topic.id, label: topic.label, memberIds: topic.memberIds })), boxSimilarity)
+      .map((theme) => ({ id: theme.id, label: theme.label, groupIds: theme.topicIds })) : undefined,
+  [showCanvasGroupBoxes, canvasGrouping, canvasTopicList, boxSimilarity]);
   const canvasGroupLayout = useMemo(() => showCanvasGroupBoxes ? layoutCanvasGroupBoxes({ nodes: unfocusedScene.nodes, conversations, groups: boxGroups,
     noGroupLabel: canvasGrouping === "topics" ? groupBySubject ? "Unfiled" : "Unlinked" : canvasGrouping === "muse" ? "Not sorted" : "No group",
-    similarity: boxSimilarity, screenAspect: boxScreenAspect }) : null,
-    [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, boxGroups, canvasGrouping, groupBySubject, boxSimilarity, boxScreenAspect]);
+    similarity: boxSimilarity, screenAspect: boxScreenAspect, themes: mapThemes }) : null,
+    [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, boxGroups, canvasGrouping, groupBySubject, boxSimilarity, boxScreenAspect, mapThemes]);
   const canvasGroupBoxes = canvasGroupLayout?.boxes ?? EMPTY_GROUP_BOXES;
+  const layoutThemeBoxes = canvasGroupLayout?.themes.length ? canvasGroupLayout.themes : EMPTY_THEME_BOXES;
+  // Topics, their names and their themes arrive a little after the map opens, and each moves the boxes.
+  // While the camera is still where Fit left it, the new arrangement is fitted too; once you have moved, it stays put.
+  const lastBoxFitRef = useRef<GraphViewport | null>(null);
+  useEffect(() => {
+    const fitted = lastBoxFitRef.current, now = viewportStateRef.current;
+    if (canvasGroupLayout && fitted && Math.abs(fitted.x - now.x) < 0.5 && Math.abs(fitted.y - now.y) < 0.5 && Math.abs(fitted.scale - now.scale) < 1e-4) setFitAfterArrange(true);
+  }, [canvasGroupLayout]);
+  // Names and one-sentence summaries for each level: AI's when allowed, else made from titles.
+  const levelTargets = useMemo<MapLevelTarget[]>(() => {
+    if (!canvasGroupBoxes.length) return EMPTY_LEVEL_TARGETS;
+    const labelOf = new Map(canvasGroupBoxes.map((box) => [box.id, box.label]));
+    return [
+      ...layoutThemeBoxes.map((theme) => ({ id: theme.id, kind: "theme" as const, memberIds: theme.conversationIds, name: theme.label,
+        childNames: theme.boxIds.map((id) => labelOf.get(id) ?? "") })),
+      ...canvasGroupBoxes.filter((box) => box.kind === "group").map((box) => ({ id: box.id, kind: "topic" as const, memberIds: box.conversationIds, name: box.label })),
+      ...canvasGroupBoxes.flatMap((box) => (box.blocks ?? []).filter((block) => block.kind === "alike")
+        .map((block) => ({ id: block.id, kind: "block" as const, memberIds: block.conversationIds, name: "", parentName: box.kind === "group" ? box.label : undefined }))),
+    ];
+  }, [canvasGroupBoxes, layoutThemeBoxes]);
+  const levelLabels = useMapLevelLabels({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
+    active: !!jev?.ready && isVisible && showCanvasGroupBoxes, targets: levelTargets, conversations });
+  const canvasThemeBoxes = useMemo(() => layoutThemeBoxes.length
+    ? layoutThemeBoxes.map((theme) => { const name = levelLabels.labels.get(theme.id)?.name; return name ? { ...theme, label: name } : theme; }) : EMPTY_THEME_BOXES,
+  [layoutThemeBoxes, levelLabels.labels]);
+  const levelSummaries = useMemo(() => {
+    const summaries = new Map<string, string>();
+    for (const [id, label] of levelLabels.labels) if (label.summary) summaries.set(id, label.summary);
+    return summaries.size ? summaries : EMPTY_NAMES;
+  }, [levelLabels.labels]);
+  const blockNames = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const box of canvasGroupBoxes) for (const block of box.blocks ?? []) {
+      if (block.kind === "alike") names.set(block.id, levelLabels.labels.get(block.id)?.name ?? blockFallbackName(block.conversationIds.map((id) => conversations[id]?.title ?? "")));
+    }
+    return names.size ? names : EMPTY_NAMES;
+  }, [canvasGroupBoxes, levelLabels.labels, conversations]);
   const displayScene = useMemo(() => documentLayout
     ? replaceConversationGraphNodes(unfocusedScene, documentLayout.nodes)
     : canvasGroupLayout ? replaceConversationGraphNodes(unfocusedScene, canvasGroupLayout.nodes)
@@ -1820,8 +1870,17 @@ export default function ConversationGraphView({
     const widths = scene.nodes.slice(0, 200).map((node) => node.width).sort((a, b) => a - b);
     return widths[Math.floor(widths.length / 2)] ?? 0;
   }, [scene.nodes]);
-  // Zoomed out too far to read a card's title, a group box is just its colored space.
-  const canvasGroupsCollapsed = canvasGroupBoxes.length > 0 && typicalCardWidth * viewport.scale < 56;
+  const typicalCardHeight = scene.nodes[0]?.height ?? 96;
+  // The Map's zoom levels: themes, topic tiles, named blocks, titles, previews (see lib/mapZoomLevels).
+  const zoomScales = useMemo(() => {
+    if (!canvasGroupBoxes.length || !typicalCardWidth) return null;
+    const sides = canvasGroupBoxes.filter((box) => box.themeId).map((box) => Math.min(box.width, box.height)).sort((a, b) => a - b);
+    return mapZoomScales({ cardWidth: typicalCardWidth, cardHeight: typicalCardHeight, cellWidth: typicalCardWidth + 24, topicSide: sides[Math.floor(sides.length / 2)] ?? 0,
+      hasThemes: canvasThemeBoxes.length > 0, hasBlocks: blockNames.size > 0 });
+  }, [canvasGroupBoxes, canvasThemeBoxes.length, blockNames.size, typicalCardWidth, typicalCardHeight]);
+  const zoomLevel = zoomScales ? mapZoomLevel(viewport.scale, zoomScales) : null;
+  // Zoomed out too far to tell the circles apart, a group box is a tile with its name.
+  const canvasGroupsCollapsed = zoomLevel === "themes" || zoomLevel === "topics";
   const nodeScreenFootprint = useCallback((placement: ConversationGraphNodePlacement) => {
     const selectedDetail = placement.conversationId === selectedConversationId ? detailLevel : "compact";
     if (selectedDetail === "reader") return undefined;
@@ -2030,6 +2089,11 @@ export default function ConversationGraphView({
     // On a narrow screen the zoom bar covers the bottom edge; titles in boxes, which Fit keeps above it, stop there too.
     const below = canvasGroupBoxes.length ? canvasFitBelow(viewportSize.width) : 0;
     if (below && viewportSize.height) obstacles.push({ x0: left - 1e6, y0: -viewport.y + viewportSize.height - below - 24, x1: right + 1e6, y1: 1e9 });
+    // Titles give way to the names of blocks of alike documents.
+    if (blockNames.size && !canvasGroupsCollapsed && zoomLevel !== "previews") for (const box of canvasGroupBoxes) for (const block of box.blocks ?? []) {
+      const name = blockNames.get(block.id), frame = name ? blockLabelFrame(block, name, scale, typicalCardHeight) : null;
+      if (frame) obstacles.push({ x0: frame.x, y0: frame.y, x1: frame.x + frame.width, y1: frame.y + frame.height });
+    }
     for (const { placement, screenFootprint, nodeDetail, visualBounds } of renderedNodeDetails) {
       const conversation = conversations[placement.conversationId];
       if (!conversation || hiddenConversationIds.has(placement.conversationId)) continue;
@@ -2059,7 +2123,7 @@ export default function ConversationGraphView({
       dot.titleLines = fit.lines;
     }
     return dots;
-  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width, viewportSize.height, canvasGroupBoxes.length,
+  }, [drawsDots, renderedNodeDetails, conversations, hiddenConversationIds, connectionCounts, maxConnections, viewport, viewportSize.width, viewportSize.height, canvasGroupBoxes, blockNames, canvasGroupsCollapsed, zoomLevel, typicalCardHeight,
     selectedConversationId, hoveredId, isSearchMatch]);
   // Only a circle shows a card; one that opened as a preview, is moving or left the map closes it.
   const hoverCardProps = useMemo(() => {
@@ -2531,9 +2595,10 @@ export default function ConversationGraphView({
       // Group boxes put their names on their top edge; leave room for them, and fit the boxes, not just their cards.
       // The zoom bar sits over the bottom edge; keep the last row of titles above it.
       const room = canvasGroupBoxes.length ? 40 : 0, below = canvasGroupBoxes.length ? canvasFitBelow(viewportElement.clientWidth) : 0;
-      const fit = calculateFitViewport(canvasGroupBoxes.length ? { ...scene, nodes: canvasGroupBoxes.map(groupBoxPlacement) } : scene,
+      const fit = calculateFitViewport(canvasGroupBoxes.length ? { ...scene, nodes: [...canvasGroupBoxes, ...layoutThemeBoxes].map(groupBoxPlacement) } : scene,
         { clientWidth: viewportElement.clientWidth, clientHeight: viewportElement.clientHeight - room - below }, false);
       applyViewport({ ...fit, y: fit.y + room });
+      lastBoxFitRef.current = { ...fit, y: fit.y + room };
       fitAsOverviewRef.current = false;
       return;
     }
@@ -2565,7 +2630,7 @@ export default function ConversationGraphView({
         { maxScale: Math.min(0.69, groupScaleThreshold - 0.01) }) : standardFit);
     }
     fitAsOverviewRef.current = false;
-  }, [applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout, canvasGroupBoxes, showingLibrary, landscapePoints]);
+  }, [layoutThemeBoxes, applyViewport, scene, canvasTerritories, focusedTerritory, focusedTerritoryId, selectedConversationId, detailLevel, isVisible, groupScaleThreshold, selectedConversation, unfocusedScene.nodes, navigation.update, showTerritories, browsingGroups, territories, documentsOnly, documentLayoutMode, documentConnections, focusedNodeId, panelView, isCanvasMode, forceLayout, canvasGroupBoxes, showingLibrary, landscapePoints]);
   // The landscape arrives after the view opens; frame it once when its points first come.
   // Opening it with points already loaded keeps the camera the view had.
   // Switching between your vault and a PubMed field (or a field's papers arriving) frames the new set too.
@@ -3767,7 +3832,53 @@ export default function ConversationGraphView({
     setFitAfterArrange(true);
   }
 
+  /**
+   * Flies to a zoom level. With a theme, box or block, the camera centres on it and zooms as far as
+   * shows all of it without leaving the level; without one it stays on whatever is in the middle of the map.
+   */
+  function zoomToLevel(level: MapZoomLevel, target?: { x: number; y: number; width: number; height: number }) {
+    const canvas = viewportRef.current;
+    if (!canvas?.clientWidth || !canvas.clientHeight || !zoomScales) return;
+    interactions.cancel();
+    const width = canvas.clientWidth, height = canvas.clientHeight, current = viewportStateRef.current;
+    const centre = { x: (width / 2 - current.x) / current.scale, y: (height / 2 - current.y) / current.scale };
+    if (!target && (level === "themes" || level === zoomLevels[0])) {
+      // The broadest level shows the whole map: as Fit shows it, or further out when Fit would still show a closer level.
+      const left = Math.min(...canvasGroupBoxes.map((box) => box.x)), top = Math.min(...canvasGroupBoxes.map((box) => box.y));
+      const right = Math.max(...canvasGroupBoxes.map((box) => box.x + box.width)), bottom = Math.max(...canvasGroupBoxes.map((box) => box.y + box.height));
+      const fit = Math.min((width - 56) / Math.max(1, right - left), (height - 130) / Math.max(1, bottom - top));
+      const ceiling = level === "themes" ? zoomScales.topicsFrom * 0.92 : level === "topics" ? zoomScales.blocksFrom * 0.92
+        : level === "blocks" ? zoomScales.notesFrom * 0.94 : zoomScales.previewsFrom * 0.9;
+      const scale = Math.min(fit, ceiling);
+      flyTo(cameraOn({ x: (left + right) / 2, y: (top + bottom) / 2 - 16 / scale }, scale));
+      return;
+    }
+    if (!target) {
+      // Stay on what the middle of the map shows at that level.
+      if (level === "topics") target = canvasThemeBoxes.find((theme) => canvasBoxAt([theme as unknown as CanvasGroupBox], centre)) ?? undefined;
+      else if (level === "blocks" || level === "notes") target = canvasBoxAt(canvasGroupBoxes, centre) ?? undefined;
+    }
+    const [floor, ceiling] = level === "topics" ? [zoomScales.topicsFrom * 1.12, zoomScales.blocksFrom * 0.9]
+      : level === "blocks" ? [zoomScales.blocksFrom * 1.06, zoomScales.notesFrom * 0.94]
+      : level === "notes" ? [zoomScales.notesFrom * 1.06, zoomScales.previewsFrom * 0.9] : [zoomScales.previewsFrom * 1.04, zoomScales.previewsFrom * 1.04];
+    if (level === "previews") {
+      // The document nearest the middle keeps its place.
+      let nearest: { x: number; y: number } | null = null, best = Infinity;
+      for (const node of scene.nodes) {
+        const x = node.x + node.width / 2, y = node.y + node.height / 2, distance = Math.hypot(x - centre.x, y - centre.y);
+        if (distance < best) { best = distance; nearest = { x, y }; }
+      }
+      flyTo(cameraOn(nearest ?? centre, floor));
+      return;
+    }
+    const scale = target ? Math.max(floor, Math.min(ceiling, Math.min((width - 80) / Math.max(1, target.width), (height - 150) / Math.max(1, target.height))))
+      : Math.max(floor, Math.min(ceiling, mapZoomLevelScale(level, zoomScales)));
+    flyTo(cameraOn(target ? { x: target.x + target.width / 2, y: target.y + target.height / 2 } : centre, scale));
+  }
+
     function fitCanvasGroupBox(box: CanvasGroupBox) {
+    // A topic tile opens one step in: its named blocks when it has them, else its documents.
+    if (canvasGroupsCollapsed && zoomScales) { zoomToLevel(box.blocks?.some((block) => blockNames.has(block.id)) ? "blocks" : "notes", box); return; }
     const canvas = viewportRef.current;
     if (!canvas?.clientWidth || !canvas.clientHeight) return;
     interactions.cancel();
@@ -4084,6 +4195,29 @@ export default function ConversationGraphView({
   // Circles keep their titles until they hide, so their signposts wait until then too.
   const landmarks = mapOverlaysShown && landmarkPool.length && typicalCardWidth * viewport.scale < (drawsDots ? CANVAS_TITLE_MIN_WIDTH : LANDMARK_CARD_WIDTH)
     ? placeLandmarks(landmarkPool, viewport, viewportSize) : [];
+  // The zoom ladder and the trail of what the middle of the map is in: theme, topic, block.
+  const zoomLevels = zoomLevel && zoomScales && mapOverlaysShown && viewportSize.width ? reachableMapZoomLevels(zoomScales,
+    Math.min((viewportSize.width - 56) / Math.max(1, Math.max(...canvasGroupBoxes.map((box) => box.x + box.width)) - Math.min(...canvasGroupBoxes.map((box) => box.x))),
+      (viewportSize.height - 130) / Math.max(1, Math.max(...canvasGroupBoxes.map((box) => box.y + box.height)) - Math.min(...canvasGroupBoxes.map((box) => box.y)))),
+    { hasThemes: canvasThemeBoxes.length > 0, hasBlocks: blockNames.size > 0 }) : [];
+  const zoomTrail: MapZoomCrumb[] = [];
+  let zoomTrailSummary: string | undefined;
+  if (zoomLevel && zoomLevels.length > 1 && !zoomThrough) {
+    const centre = { x: (viewportSize.width / 2 - viewport.x) / viewport.scale, y: (viewportSize.height / 2 - viewport.y) / viewport.scale };
+    // You are "in" something once it is under the middle of the map and takes up half the screen one way or the other.
+    const inside = (rect: { x: number; y: number; width: number; height: number }) => centre.x >= rect.x && centre.x <= rect.x + rect.width && centre.y >= rect.y && centre.y <= rect.y + rect.height
+      && (rect.width * viewport.scale >= viewportSize.width / 2 || rect.height * viewport.scale >= viewportSize.height / 2);
+    zoomTrail.push({ id: "all", label: "All", onOpen: fitGraph });
+    const theme = zoomLevel !== "themes" ? canvasThemeBoxes.find(inside) : undefined;
+    if (theme) { zoomTrail.push({ id: theme.id, label: theme.label, onOpen: () => zoomToLevel("topics", theme) }); zoomTrailSummary = levelSummaries.get(theme.id); }
+    const box = !canvasGroupsCollapsed ? canvasGroupBoxes.find(inside) : undefined;
+    if (box) {
+      zoomTrail.push({ id: box.id, label: box.label, onOpen: () => zoomToLevel(box.blocks?.some((block) => blockNames.has(block.id)) ? "blocks" : "notes", box) });
+      zoomTrailSummary = levelSummaries.get(box.id);
+      const block: CanvasBlock | undefined = zoomLevel !== "blocks" ? box.blocks?.find((item) => blockNames.has(item.id) && inside(item)) : undefined;
+      if (block) zoomTrail.push({ id: block.id, label: blockNames.get(block.id)!, onOpen: () => zoomToLevel("notes", block) });
+    }
+  }
   const matchPosition = (lensOpen || searchMatches) && selectedConversationId && mapMatches?.has(selectedConversationId)
     ? matchOrder().findIndex((item) => item.id === selectedConversationId) + 1 || null : null;
 
@@ -4373,7 +4507,10 @@ export default function ConversationGraphView({
             })}
           </nav>
 
-          {canvasGroupBoxes.length ? <CanvasGroupBoxes boxes={canvasGroupBoxes} viewport={liveViewport} collapsed={canvasGroupsCollapsed} onOpen={fitCanvasGroupBox} subscribeCamera={subscribeCamera} liveCamera={readLiveCamera} /> : null}
+          {canvasGroupBoxes.length ? <CanvasGroupBoxes boxes={canvasGroupBoxes} themes={canvasThemeBoxes} level={zoomLevel ?? undefined} viewport={liveViewport} collapsed={canvasGroupsCollapsed}
+            cardHeight={typicalCardHeight} summaries={levelSummaries} blockNames={blockNames}
+            onOpen={fitCanvasGroupBox} onOpenTheme={(theme) => zoomToLevel("topics", theme)} onOpenBlock={(block) => zoomToLevel("notes", block)}
+            subscribeCamera={subscribeCamera} liveCamera={readLiveCamera} /> : null}
           {!showThemeOverview && !documentsOnly && !isCanvasMode ? <GraphTerritoryLayer territories={browsingGroups || showTerritories ? territories : canvasTerritories} conversations={relationshipConversations} viewport={viewport}
             semanticLabels={groupSemantics.categoryLabels}
             mode={browsingGroups || showTerritories ? "overview" : "canvas"} activeTerritoryId={focusedTerritory?.id}
@@ -4660,6 +4797,8 @@ export default function ConversationGraphView({
             title={(id) => conversations[id]?.title || "Untitled"} onOpen={openSignpost} /> : null}
           {coloring && mapOverlaysShown ? <MapColorLegend coloring={coloring} colorBy={colorBy} onColorBy={setColorBy}
             onFilter={(item) => { if (!item.filter) return; setLens({ filters: [...lens.filters, { ...item.filter, id: newLensFilter(item.filter.kind).id }] }); setLensOpen(true); }} /> : null}
+          {zoomLevel && zoomLevels.length > 1 ? <MapZoomLadder levels={zoomLevels} level={zoomLevels.includes(zoomLevel) ? zoomLevel : zoomLevels[0]} onPick={(level) => zoomToLevel(level)} /> : null}
+          {zoomTrail.length > 1 ? <MapZoomTrail crumbs={zoomTrail} summary={zoomTrailSummary} /> : null}
           <MapHelp id={keyboardHintId}>
             <span>{isMultiSelectActive
               ? multiSelectedConversationIds.size

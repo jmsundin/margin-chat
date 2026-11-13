@@ -27,8 +27,9 @@ export function createChatExecutionService({ apiKeyService, billingService, chat
       const limits = billingService.getHostedUsageLimits(payload, { validateInput: false });
       // Naming every cluster at once needs a line per cluster, and a cleaned
       // transcript is as long as the transcript; other titles need one line.
+      // Labeling the Map's zoom levels returns a sentence for each theme and topic.
       // Muse Wonder always reasons before it answers, and reasoning counts as output.
-      const titleTokens = payload?.kind === "document-categories" ? 16_384 : payload?.kind === "categories" ? 2_048 : payload?.kind === "dictation" ? limits.maxOutputTokens : 256;
+      const titleTokens = payload?.kind === "document-categories" ? 16_384 : payload?.kind === "categories" ? 2_048 : payload?.kind === "map-levels" ? 6_144 : payload?.kind === "dictation" ? limits.maxOutputTokens : 256;
       context.hostedMaxOutputTokens = operation === "title" ? Math.min(limits.maxOutputTokens, titleTokens) : limits.maxOutputTokens;
       context.hostedMaxInputCharacters = limits.maxInputCharacters;
     }

@@ -1,0 +1,33 @@
+/* The Map's zoom ladder, on its right edge, and the trail that says where the middle of the map is. */
+.map-zoom-ladder { position: absolute; z-index: 6; right: 14px; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 1px; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-strong); box-shadow: 0 8px 24px -16px color-mix(in srgb, var(--ink) 45%, transparent); }
+.map-zoom-ladder button { display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 500; line-height: 16px; text-align: left; cursor: pointer; }
+.map-zoom-ladder button i { flex: none; width: 8px; height: 8px; box-sizing: border-box; border: 1.5px solid currentColor; border-radius: 50%; }
+.map-zoom-ladder button:hover { background: color-mix(in srgb, var(--ink) 6%, transparent); color: var(--ink); }
+.map-zoom-ladder button.is-current { background: color-mix(in srgb, var(--accent) 14%, transparent); color: var(--accent); }
+.map-zoom-ladder button.is-current i { background: currentColor; }
+.map-zoom-ladder button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.map-zoom-trail { position: absolute; z-index: 6; left: 14px; top: 58px; max-width: min(720px, calc(100% - 170px)); pointer-events: none; }
+.map-zoom-trail ol { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; margin: 0; padding: 0; list-style: none; }
+.map-zoom-trail li { display: flex; align-items: center; min-width: 0; }
+.map-zoom-trail li + li::before { content: "›"; padding: 0 5px; color: var(--muted); }
+.map-zoom-trail button { max-width: 220px; padding: 3px 10px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-strong); color: var(--ink); font: inherit; font-size: 12.5px; font-weight: 500; line-height: 18px; text-overflow: ellipsis; white-space: nowrap; cursor: zoom-out; pointer-events: auto; }
+.map-zoom-trail button:hover { background: color-mix(in srgb, var(--ink) 6%, var(--panel-strong)); }
+.map-zoom-trail button[aria-current] { border-color: color-mix(in srgb, var(--accent) 60%, var(--line)); color: var(--accent); cursor: default; }
+.map-zoom-trail button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.map-zoom-trail p { display: inline-block; max-width: 52ch; margin: 6px 0 0; padding: 4px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-strong); color: var(--ink); font-size: 12.5px; line-height: 1.4; }
+
+/* Phones: the ladder is a slim strip of dots that names only the level on screen; the trail keeps its last two steps. */
+@media (max-width: 640px) {
+  .map-zoom-ladder { right: 8px; padding: 4px; border-radius: 11px; }
+  .map-zoom-ladder button { justify-content: flex-end; flex-direction: row-reverse; padding: 7px 6px; }
+  .map-zoom-ladder button span { display: none; font-size: 12px; }
+  .map-zoom-ladder button.is-current span { display: inline; }
+  .map-zoom-trail { left: 10px; top: 54px; max-width: calc(100% - 20px); }
+  .map-zoom-trail li:nth-last-child(n + 3) { display: none; }
+  .map-zoom-trail li:nth-last-child(2)::before { content: "…›"; }
+  .map-zoom-trail li:first-child:nth-last-child(2)::before { content: none; }
+  .map-zoom-trail button { max-width: 150px; }
+  /* The one-sentence summary stays on wider screens; here the map needs the room. */
+  .map-zoom-trail p { display: none; }
+}
