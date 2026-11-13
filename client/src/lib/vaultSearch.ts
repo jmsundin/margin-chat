@@ -171,7 +171,7 @@ export function searchLocalVault(request: VaultSearchRequest, input: LocalVaultS
   const documents = [...loadedDocuments, ...cloud].sort((left, right) => newestFirst(left.updatedAt, right.updatedAt));
 
   const allowed = new Set(scoped.map((conversation) => conversation.id));
-  const exploration = buildSearchExploration({ conversations, groups, categories, query: request.query });
+  const exploration = buildSearchExploration({ conversations, groups, categories, query: request.query, facets: false });
   const passages = exploration.results
     // Titles are already listed under documents.
     .filter((result) => result.evidence.sourceKind !== "conversation" && allowed.has(result.conversationId))
@@ -202,7 +202,7 @@ export function createLocalVaultSearchProvider(getInput: () => LocalVaultSearchI
 export type VaultCloudSearch = (query: string, options: { limit?: number; signal?: AbortSignal }, onEvent: (event: VaultSearchEvent) => void) => Promise<void>;
 
 const CLOUD_LIMIT = 50;
-const CLOUD_DELAY_MS = 150;
+const CLOUD_DELAY_MS = 60;
 const SOURCE_LABELS: Record<VaultSearchPassage["source"], string> = { document: "Document text", message: "Message", note: "Private note" };
 
 function cloudEvidence(passage: VaultSearchPassage): SearchEvidenceRef {

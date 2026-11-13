@@ -6,6 +6,7 @@ import {
   type VaultSearchResults, type VaultSearchScope,
 } from "../lib/vaultSearch";
 import { spotlightFromSearch } from "../lib/mapSpotlight";
+import { prepareSearchSources } from "../lib/searchExploration";
 import type { Conversation } from "../types";
 import MarkdownLivePreview from "./MarkdownLivePreview";
 import "./VaultSearchPalette.css";
@@ -15,6 +16,7 @@ type Entry = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passag
 const ANSWER_ENTRY: Entry = { kind: "answer", hit: { key: "answer:vault" } };
 
 const PASSAGE_PAGE = 30;
+const TYPING_PAUSE_MS = 120;
 const SCOPES: Array<{ id: VaultSearchScope; label: string }> = [
   { id: "all", label: "Anywhere" },
   { id: "family", label: "This family" },
@@ -55,7 +57,7 @@ export const cloudPathOf = (entry: Entry) => entry.kind === "document"
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
 /** Cmd+K: one box over the whole vault. Titles first, then passages; Enter opens here, Cmd+Enter beside. */
-export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore, onKeepOpen, onAnswer, onShowOnMap }: {
+export default function VaultSearchPalette({ isOpen, onClose: closePalette, query: savedQuery, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore, onKeepOpen, onAnswer, onShowOnMap }: {
   isOpen: boolean;
   onClose: () => void;
   query: string;
@@ -76,11 +78,28 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   /** Lights what was found on the Map, brightest the strongest match. */
   onShowOnMap?: (query: string, scores: Record<string, number>) => void;
 }) {
+  // What is typed stays here, so a keystroke redraws only the search box and not
+  // the whole workspace; the workspace hears the query when search closes or hands off.
+  const [query, setQuery] = useState(savedQuery);
+  const [shownSavedQuery, setShownSavedQuery] = useState(savedQuery);
+  if (savedQuery !== shownSavedQuery) { setShownSavedQuery(savedQuery); setQuery(savedQuery); }
+  const keepQuery = () => { if (query !== savedQuery) onQueryChange(query); };
+  const onClose = () => { keepQuery(); closePalette(); };
   const [scope, setScope] = useState<VaultSearchScope>("all");
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [passageLimit, setPassageLimit] = useState(PASSAGE_PAGE);
+  const [documentLimit, setDocumentLimit] = useState(PASSAGE_PAGE);
   const [results, setResults] = useState<VaultSearchResults | null>(null);
   const deferredQuery = useDeferredValue(query);
+  // Each keystroke would otherwise search the vault again; a short pause lets fast typing finish first.
+  const [searchedQuery, setSearchedQuery] = useState(query);
+  useEffect(() => {
+    if (deferredQuery === searchedQuery) return;
+    // Clearing the box or the first letter answer at once.
+    if (!deferredQuery.trim() || !searchedQuery.trim()) { setSearchedQuery(deferredQuery); return; }
+    const timer = setTimeout(() => setSearchedQuery(deferredQuery), TYPING_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [deferredQuery, searchedQuery]);
   const inputRef = useRef<HTMLInputElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -89,9 +108,22 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
 
   useEffect(() => {
     if (!isOpen) return;
-    return provider.search({ query: deferredQuery, scope, currentConversationId }, setResults);
-  }, [isOpen, provider, deferredQuery, scope, currentConversationId]);
-  useEffect(() => { setPassageLimit(PASSAGE_PAGE); setSelectedKey(null); }, [deferredQuery, scope]);
+    return provider.search({ query: searchedQuery, scope, currentConversationId }, setResults);
+  }, [isOpen, provider, searchedQuery, scope, currentConversationId]);
+  useEffect(() => { setPassageLimit(PASSAGE_PAGE); setDocumentLimit(PASSAGE_PAGE); setSelectedKey(null); }, [searchedQuery, scope]);
+  // Reads the vault's documents while the box waits for the first letter, in short idle slices.
+  useEffect(() => {
+    if (!isOpen) return;
+    let handle = 0;
+    const idle = typeof window.requestIdleCallback === "function";
+    const step = (deadline?: IdleDeadline) => {
+      const until = performance.now() + 8;
+      const done = prepareSearchSources(conversations, () => deadline && !deadline.didTimeout ? deadline.timeRemaining() > 2 : performance.now() < until);
+      if (!done) handle = idle ? window.requestIdleCallback(step, { timeout: 500 }) : window.setTimeout(step, 16);
+    };
+    handle = idle ? window.requestIdleCallback(step, { timeout: 500 }) : window.setTimeout(step, 16);
+    return () => { if (idle) window.cancelIdleCallback(handle); else window.clearTimeout(handle); };
+  }, [isOpen, conversations]);
   useEffect(() => {
     if (!isOpen) return;
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -112,17 +144,20 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
   // A question puts the answer first; otherwise it follows what was found.
   const answerFirst = canAnswer && (found?.question ?? /\?\s*$/u.test(query));
   const shownPassages = passages.slice(0, passageLimit);
+  // A one-letter search can match thousands of titles; drawing them all would stall typing.
+  const shownDocuments = documents.slice(0, documentLimit);
   const entries: Entry[] = [
     ...(answerFirst ? [ANSWER_ENTRY] : []),
     ...foundEntries,
     ...(canAnswer && !answerFirst ? [ANSWER_ENTRY] : []),
-    ...documents.map((hit) => ({ kind: "document" as const, hit })),
+    ...shownDocuments.map((hit) => ({ kind: "document" as const, hit })),
     ...related.map((hit) => ({ kind: "passage" as const, hit })),
     ...shownPassages.map((hit) => ({ kind: "passage" as const, hit })),
   ];
   const selected = entries.find((entry) => entryKey(entry) === selectedKey) ?? entries[0] ?? null;
   const selectedIndex = selected ? entries.indexOf(selected) : -1;
-  const stale = deferredQuery !== query || (results !== null && results.query !== deferredQuery);
+  const highlightTerms = vaultSearchTerms(searchedQuery);
+  const stale = searchedQuery !== query || (results !== null && results.query !== searchedQuery);
 
   const selectedEntryKey = selected ? entryKey(selected) : null;
   useEffect(() => {
@@ -151,6 +186,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
     }
     if (event.key === "Enter" && event.shiftKey && onKeepOpen && query.trim()) {
       event.preventDefault();
+      keepQuery();
       onKeepOpen(query, scope);
       return;
     }
@@ -192,7 +228,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
         <p className="vault-search-preview-crumb">{hit.familyTitle ? `${hit.familyTitle} › ` : ""}{hit.title}</p>
         <h3>{hit.title}</h3>
         <p className="vault-search-meta">{hit.matchLabel} · {meta(hit)}</p>
-        <MarkdownLivePreview className="vault-search-preview-passage" highlightTerms={vaultSearchTerms(query)} source={hit.passage}/>
+        <MarkdownLivePreview className="vault-search-preview-passage" highlightTerms={highlightTerms} source={hit.passage}/>
         {hit.localOnly ? <p className="vault-search-meta">Private note. Only shared with AI when you choose to.</p> : null}
         {hit.cloudPath ? <p className="vault-search-preview-text">This document is still in your cloud vault. Opening it downloads it to this device.</p> : null}
       </>;
@@ -202,11 +238,11 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
     const text = hit.target.kind === "loaded" ? documentPreview(conversations[hit.target.conversationId]) : "";
     return <>
       <p className="vault-search-preview-crumb">{hit.familyTitle ? `${hit.familyTitle} › ` : ""}{hit.title}</p>
-      <h3>{highlight(hit.title, query)}</h3>
+      <h3>{highlight(hit.title, searchedQuery)}</h3>
       <p className="vault-search-meta">{[hit.why, meta(hit)].filter(Boolean).join(" · ")}</p>
       {hit.hiddenFromAI ? <p className="vault-search-meta">Hidden from AI. Found by its title; AI never reads it.</p> : null}
       {cloud ? <p className="vault-search-preview-text">This document is still in your cloud vault. Opening it downloads it to this device.</p>
-        : text ? <MarkdownLivePreview className="vault-search-preview-document" highlightTerms={vaultSearchTerms(query)} source={text}/> : null}
+        : text ? <MarkdownLivePreview className="vault-search-preview-document" highlightTerms={highlightTerms} source={text}/> : null}
     </>;
   })();
 
@@ -221,7 +257,7 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
         <SearchIcon/>
         <span className="vault-search-hidden">Search titles and passages in your whole vault</span>
         <input ref={inputRef} aria-activedescendant={selected ? `${id}-${entryKey(selected)}` : undefined} aria-controls={`${id}-results`}
-          aria-expanded="true" autoComplete="off" onChange={(event) => onQueryChange(event.target.value)} placeholder="Search titles and passages in your whole vault…"
+          aria-expanded="true" autoComplete="off" onChange={(event) => setQuery(event.target.value)} placeholder="Search titles and passages in your whole vault…"
           role="combobox" type="search" value={query}/>
         <button aria-label="Close search" className="vault-search-close" onClick={onClose} type="button"><kbd>Esc</kbd></button>
       </label>
@@ -240,30 +276,31 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
             </>) : null}
             {foundEntries.length ? <li className="vault-search-section is-found" role="presentation" title="The documents this search seems to be about, ranked whole"><span>{foundEntries.length === 1 ? "Found it" : "Found these"}</span><span>{foundEntries.length}</span></li> : null}
             {foundEntries.map((entry) => row(entry, <>
-              <span className="vault-search-row-title">{highlight(entry.hit.title, query)}
+              <span className="vault-search-row-title">{highlight(entry.hit.title, searchedQuery)}
                 {entry.kind === "document" && entry.hit.hiddenFromAI ? <span className="vault-search-cloud" title="Found by its title. AI never reads it.">Hidden from AI</span> : null}
                 {cloudPathOf(entry) ? <span className="vault-search-cloud">{openingPath === cloudPathOf(entry) ? "Opening…" : "In cloud"}</span> : null}</span>
               <span className="vault-search-meta vault-search-why">{entry.hit.why}</span>
-              {entry.kind === "passage" ? <span className="vault-search-snippet">{highlight(entry.hit.preview, query)}</span> : null}
+              {entry.kind === "passage" ? <span className="vault-search-snippet">{highlight(entry.hit.preview, searchedQuery)}</span> : null}
             </>))}
             {canAnswer && !answerFirst ? row(ANSWER_ENTRY, <>
               <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Answer from my vault</span>
               <span className="vault-search-meta">A short answer that cites your documents</span>
             </>) : null}
             {documents.length ? <li className="vault-search-section" role="presentation"><span>{searching ? "Titles" : "Recent"}</span><span>{searching ? documents.length : ""}</span></li> : null}
-            {documents.map((hit) => row({ kind: "document", hit }, <>
-              <span className="vault-search-row-title">{highlight(hit.title, query)}{hit.target.kind === "cloud" ? <span className="vault-search-cloud">{openingPath === hit.target.path ? "Opening…" : "In cloud"}</span> : null}</span>
+            {shownDocuments.map((hit) => row({ kind: "document", hit }, <>
+              <span className="vault-search-row-title">{highlight(hit.title, searchedQuery)}{hit.target.kind === "cloud" ? <span className="vault-search-cloud">{openingPath === hit.target.path ? "Opening…" : "In cloud"}</span> : null}</span>
               <span className="vault-search-meta">{meta(hit)}</span>
             </>))}
+            {documents.length > shownDocuments.length ? <li role="presentation"><button className="vault-search-more" onClick={() => setDocumentLimit((limit) => limit + PASSAGE_PAGE)} type="button">Show {Math.min(PASSAGE_PAGE, documents.length - shownDocuments.length)} more titles</button></li> : null}
             {related.length ? <li className="vault-search-section" role="presentation" title="Ranked by matching words and by meaning"><span>Best matches</span><span>{related.length}</span></li> : null}
             {related.map((hit) => row({ kind: "passage", hit }, <>
               <span className="vault-search-row-title">{hit.title}{hit.cloudPath ? <span className="vault-search-cloud">{openingPath === hit.cloudPath ? "Opening…" : "In cloud"}</span> : null}<span className="vault-search-meta">{hit.matchLabel}</span></span>
-              <span className="vault-search-snippet">{highlight(hit.preview, query)}</span>
+              <span className="vault-search-snippet">{highlight(hit.preview, searchedQuery)}</span>
             </>))}
             {searching && passages.length ? <li className="vault-search-section" role="presentation"><span>{related.length ? "All passages with these words" : "Passages"}</span><span>{passages.length}{results?.complete === false ? " so far" : ""}</span></li> : null}
             {shownPassages.map((hit) => row({ kind: "passage", hit }, <>
               <span className="vault-search-row-title">{hit.title}{hit.cloudPath ? <span className="vault-search-cloud">{openingPath === hit.cloudPath ? "Opening…" : "In cloud"}</span> : null}<span className="vault-search-meta">{meta(hit)}</span></span>
-              <span className="vault-search-snippet">{highlight(hit.preview, query)}</span>
+              <span className="vault-search-snippet">{highlight(hit.preview, searchedQuery)}</span>
             </>))}
           </ul>
           {passages.length > shownPassages.length ? <button className="vault-search-more" onClick={() => setPassageLimit((limit) => limit + PASSAGE_PAGE)} type="button">Show {Math.min(PASSAGE_PAGE, passages.length - shownPassages.length)} more passages</button> : null}
@@ -285,8 +322,8 @@ export default function VaultSearchPalette({ isOpen, onClose, query, onQueryChan
         <span className="vault-search-keys"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open here · <kbd>{mod}↵</kbd> open beside{onKeepOpen ? <> · <kbd>⇧↵</kbd> keep open</> : null}</span>
         {onShowOnMap && searching && !stale && Object.keys(spotlightFromSearch(results)).length
           ? <button className="vault-search-explore" onClick={() => onShowOnMap(query.trim(), spotlightFromSearch(results))} title="Light what was found on the Map" type="button">Show on Map</button> : null}
-        {onKeepOpen && searching ? <button className="vault-search-explore" onClick={() => onKeepOpen(query, scope)} title="Shift+Enter" type="button">Keep results open</button> : null}
-        {onExplore ? <button className="vault-search-explore" onClick={onExplore} type="button">Filters and connections</button> : null}
+        {onKeepOpen && searching ? <button className="vault-search-explore" onClick={() => { keepQuery(); onKeepOpen(query, scope); }} title="Shift+Enter" type="button">Keep results open</button> : null}
+        {onExplore ? <button className="vault-search-explore" onClick={() => { keepQuery(); onExplore(); }} type="button">Filters and connections</button> : null}
       </footer>
     </section>
   </div>;
