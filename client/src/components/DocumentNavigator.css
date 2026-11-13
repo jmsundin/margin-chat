@@ -35,29 +35,42 @@
 .document-local-graph-header > span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .document-local-graph-action, .document-map-button { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
 .document-local-graph-action:hover, .document-map-button:hover { color: var(--ink); background: var(--button-active-surface); }
-.document-local-graph-action:focus-visible, .document-map-button:focus-visible, .document-map-pill button:focus-visible, .document-map-split-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-local-graph-action:focus-visible, .document-map-button:focus-visible, .document-sheet-handle:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .document-local-graph-action .document-navigator-icon, .document-map-button .document-navigator-icon { width: 17px; height: 17px; }
-.document-map-buttons { display: flex; align-items: center; gap: 2px; }
 .document-map-button[aria-pressed="true"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 14%, transparent); }
 
-/* Minimized: a pill in the corner of the document area. */
-.document-map-pill { position: absolute; left: 16px; bottom: 16px; z-index: 30; display: flex; align-items: center; border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 6px 18px #0002; }
-.document-map-pill-restore { display: flex; align-items: center; gap: 8px; height: 44px; padding: 0 6px 0 8px; border: 0; border-radius: 999px 0 0 999px; background: none; color: inherit; font: inherit; cursor: pointer; }
-.document-map-pill-graph { width: 34px; height: 27px; color: var(--muted); }
-.document-map-pill-label { font-size: 14px; font-weight: 600; }
-.document-map-pill-count { color: var(--muted); font-size: 12px; }
-.document-map-pill-close { display: grid; place-items: center; width: 40px; height: 44px; padding: 0; border: 0; border-radius: 0 999px 999px 0; background: none; color: var(--muted); font: inherit; font-size: 18px; cursor: pointer; }
-.document-map-pill-close:hover, .document-map-pill-restore:hover { color: var(--ink); }
+/* The sheet: the document lies on the map and its edge is dragged to show more or less of it. */
+.document-workspace-with-search[class*="is-sheet-"] { box-sizing: border-box; }
+.document-sheet-handle { position: absolute; z-index: 62; display: grid; place-items: center; touch-action: none; }
+.document-sheet-handle.is-left { width: 14px; margin-left: -7px; cursor: col-resize; }
+.document-sheet-handle.is-top { height: 20px; cursor: row-resize; background: var(--bg); border-radius: 14px 14px 0 0; box-shadow: 0 -6px 14px -8px #0003; }
+.document-sheet-handle::after { content: ""; border-radius: 3px; background: var(--line-strong); transition: background .15s, height .15s, opacity .15s; }
+.document-sheet-handle.is-left::after { width: 4px; height: 44px; }
+.document-sheet-handle.is-top::after { width: 40px; height: 4px; }
+/* On the page the edge keeps out of the way until the pointer comes near. */
+.document-sheet-handle.is-page { margin-left: 0; width: 10px; }
+.document-sheet-handle.is-page::after { opacity: .45; height: 36px; }
+.document-sheet-handle:hover::after, .document-sheet-handle.is-dragging::after, .document-sheet-handle:focus-visible::after { background: var(--accent); opacity: 1; }
+.document-sheet-handle.is-left:hover::after, .document-sheet-handle.is-left.is-dragging::after { height: 72px; }
+.document-workspace-with-search.is-sheet-docked.is-sheet-edge-left > :last-child { box-shadow: -10px 0 24px -18px #0004; }
 
-/* Split: the map keeps the top or left of the document area and the documents move over. */
-.document-workspace-with-search.has-map-split { box-sizing: border-box; }
-.document-map-split-handle { position: absolute; z-index: 62; display: grid; place-items: center; touch-action: none; }
-.document-map-split-handle.is-top { height: 12px; cursor: row-resize; }
-.document-map-split-handle.is-left { width: 12px; cursor: col-resize; }
-.document-map-split-handle::after { content: ""; border-radius: 2px; background: var(--line-strong); }
-.document-map-split-handle.is-top::after { width: 40px; height: 4px; }
-.document-map-split-handle.is-left::after { width: 4px; height: 40px; }
-.document-map-split-handle:hover::after { background: var(--accent); }
+/* A card: the document floats on the map, which fills the whole area under it. */
+.document-workspace-with-search.is-sheet-card > :last-child { position: absolute; z-index: 45; left: var(--sheet-card-left); top: calc(var(--sheet-card-top) + 36px);
+  width: var(--sheet-card-width); height: calc(var(--sheet-card-height) - 36px); flex: none; overflow: hidden; border: 1px solid var(--line-strong); border-top: 0;
+  border-radius: 0 0 14px 14px; background: var(--bg); box-shadow: 0 18px 44px -14px #0005; }
+.document-sheet-card-bar { position: absolute; z-index: 46; left: var(--sheet-card-left); top: var(--sheet-card-top); width: var(--sheet-card-width); height: 36px; box-sizing: border-box;
+  display: flex; align-items: center; gap: 4px; padding: 0 4px 0 12px; border: 1px solid var(--line-strong); border-bottom-color: var(--line); border-radius: 14px 14px 0 0;
+  background: var(--bg); color: var(--muted); font-size: 13px; cursor: move; touch-action: none; user-select: none; }
+.document-sheet-card-grip { width: 14px; height: 10px; flex: none; background: radial-gradient(currentColor 1px, transparent 1.3px) 0 0 / 5px 5px; opacity: .7; }
+.document-sheet-card-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Put away: the document keeps its place and state, out of sight, and a pill brings it back. */
+.document-workspace-with-search.is-sheet-map > * { visibility: hidden; }
+.document-sheet-pill { position: absolute; z-index: 46; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; max-width: min(420px, 80%); height: 42px; padding: 0 16px;
+  border: 1px solid var(--line-strong); border-radius: 999px; background: var(--panel-strong); color: var(--ink); font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; box-shadow: 0 8px 22px -8px #0004; }
+.document-sheet-pill:hover { border-color: var(--accent); }
+.document-sheet-pill:focus-visible, .document-sheet-card-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-sheet-pill-dot { width: 9px; height: 9px; flex: none; border-radius: 50%; background: var(--accent); }
+.document-sheet-pill-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .document-topic-outline { flex: 0 0 230px; box-sizing: border-box; min-height: 0; padding: 10px 8px; overflow-y: auto; border-right: 1px solid var(--line); background: var(--bg); }
 .document-topic-outline-heading { padding: 6px 8px; overflow: hidden; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .03em; text-transform: uppercase; white-space: nowrap; text-overflow: ellipsis; }
