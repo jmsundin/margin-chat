@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { runInNewContext } from "node:vm";
 import { offlineAppShellPlugin, renderOfflineServiceWorker } from "../client/build/offline-service-worker.mjs";
 
-function worker(liveClients: object[] = []) {
+function worker(liveClients: object[] = [], { cacheStorage, online = false }: { cacheStorage?: "fails" | "hangs"; online?: boolean } = {}) {
   const handlers = new Map<string, (event: any) => void>();
   const entries = new Map<string, string>([
     ["/index.html", "matching build HTML"], ["/assets/app-hash.js", "matching build JS"],
@@ -23,14 +23,24 @@ function worker(liveClients: object[] = []) {
     URL,
     Response,
     Request: class { url: string; constructor(path: string) { this.url = path; } },
+    setTimeout: (callback: () => void, ms: number) => setTimeout(callback, Math.min(ms, 20)),
+    clearTimeout,
     caches: {
-      open: async (name: string) => name === "marginchat-app-shell-older"
-        ? { match: async (path: string) => path === "/assets/lazy-oldhash12.js" ? "old lazy chunk" : undefined }
-        : cache,
+      open: async (name: string) => {
+        if (cacheStorage === "fails") throw new Error("UnknownError");
+        if (cacheStorage === "hangs") return new Promise(() => {});
+        return name === "marginchat-app-shell-older"
+          ? { match: async (path: string) => path === "/assets/lazy-oldhash12.js" ? "old lazy chunk" : undefined }
+          : cache;
+      },
       keys: async () => cached,
       delete: async (name: string) => { deleted.push(name); return true; },
     },
-    fetch: async () => { networkRequests++; throw new Error("offline"); },
+    fetch: async (request: { url: string }) => {
+      networkRequests++;
+      if (!online) throw new Error("offline");
+      return `network ${new URL(request.url).pathname}`;
+    },
     self: {
       location: { origin: "https://margin.test" },
       clients: { claim: async () => undefined, matchAll: async () => liveClients },
@@ -90,6 +100,21 @@ describe("offline application shell", () => {
     expect(await sw.request("/assets/lazy-oldhash12.js")).toBe("old lazy chunk");
     expect(sw.networkRequests).toBe(0);
   });
+  for (const cacheStorage of ["fails", "hangs"] as const) {
+    test(`when Cache Storage ${cacheStorage}, the app loads from the network instead of a white page`, async () => {
+      const sw = worker([], { cacheStorage, online: true });
+      expect(await sw.request("/", { mode: "navigate" })).toBe("network /");
+      expect(await sw.request("/assets/app-hash.js")).toBe("network /assets/app-hash.js");
+      expect(await sw.request("/assets/lazy-oldhash12.js")).toBe("network /assets/lazy-oldhash12.js");
+    });
+    test(`when Cache Storage ${cacheStorage}, a new worker still installs and replaces the stuck one`, async () => {
+      const sw = worker([{ id: "open-tab" }], { cacheStorage, online: true });
+      let pending: Promise<unknown> | undefined;
+      sw.handlers.get("install")!({ waitUntil: (promise: Promise<unknown>) => { pending = promise; } });
+      await pending;
+      expect(sw.forcedActivation).toBe(true);
+    });
+  }
   test("updates leave Excalidraw's 13 MB handwriting font for other alphabets to download when a drawing uses it", () => {
     let emitted = "";
     const bundle = Object.fromEntries(["index.html", "assets/app-hash.js", "excalidraw/fonts/Virgil/Virgil.woff2", "excalidraw/fonts/Xiaolai/Xiaolai-Regular-abc.woff2"]
