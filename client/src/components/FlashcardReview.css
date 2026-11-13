@@ -182,3 +182,39 @@
   .flashcard-review-close { order: 2; }
   .flashcard-deck-cards.is-tiles { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
 }
+
+/* Editing a card: each side is a small document. */
+.flashcard-browser-wrap:not([hidden]) { display: contents; }
+.flashcard-edit-button {
+  background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: .76rem; margin-left: auto; padding: 4px 0;
+}
+.flashcard-card-source .flashcard-edit-button { text-decoration: none; }
+.flashcard-edit-button:hover { color: var(--ink); }
+.flashcard-editor { align-self: flex-start; display: flex; flex-direction: column; gap: 18px; max-width: 680px; width: 100%; }
+.flashcard-editor-head { align-items: baseline; display: flex; gap: 10px; min-width: 0; }
+.flashcard-editor-head h2 { font-size: 1.05rem; font-weight: 600; margin: 0; }
+.flashcard-editor-head span { color: var(--muted); font-size: .8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.flashcard-editor-side { display: flex; flex-direction: column; gap: 6px; }
+.flashcard-editor-side h3 { color: var(--muted); font-size: .74rem; font-weight: 600; letter-spacing: .04em; margin: 0; text-transform: uppercase; }
+.flashcard-editor-hint { color: var(--muted); font-size: .78rem; margin: 0; }
+.flashcard-editor-document {
+  border: 1px solid var(--line-strong); border-radius: 10px; min-height: 96px; padding: 10px 14px;
+}
+.flashcard-editor-document:focus-within { border-color: var(--ink); }
+.flashcard-editor-both { align-items: center; color: var(--muted); display: flex; font-size: .84rem; gap: 8px; }
+.flashcard-editor-error { color: var(--accent); font-size: .84rem; margin: 0; }
+.flashcard-editor-actions { display: flex; gap: 8px; justify-content: flex-end; }
+.flashcard-editor-actions .flashcard-secondary { margin: 0; }
+.flashcard-editor-actions .flashcard-primary:disabled { cursor: default; opacity: .45; }
+@media (max-width: 640px) {
+  .flashcard-editor-actions { bottom: 0; background: var(--bg, #0b1115); padding: 8px 0 calc(8px + env(safe-area-inset-bottom)); position: sticky; }
+  .flashcard-editor-actions button { flex: 1; }
+}
+/* The card editor is the document editor without its view switch or the gutter kept for block handles. */
+.flashcard-editor-document .live-document-modes { display: none; }
+.flashcard-editor-document.live-document-editor { padding: 2px 0; }
+.flashcard-editor-document .live-document-host .cm-line,
+.flashcard-editor-document .live-document-widget,
+.flashcard-editor-document .live-document-after { margin-left: 0; padding-left: 2px; }
+.flashcard-editor-document .live-document-host .cm-line.cm-lp-quote { background-position: 2px 0; padding-left: 16px; }
+.flashcard-editor-document .live-document-host .cm-content { padding-bottom: 0; }

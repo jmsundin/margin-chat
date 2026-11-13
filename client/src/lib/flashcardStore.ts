@@ -144,8 +144,10 @@ export class FlashcardStore {
   /**
    * Bring a document's cards up to date with its text. Cards that left the text
    * are marked removed (never deleted); an edited card keeps its history.
+   * `links` (new id → old id) names cards edited on purpose, such as from Review, so their
+   * history carries over however much their text changed.
    */
-  syncDocument(docId: string, docTitle: string, parsed: Flashcard[], now = new Date().toISOString()) {
+  syncDocument(docId: string, docTitle: string, parsed: Flashcard[], now = new Date().toISOString(), links?: ReadonlyMap<string, string>) {
     const existing = [...this.cards.values()].filter((card) => card.docId === docId);
     const byId = new Map(existing.map((card) => [card.id, card]));
     const parsedIds = new Set(parsed.map((card) => card.id));
@@ -155,6 +157,12 @@ export class FlashcardStore {
     const gone = existing.filter((card) => !card.removed && !parsedIds.has(card.id));
     const fresh = parsed.filter((card) => !byId.has(card.id) || byId.get(card.id)!.removed);
     const relinked = relinkFlashcards(gone.filter(hasHistory), fresh.filter((card) => !byId.has(card.id)));
+    const freshIds = new Set(fresh.map((card) => card.id));
+    for (const [newId, oldId] of links ?? []) {
+      if (!freshIds.has(newId) || !this.cards.has(oldId) || newId === oldId) continue;
+      for (const [other, from] of relinked) if (from === oldId || other === newId) relinked.delete(other);
+      relinked.set(newId, oldId);
+    }
 
     const changed: StoredFlashcard[] = [];
     for (const card of parsed) {
