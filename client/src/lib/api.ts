@@ -353,6 +353,31 @@ export async function requestClusterCategories(args: {
     && !!(entry as { name: string }).name.trim()).map((entry) => ({ cluster: entry.cluster, name: entry.name.trim() }));
 }
 
+/** Names and one-sentence summaries for the Map's themes (T1...), topics (P1...) and blocks (B1...). */
+export async function requestMapLevelLabels(args: {
+  content: string;
+  expectedUserId?: string;
+  signal?: AbortSignal;
+}): Promise<Array<{ code: string; name?: string; summary?: string }>> {
+  const response = await apiFetch("/api/chat/title", {
+    body: JSON.stringify({ kind: "map-levels", prompt: args.content }),
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}),
+    },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as { levels?: unknown } | ErrorPayload | null;
+  ensureOk(response, payload, "Naming the map's levels failed.");
+  const levels = payload && typeof payload === "object" && "levels" in payload && Array.isArray(payload.levels) ? payload.levels : [];
+  return levels.filter((entry): entry is { code: string; name?: string; summary?: string } => !!entry && typeof entry === "object"
+    && typeof (entry as { code?: unknown }).code === "string")
+    .map((entry) => ({ code: entry.code, ...(typeof entry.name === "string" && entry.name.trim() ? { name: entry.name.trim() } : {}),
+      ...(typeof entry.summary === "string" && entry.summary.trim() ? { summary: entry.summary.trim() } : {}) }));
+}
+
 /** Muse Wonder files each numbered document (D1, D2, ...) under a category. */
 export async function requestDocumentCategories(args: {
   content: string;

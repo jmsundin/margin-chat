@@ -17,6 +17,36 @@ const BLOCK_GAP_Y = 0.4;
 const BOX_ASPECT = 1.4;
 /** Shapes (width over height) tried for the boxes when fitting them to a screen. */
 const SHAPE_CANDIDATES = [0.4, 0.55, 0.75, 1, 1.4, 1.9, 2.6];
+/** World units: space inside a theme around its topic boxes, with room at the top for its name above their name tags. */
+const THEME_PADDING = 40;
+const THEME_PADDING_TOP = 110;
+const THEME_GAP = 110;
+
+/** A run of documents that sit together inside a box: a family tree, or documents alike in meaning. */
+export interface CanvasBlock {
+  id: string;
+  /** "alike" blocks are documents close in meaning; a "family" is a main document with its children. */
+  kind: "alike" | "family";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  conversationIds: string[];
+}
+
+/** A broad theme: a frame around the topic boxes it holds. */
+export interface CanvasThemeBox {
+  id: string;
+  label: string;
+  /** Its biggest topic's color. */
+  color: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  boxIds: string[];
+  conversationIds: string[];
+}
 
 export interface CanvasGroupBox {
   id: string;
@@ -28,6 +58,10 @@ export interface CanvasGroupBox {
   width: number;
   height: number;
   conversationIds: string[];
+  /** The theme this box sits in, when topics are gathered into themes. */
+  themeId?: string;
+  /** Blocks of documents inside the box, when the box sorts them by meaning. */
+  blocks?: CanvasBlock[];
 }
 
 /** Each document's own group; the first group listing it wins, as in the sidebar. */
@@ -52,7 +86,7 @@ export function canvasGroupOf(conversations: Record<string, Conversation>, group
  * a main document with its children to its right, so a box's size follows what it holds. Boxes
  * are packed in rows in sidebar order, with documents in no group last, so they never overlap.
  */
-export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLabel = "No group", similarity, aspect = BOX_ASPECT, screenAspect }: {
+export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLabel = "No group", similarity, aspect = BOX_ASPECT, screenAspect, themes }: {
   nodes: ConversationGraphNodePlacement[];
   conversations: Record<string, Conversation>;
   groups: Record<string, ConversationGroup>;
@@ -68,7 +102,9 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLa
    * which keep their size at any zoom, get the most room. Overrides `aspect`.
    */
   screenAspect?: number;
-}): { boxes: CanvasGroupBox[]; nodes: ConversationGraphNodePlacement[] } {
+  /** Broad themes, each a list of group ids: their boxes sit together inside a frame of their own. */
+  themes?: ReadonlyArray<{ id: string; label: string; groupIds: readonly string[] }>;
+}): { boxes: CanvasGroupBox[]; nodes: ConversationGraphNodePlacement[]; themes: CanvasThemeBox[] } {
   const index = groupIndex(groups);
   const byId = new Map(nodes.map((node) => [node.conversationId, node]));
   const members = new Map<string, string[]>();
@@ -95,6 +131,23 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLa
   ...(members.has(NO_GROUP_BOX_ID) ? [{ id: NO_GROUP_BOX_ID, label: noGroupLabel, color: "var(--muted)", kind: "none" as const }] : [])];
   // Each box's blocks of alike documents don't depend on its shape; find them once.
   const alikeCache = new Map<string, ReturnType<typeof similarityBlocks>>();
+  const themeOf = new Map<string, number>();
+  (themes ?? []).forEach((theme, at) => { for (const id of theme.groupIds) if (!themeOf.has(id)) themeOf.set(id, at); });
+  /** Rows about as wide as the whole arrangement is tall, so Fit fills a screen. */
+  const pack = <T extends { width: number; height: number }>(items: T[], shape: number, gap: number) => {
+    const area = items.reduce((sum, item) => sum + (item.width + gap) * (item.height + gap), 0);
+    const rowWidth = Math.max(...items.map((item) => item.width), Math.sqrt(area * shape));
+    const placed: Array<T & { x: number; y: number }> = [];
+    let x = 0, y = 0, rowHeight = 0, width = 0;
+    for (const item of items) {
+      if (x > 0 && x + item.width > rowWidth) { x = 0; y += rowHeight + gap; rowHeight = 0; }
+      placed.push({ ...item, x, y });
+      width = Math.max(width, x + item.width);
+      x += item.width + gap;
+      rowHeight = Math.max(rowHeight, item.height);
+    }
+    return { placed, width, height: y + rowHeight };
+  };
   const arrange = (shape: number) => {
     const sized = order.map((box) => {
       const ids = members.get(box.id) ?? [];
@@ -104,31 +157,55 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLa
         if (!found) alikeCache.set(key, found = similarityBlocks(singles, similarity));
         return found;
       });
-      const { cells, columns, rows } = layoutFamilyTrees(ids, conversations, cellHeight / cellWidth, { similarity, aspect: shape, blocksOf: blocksOf || undefined });
-      return { ...box, ids, cells,
+      const { cells, columns, rows, blocks } = layoutFamilyTrees(ids, conversations, cellHeight / cellWidth, { similarity, aspect: shape, blocksOf: blocksOf || undefined });
+      return { ...box, ids, cells, blocks,
         width: columns * cellWidth - CELL_GAP_X + BOX_PADDING * 2,
         height: rows * cellHeight - CELL_GAP_Y + BOX_PADDING_TOP + BOX_PADDING };
     });
-    // Rows about as wide as the whole arrangement is tall, so Fit fills a screen.
-    const area = sized.reduce((sum, box) => sum + (box.width + BOX_GAP) * (box.height + BOX_GAP), 0);
-    const rowWidth = Math.max(...sized.map((box) => box.width), Math.sqrt(area * shape));
+    type Sized = typeof sized[number];
+    // A theme is packed like a small map of its own, then takes its place among the other themes and loose boxes.
+    type Item = { width: number; height: number; theme?: number; inner: Array<Sized & { x: number; y: number }> };
+    const items: Item[] = [];
+    const themeItems = new Map<number, Sized[]>();
+    for (const box of sized) {
+      const theme = box.kind === "group" ? themeOf.get(box.id) : undefined;
+      if (theme === undefined) continue;
+      themeItems.set(theme, [...themeItems.get(theme) ?? [], box]);
+    }
+    for (const [theme, own] of [...themeItems].sort((a, b) => a[0] - b[0])) {
+      // A theme stays squarer than the whole map, so it reads as one tile when zoomed out, even on a tall phone screen.
+      const inner = pack(own, Math.sqrt(shape), BOX_GAP);
+      items.push({ theme, inner: inner.placed.map((box) => ({ ...box, x: box.x + THEME_PADDING, y: box.y + THEME_PADDING_TOP })),
+        width: inner.width + THEME_PADDING * 2, height: inner.height + THEME_PADDING_TOP + THEME_PADDING });
+    }
+    for (const box of sized) if (box.kind !== "group" || !themeOf.has(box.id)) items.push({ width: box.width, height: box.height, inner: [{ ...box, x: 0, y: 0 }] });
+    const outer = pack(items, shape, items.some((item) => item.theme !== undefined) ? THEME_GAP : BOX_GAP);
     const boxes: CanvasGroupBox[] = [];
     const placed: ConversationGraphNodePlacement[] = [];
-    let x = 0, y = 0, rowHeight = 0, width = 0;
-    for (const box of sized) {
-      if (x > 0 && x + box.width > rowWidth) { x = 0; y += rowHeight + BOX_GAP; rowHeight = 0; }
-      boxes.push({ id: box.id, label: box.label, color: box.color, kind: box.kind, x, y, width: box.width, height: box.height, conversationIds: box.ids });
-      for (const id of box.ids) {
-        const node = byId.get(id)!, cell = box.cells.get(id)!;
-        placed.push({ ...node, x: x + BOX_PADDING + cell.column * cellWidth, y: y + BOX_PADDING_TOP + cell.row * cellHeight });
+    const themeBoxes: CanvasThemeBox[] = [];
+    for (const item of outer.placed) {
+      const theme = item.theme === undefined ? undefined : themes![item.theme];
+      if (theme) themeBoxes.push({ id: theme.id, label: theme.label, color: item.inner[0]?.color ?? "var(--muted)", x: item.x, y: item.y, width: item.width, height: item.height,
+        boxIds: item.inner.map((box) => box.id), conversationIds: item.inner.flatMap((box) => box.ids) });
+      for (const box of item.inner) {
+        const x = item.x + box.x, y = item.y + box.y;
+        boxes.push({ id: box.id, label: box.label, color: box.color, kind: box.kind, x, y, width: box.width, height: box.height, conversationIds: box.ids,
+          ...(theme ? { themeId: theme.id } : {}),
+          ...(box.blocks.length ? { blocks: box.blocks.map((block) => ({ id: `${box.id}\n${block.ids[0]}`, kind: block.kind, conversationIds: block.ids,
+            x: x + BOX_PADDING + block.column * cellWidth - CELL_GAP_X / 2, y: y + BOX_PADDING_TOP + block.row * cellHeight - CELL_GAP_Y / 2,
+            width: block.columns * cellWidth, height: block.rows * cellHeight })) } : {}) });
+        for (const id of box.ids) {
+          const node = byId.get(id)!, cell = box.cells.get(id)!;
+          placed.push({ ...node, x: x + BOX_PADDING + cell.column * cellWidth, y: y + BOX_PADDING_TOP + cell.row * cellHeight });
+        }
       }
-      width = Math.max(width, x + box.width);
-      x += box.width + BOX_GAP;
-      rowHeight = Math.max(rowHeight, box.height);
     }
-    return { boxes, nodes: placed, width, height: y + rowHeight };
+    // Boxes keep sidebar order whatever theme they sit in, as callers and keyboard order expect.
+    const rank = new Map(order.map((box, at) => [box.id, at]));
+    boxes.sort((a, b) => rank.get(a.id)! - rank.get(b.id)!);
+    return { boxes, nodes: placed, themes: themeBoxes, width: outer.width, height: outer.height };
   };
-  if (!screenAspect || !(screenAspect > 0)) { const { boxes, nodes: placed } = arrange(aspect); return { boxes, nodes: placed }; }
+  if (!screenAspect || !(screenAspect > 0)) { const { boxes, nodes: placed, themes: themeBoxes } = arrange(aspect); return { boxes, nodes: placed, themes: themeBoxes }; }
   // Fit scales an arrangement by its tighter side; keep the shape it draws largest.
   let best: ReturnType<typeof arrange> | null = null, bestScale = -1;
   for (const shape of SHAPE_CANDIDATES) {
@@ -136,7 +213,7 @@ export function layoutCanvasGroupBoxes({ nodes, conversations, groups, noGroupLa
     const scale = Math.min(screenAspect / Math.max(1, candidate.width), 1 / Math.max(1, candidate.height));
     if (scale > bestScale * 1.001) { best = candidate; bestScale = scale; }
   }
-  return { boxes: best!.boxes, nodes: best!.nodes };
+  return { boxes: best!.boxes, nodes: best!.nodes, themes: best!.themes };
 }
 
 /**
@@ -157,7 +234,7 @@ export function layoutFamilyTrees(ids: string[], conversations: Record<string, C
   const inBox = new Set(ids);
   const childrenOf = (id: string) => (conversations[id]?.childIds ?? []).filter((childId) => inBox.has(childId));
   const roots = ids.filter((id) => { const parentId = conversations[id]?.parentId; return !parentId || !inBox.has(parentId); });
-  type Block = { cells: Map<string, { column: number; row: number }>; columns: number; rows: number };
+  type Block = { cells: Map<string, { column: number; row: number }>; columns: number; rows: number; kind?: "alike" };
   let blocks: Block[] = roots.map((rootId) => {
     const local = new Map<string, { column: number; row: number }>();
     let leaves = 0, depth = 0;
@@ -185,27 +262,33 @@ export function layoutFamilyTrees(ids: string[], conversations: Record<string, C
     if (alike.length) {
       gapX = BLOCK_GAP_X; gapY = BLOCK_GAP_Y;
       // A block of alike documents is about square on screen; documents alike to none fill whole rows.
-      const shape = (members: string[], columns: number): Block => ({
+      const shape = (members: string[], columns: number, kind?: "alike"): Block => ({
         cells: new Map(members.map((id, at) => [id, { column: at % columns, row: Math.floor(at / columns) }])),
-        columns, rows: Math.ceil(members.length / columns),
+        columns, rows: Math.ceil(members.length / columns), kind,
       });
       blocks = [...blocks.filter((block) => block.cells.size > 1),
-        ...alike.map((members) => shape(members, Math.max(1, Math.min(width, members.length, Math.ceil(Math.sqrt(members.length * cellAspect)))))),
+        ...alike.map((members) => shape(members, Math.max(1, Math.min(width, members.length, Math.ceil(Math.sqrt(members.length * cellAspect)))), "alike")),
         ...loners.length ? [shape(loners, Math.min(width, loners.length))] : []];
     }
   }
   const cells = new Map<string, { column: number; row: number }>();
+  /** Where each family tree and each block of alike documents landed, in grid cells. */
+  const placedBlocks: Array<{ kind: "alike" | "family"; ids: string[]; column: number; row: number; columns: number; rows: number }> = [];
   let column = 0, row = 0, shelf = 0, used = 0;
   for (const block of blocks) {
     if (column > 0 && column + block.columns > width + gapX + 1e-9) { column = 0; row += shelf + gapY; shelf = 0; }
     for (const [id, cell] of block.cells) cells.set(id, { column: column + cell.column, row: row + cell.row });
+    // A family is listed from its main document; documents alike to none (the last block) are no block at all.
+    const familyRoot = block.kind || block.cells.size < 2 ? undefined : roots.find((id) => block.cells.has(id) && childrenOf(id).length);
+    if (block.kind === "alike" || familyRoot) placedBlocks.push({ kind: block.kind ?? "family", column, row, columns: block.columns, rows: block.rows,
+      ids: familyRoot ? [familyRoot, ...[...block.cells.keys()].filter((id) => id !== familyRoot)] : [...block.cells.keys()] });
     used = Math.max(used, column + block.columns);
     column += block.columns + gapX;
     shelf = Math.max(shelf, block.rows);
   }
   // Documents whose place a cycle hid still get a cell of their own.
   for (const id of ids) if (!cells.has(id)) { cells.set(id, { column: 0, row: row + shelf }); shelf += 1; }
-  return { cells, columns: Math.max(2, used), rows: Math.max(1, row + shelf) };
+  return { cells, columns: Math.max(2, used), rows: Math.max(1, row + shelf), blocks: placedBlocks };
 }
 
 /** The box under a point on the Canvas, if any. */
