@@ -96,6 +96,8 @@ export interface DocumentPanelProps {
   onAskBoardNote?: (request: BoardNoteRequest) => Promise<string>;
   /** A roadmap document's stages and steps, drawn above its notes. */
   roadmap?: ReactNode;
+  /** The roadmap is the page: it fills the panel, and the document's own text opens from it. */
+  roadmapFill?: boolean;
   /** The "Tell the AI: …" line above the document's text. */
   aiInstruction?: ReactNode;
   /**
@@ -577,7 +579,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           </form>;
   }
 
-  return <article className={`chat-panel document-panel${props.compact ? " is-compact-document" : ""}${props.isActive ? " is-active" : ""}${minimizedSideDocuments.length ? " has-minimized-side-documents" : ""}`} ref={props.registerPanelRef}>
+  return <article className={`chat-panel document-panel${props.roadmapFill && props.roadmap ? " is-roadmap" : ""}${props.compact ? " is-compact-document" : ""}${props.isActive ? " is-active" : ""}${minimizedSideDocuments.length ? " has-minimized-side-documents" : ""}`} ref={props.registerPanelRef}>
     {minimizedSideDocuments.length ? <nav className="document-side-restores" aria-label="Minimized side documents">
       {minimizedSideDocuments.map((sideDocument) => <button key={sideDocument.id} type="button"
         className="document-side-restore" aria-label={`Open side document: ${sideDocument.title || "Untitled document"}`}
@@ -611,7 +613,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {props.onClose ? <button type="button" className="document-window-button document-close-button" aria-label={`Close document: ${conversation.title || "Untitled document"}`} title="Close document" onClick={props.onClose}>×</button> : null}
         </div>
       </header> : null}
-    <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
+    {props.roadmapFill && props.roadmap ? <div className="document-roadmap-fill">{props.roadmap}</div> : <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
       style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
     <div className={`panel-body document-body${board ? " is-board" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
@@ -697,7 +699,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       activeId={props.activeMarginNoteId} onHeightChange={setMarginHeight}
       marks={props.marginMarks} noteWidth={props.marginNoteWidth}/> : null}
     <BackToTopButton scrollRef={bodyRef} active={props.isActive}/>
-    </div>
+    </div>}
     {mobileKeyboard.mobile && invocation && <MobileComposerViewport>{renderAIComposer()}</MobileComposerViewport>}
     <AnnotationPreview containerRef={bodyRef} anchors={props.anchors} notes={conversation.notes??[]} onOpenBranch={props.onOpenBranch} onOpenNote={props.onOpenNote} onRemoveLink={props.onRemoveLink}/>
     <ServicePickerModal contextControls={props.aiControls} currentModelId={conversation.modelId} currentServiceId={conversation.serviceId} isOpen={modelOpen} onClose={()=>setModelOpen(false)} onSelectModel={props.onModelChange} recentSelections={props.recentModelSelections}/>

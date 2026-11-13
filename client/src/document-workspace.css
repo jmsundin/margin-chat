@@ -226,3 +226,8 @@
   /* Each note uses the page's width; the corner handle still sets its height. */
   .conversation-canvas.is-tree-browser.is-document-workspace > .document-margin-notes .margin-document-frame { width: 100% !important; }
 }
+
+/* A roadmap on its own is a map, not a page of text: it takes the whole width, like the Map view. */
+.conversation-canvas.is-tree-browser.is-document-workspace.is-single-document:has(> .conversation-tree-expanded > .document-panel.is-roadmap) { padding: 0 12px 10px !important; overflow-x: hidden; }
+.conversation-canvas.is-tree-browser.is-single-document > .conversation-tree-expanded:has(> .document-panel.is-roadmap) { flex: 1 1 auto; max-width: none; min-width: 0; width: auto; }
+.conversation-tree-expanded:has(> .document-panel.is-roadmap) > .panel-resize-handle { display: none; }

@@ -5484,6 +5484,24 @@ function WorkspaceAppContent({
     return null;
   }
 
+  /** A new step made on the roadmap: a new document of its own (not opened beside the roadmap), added to a stage. */
+  function handleCreateRoadmapStep(roadmapId: string, stageId: string, title: string, nodeId: string): string | null {
+    if (!currentStateRef.current.conversations[roadmapId]) return "This roadmap isn't open any more.";
+    const now = new Date().toISOString();
+    const note = { id: createId("note-conversation"), noteId: createId("note"), createdAt: now, title: title.slice(0, 100) };
+    // The new document stays in the background: the roadmap is still the page you're on.
+    const make = (current: AppState) => { const next = createMapNote(current, note); return { ...next, activeConversationId: current.activeConversationId, rootId: current.rootId }; };
+    const made = make(currentStateRef.current);
+    if (!made.conversations[note.id]) return "Couldn't make a document for this step.";
+    const result = applyRoadmapChange(made, roadmapId, { kind: "add-node", stageId, target: { docId: note.id }, nodeId }, now);
+    if (result.error) return result.error;
+    setState((current) => {
+      const next = make(current);
+      return next.conversations[note.id] ? applyRoadmapChange(next, roadmapId, { kind: "add-node", stageId, target: { docId: note.id }, nodeId }, now).state : current;
+    });
+    return null;
+  }
+
   /** Ask Agent mode to draft this roadmap from the vault; it comes back as a proposal under the reply. */
   function handleDraftRoadmap(conversationId: string, goal: string): string | null {
     const conversation = currentStateRef.current.conversations[conversationId];
@@ -6001,18 +6019,20 @@ function WorkspaceAppContent({
       groups={state.groups} onAssignGroup={handleAssignConversationGroup} />;
   }
 
-  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat", dock?: GraphDockControls) {
-    const maximized = view === "chat" && maximizedDocument?.id === conversation.id;
-    const dockHeader = view === "chat" && !maximized && pinnedDocumentIds.includes(conversation.id);
+  /** A document's panel. `embedded`: opened beside a roadmap, so the page's own window controls stay with the roadmap. */
+  function renderConversationChatPanel(conversation: Conversation, view: "chat" | "graph" = "chat", dock?: GraphDockControls, embedded = false) {
+    const maximized = !embedded && view === "chat" && maximizedDocument?.id === conversation.id;
+    const dockHeader = !embedded && view === "chat" && !maximized && pinnedDocumentIds.includes(conversation.id);
     // On phones the workspace header names the document and holds its menu, which can minimize and close it.
-    const bareHeader = view === "chat" && isMobileViewport;
-    return <DocumentPanel key={conversation.id} conversation={conversation}
+    const bareHeader = !embedded && view === "chat" && isMobileViewport;
+    const roadmapPage = !embedded && conversation.nodeType === "roadmap";
+    return <DocumentPanel key={embedded ? `roadmap-sheet:${conversation.id}` : conversation.id} conversation={conversation}
       compact={isCompactDocument(conversation)} bareHeader={bareHeader}
-      onMinimize={view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
-      onClose={view === "chat" && !dockHeader && !maximized && !bareHeader && !hasDocumentTab(conversation.id) ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
+      onMinimize={!embedded && view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
+      onClose={embedded ? undefined : view === "chat" && !dockHeader && !maximized && !bareHeader && !hasDocumentTab(conversation.id) ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
       headerLeading={dock?.leading}
       // On the quiet page the path leaves the header and sits as one line at the top of the page you're on.
-      parentBreadcrumbs={view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock)
+      parentBreadcrumbs={embedded ? undefined : view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock)
         // Clicking into one of its margin notes keeps the line, so the page doesn't jump.
         : view === "chat" && quietHeader && !showSpaceStart && !isCompactDocument(conversation)
           && (conversation.id === activeConversation.id || (activeConversation.parentId === conversation.id && Boolean(activeConversation.document?.marginNote)))
@@ -6035,7 +6055,10 @@ function WorkspaceAppContent({
           inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} />
         {renderNotebookStanceButton()}
       </div> : undefined}
-      roadmap={conversation.nodeType === "roadmap" ? <RoadmapView conversation={conversation} conversations={state.conversations}
+      roadmapFill={roadmapPage && view === "chat"}
+      roadmap={roadmapPage ? <RoadmapView conversation={conversation} conversations={state.conversations} fill={view === "chat"}
+        renderDocument={(docId) => state.conversations[docId] ? renderConversationChatPanel(state.conversations[docId], "chat", undefined, true) : null}
+        onCreateStep={handleCreateRoadmapStep}
         drafting={Boolean(pendingConversationIds[conversation.id])} onDraft={(goal) => handleDraftRoadmap(conversation.id, goal)}
         progress={agentProgress[conversation.id]} budgetMicros={agentModeControls(conversation)?.showBudget ? agentModeControls(conversation)?.budgetMicros : undefined}
         onStop={() => stopChatStream(conversation.id)}
@@ -6050,11 +6073,11 @@ function WorkspaceAppContent({
         <button type="button" className="version-clash-dismiss" aria-label="Dismiss: keep the document as it is"
           onClick={() => void vault.resolveConflict(vault.clashedDocuments?.[conversation.id], "current").catch(() => undefined)}>×</button>
       </p> : undefined}
-      bodyFooter={view === "chat" && conversation.id === activeConversation.id && documentNeighbors
+      bodyFooter={!embedded && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
-      fullScreenToggle={view === "chat" && !dockHeader && (maximized || !isMobileViewport) ? renderFullScreenButton(conversation) : undefined}
+      fullScreenToggle={!embedded && view === "chat" && !dockHeader && (maximized || !isMobileViewport) ? renderFullScreenButton(conversation) : undefined}
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
-      minimizedSideDocuments={view === "chat" && getMinimizedChildNodes(conversation) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
+      minimizedSideDocuments={embedded || (view === "chat" && getMinimizedChildNodes(conversation)) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
       linkSuggestions={(query) => wikiLinkSuggestions({ conversations: state.conversations, cloudDocuments: vault.cloudDocuments, currentId: conversation.id }, query)}
       resolveWikiLink={(target) => resolveWikiLinkDocument(target, state.conversations, vault.cloudDocuments)}

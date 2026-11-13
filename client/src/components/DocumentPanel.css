@@ -127,3 +127,8 @@
 .document-panel-breadcrumbs button { padding: 3px 6px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font: inherit; cursor: pointer; }
 .document-panel-breadcrumbs button:hover { background: var(--button-active-surface); color: var(--ink); }
 .document-panel-breadcrumbs [aria-current="page"] span { padding: 3px 6px; color: var(--ink); font-weight: 600; }
+/* A roadmap is its own map: it fills the panel instead of sitting above the text. */
+.document-roadmap-fill { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; min-width: 0; overflow: hidden; border-radius: inherit; }
+.chat-panel.document-panel.is-roadmap { display: flex; flex-direction: column; overflow: hidden; }
+/* A document opened beside a roadmap is a plain page: no card of its own. */
+.roadmap-sheet-scroll > .chat-panel.document-panel { border: 0; border-radius: 0; box-shadow: none; margin: 0; }
