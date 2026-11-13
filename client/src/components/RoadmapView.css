@@ -83,7 +83,7 @@ span.roadmap-node-mark { cursor: default; font-size: .8rem; }
 .roadmap .roadmap-detail-close { background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; font-size: 1.1rem; height: 30px; width: 30px; }
 .roadmap-detail-preview { color: var(--muted); font-size: .76rem; line-height: 1.5; margin: 0; overflow-wrap: anywhere; }
 .roadmap .roadmap-detail-open { align-self: flex-start; }
-.roadmap-detail-preview.is-reading { color: var(--ink); font-size: .84rem; line-height: 1.55; max-height: min(52vh, 460px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
+.roadmap-detail-preview.is-reading { color: var(--ink); flex-shrink: 0; font-size: .84rem; line-height: 1.55; max-height: min(52vh, 460px); overflow-y: auto; overscroll-behavior: contain; padding-right: 4px; }
 .roadmap-detail-preview.is-reading p { margin: 0 0 .6em; }
 .roadmap-detail-preview.is-reading p:last-child { margin-bottom: 0; }
 .roadmap-detail-preview.is-reading p.is-heading { font-weight: 650; margin-top: 1em; }
@@ -106,7 +106,7 @@ span.roadmap-node-mark { cursor: default; font-size: .8rem; }
 .roadmap .roadmap-detail-link { background: transparent; border: 0; color: var(--message-link, var(--accent)); cursor: pointer; padding: 0; text-align: left; }
 .roadmap-detail-muted { color: var(--muted); font-size: .74rem; margin: 0; }
 .roadmap-detail-missing p { font-size: .78rem; line-height: 1.5; margin: 0 0 8px; }
-.roadmap-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.roadmap-detail-actions { display: flex; flex-shrink: 0; flex-wrap: wrap; gap: 6px; }
 .roadmap-detail-actions button:disabled { opacity: .4; }
 .roadmap-detail-actions button.is-danger { color: var(--accent); }
 

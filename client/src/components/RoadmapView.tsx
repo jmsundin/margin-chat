@@ -338,7 +338,10 @@ function RoadmapDetail({ node, pending, graph, conversations, stages, editing, t
           onClick={() => { if (onExplain()) setReading(true); }}>Explain with AI</button> : null}
         {hasRoadmap ? <button type="button" title="This step has a roadmap of its own" onClick={() => onOpen({ docId: node.target.docId })}>Open its roadmap ({hasRoadmap} {hasRoadmap === 1 ? "step" : "steps"})</button>
           : onDiveDeeper && !node.target.blockId ? <button type="button" disabled={writing} title="AI breaks this topic into its own roadmap, inside the step's document, for you to approve"
-            onClick={() => { onDiveDeeper(); }}>Dive deeper</button> : null}
+            onClick={() => {
+              // On a phone the step is a sheet over the page; it steps aside for the document the answer is written in.
+              if (onDiveDeeper() && window.matchMedia?.("(max-width: 720px)").matches) onClose();
+            }}>Dive deeper</button> : null}
       </div>
       <div className="roadmap-status-picker" role="radiogroup" aria-label="Status">
         {STATUSES.map((item) => <button key={item} type="button" role="radio" aria-checked={status === item}
