@@ -2,6 +2,7 @@ import { HttpError } from "../../lib/errors.mjs";
 import { normalizePublicPageUrl, readPublicPage } from "../../urlMap/page.mjs";
 import { gitHubLocation, importWebSection, readImportPage } from "./webImport.mjs";
 import { tweetLocation } from "./tweetThread.mjs";
+import { roadmapShLocation } from "./roadmapSh.mjs";
 
 /** Characters of page text one run may read, across all its pages, by AI mode. */
 export const WEB_PAGE_BUDGETS = Object.freeze({ fast: 8_000, balanced: 20_000, thorough: 40_000 });
@@ -45,7 +46,7 @@ export function pastedWebAddresses(chatRequest) {
 
 export const WEB_TOOL_DEFINITION = {
   name: "read_webpage",
-  description: "Read a public webpage or PDF that the user pasted into this conversation, or a link listed on a page you already read with this tool. Returns the page's main text as Markdown (headings, lists and tables kept; menus and ads left out), the page title and up to 20 links on it. An X (Twitter) post comes back with its author's whole thread, every post in order. Pages behind a sign-in, paywalled text, and pages that need JavaScript to show their text can't be read.",
+  description: "Read a public webpage or PDF that the user pasted into this conversation, or a link listed on a page you already read with this tool. Returns the page's main text as Markdown (headings, lists and tables kept; menus and ads left out), the page title and up to 20 links on it. An X (Twitter) post comes back with its author's whole thread, every post in order, and a roadmap.sh roadmap as an outline of its sections and topics. Pages behind a sign-in, paywalled text, and pages that need JavaScript to show their text can't be read.",
   parameters: { type: "object", properties: {
     url: { type: "string", description: "The full http or https address, exactly as the user pasted it or as a returned link lists it." },
     keep_links: { type: "boolean", description: "True to keep every link and image inside the Markdown, for when the user wants the page as Markdown. Links take room, so leave false to summarize or explain." },
@@ -65,7 +66,7 @@ export const IMPORT_TOOL_DEFINITION = {
 
 /** A page for read_webpage. GitHub repositories and files are read from their raw Markdown, X posts with their whole thread. */
 async function readForAgent(url, options) {
-  if (!gitHubLocation(url) && !tweetLocation(url)) return readPublicPage(url, options);
+  if (!gitHubLocation(url) && !tweetLocation(url) && !roadmapShLocation(url)) return readPublicPage(url, options);
   const page = await readImportPage(url, { signal: options.signal, userAgent: options.userAgent });
   return { url: page.url, title: page.title, byline: null, text: page.markdown.slice(0, options.textLimit), truncated: page.markdown.length > options.textLimit, links: page.links };
 }

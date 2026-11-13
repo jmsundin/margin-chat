@@ -1,4 +1,5 @@
 import { createEmptyRoadmap, normalizeRoadmap, ROADMAP_NODE_TYPE } from "@margin-chat/workspace-contracts";
+import { addAIChildNodes } from "./aiChildNodes";
 import type { AgentRoadmapProposal, AppState, Conversation, Roadmap, RoadmapNode, RoadmapStatus } from "../types";
 import { setDocumentRelation } from "./documentRelations";
 
@@ -329,21 +330,30 @@ export function unmakeRoadmapDocument(conversation: Conversation, updatedAt: str
   return { ...rest, updatedAt };
 }
 
-export interface RoadmapDraftIds { stages: string[]; nodes: Record<string, string> }
+export interface RoadmapDraftIds {
+  stages: string[];
+  nodes: Record<string, string>;
+  /** For steps that make a new document: the IDs it gets, by step key. */
+  documents?: Record<string, { conversation: string; block: string }>;
+}
 
 /** IDs made once per approval, so the state update gives the same roadmap however often it runs. */
-export function roadmapDraftIds(proposal: AgentRoadmapProposal): RoadmapDraftIds {
+export function roadmapDraftIds(proposal: AgentRoadmapProposal, createId?: (prefix: string) => string): RoadmapDraftIds {
+  const steps = proposal.stages.flatMap((stage) => stage.steps);
   return { stages: proposal.stages.map(() => newRoadmapId("stage")),
-    nodes: Object.fromEntries(proposal.stages.flatMap((stage) => stage.steps).map((step) => [step.key, newRoadmapId("node")])) };
+    nodes: Object.fromEntries(steps.map((step) => [step.key, newRoadmapId("node")])),
+    ...(createId ? { documents: Object.fromEntries(steps.filter((step) => !step.documentId)
+      .map((step) => [step.key, { conversation: createId("conversation"), block: createId("block") }])) } : {}) };
 }
 
 /**
  * Add an approved AI draft to a roadmap: its stages after any already there, its steps, then its
  * prerequisites (written as `depends-on` like any other). Steps citing a document this vault doesn't
  * have are left out, and so is any prerequisite that would loop with what the roadmap already has.
+ * A step with notes instead of a document gets a new document under the roadmap, holding the notes.
  */
 export function applyRoadmapDraft(state: AppState, proposal: AgentRoadmapProposal, ids: RoadmapDraftIds,
-  options: { updatedAt: string; known?: (id: string) => boolean }): { state: AppState; added: number; skipped: number } | null {
+  options: { updatedAt: string; known?: (id: string) => boolean }): { state: AppState; added: number; skipped: number; created: number } | null {
   const conversation = state.conversations[proposal.roadmapId];
   if (!conversation) return null;
   const { updatedAt } = options;
@@ -355,11 +365,24 @@ export function applyRoadmapDraft(state: AppState, proposal: AgentRoadmapProposa
   const placeholder = current.nodes.length === 0 ? current.stages.map((stage) => stage.id) : [];
   const keyed = new Map<string, string>();
   let skipped = 0;
+  let created = 0;
   proposal.stages.forEach((stage, index) => {
-    const steps = stage.steps.filter((step) => {
-      if (known(step.documentId) && step.documentId !== conversation.id) return true;
+    const steps = stage.steps.flatMap((step) => {
+      if (step.documentId) {
+        if (known(step.documentId) && step.documentId !== conversation.id) return [{ ...step, documentId: step.documentId }];
+      } else if (step.title?.trim() && ids.documents?.[step.key]) {
+        const made = ids.documents[step.key];
+        const result = addAIChildNodes(next, conversation.id, [{ id: step.key, title: step.title, content: step.notes ?? "", blockId: "", from: 0, to: 0 }],
+          { now: updatedAt, createId: (prefix) => prefix === "conversation" ? made.conversation : made.block });
+        if (result.createdIds.length) {
+          next = result.state;
+          created += 1;
+          // The new document carries the step's name, so the step needs no name of its own.
+          return [{ ...step, documentId: made.conversation, title: undefined }];
+        }
+      }
       skipped += 1;
-      return false;
+      return [];
     });
     if (!steps.length) return;
     next = applyRoadmapChange(next, conversation.id, { kind: "add-stage", title: stage.title, stageId: ids.stages[index] }, updatedAt).state;
@@ -379,5 +402,34 @@ export function applyRoadmapDraft(state: AppState, proposal: AgentRoadmapProposa
       if (prerequisiteId) next = applyRoadmapChange(next, conversation.id, { kind: "add-prerequisite", nodeId, prerequisiteId }, updatedAt).state;
     }
   }
-  return { state: next, added: keyed.size, skipped };
+  return { state: next, added: keyed.size, skipped, created };
+}
+
+const DRAFT_LINK = /\bhttps?:\/\/[^\s<>"'`]+/iu;
+const BARE_LINK = /(?:^|\s)((?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,24}\/[^\s<>"'`]*)/iu;
+
+/** The web address in what the user typed into Draft with AI, with https:// added to one typed without it. */
+export function roadmapDraftLink(input: string): string | null {
+  const typed = DRAFT_LINK.exec(input)?.[0] ?? (BARE_LINK.exec(input)?.[1] ? `https://${BARE_LINK.exec(input)![1]}` : null);
+  if (!typed) return null;
+  try { return new URL(typed.replace(/[.,;:!?)\]]+$/u, "")).href; } catch { return null; }
+}
+
+/** What Draft with AI asks Agent mode: a roadmap from the vault for a goal, or one that follows a page the user gave. */
+export function roadmapDraftPrompt(input: string): string {
+  const link = roadmapDraftLink(input);
+  if (!link) return `Draft a learning roadmap for: ${input.trim()}\n\nSearch my vault for documents that teach this, then use propose_roadmap to lay them out in stages with their prerequisites. Add the stages to this roadmap document.`;
+  const typedLink = DRAFT_LINK.exec(input)?.[0] ?? BARE_LINK.exec(input)?.[1] ?? "";
+  const extra = input.replace(typedLink, " ").replace(/\s+/gu, " ").trim();
+  return `Build this roadmap from the page at ${link}\n\nRead the page, then use propose_roadmap to lay out its sections as stages and its topics as steps, in the page's order. Search my vault first: where one of my documents already teaches a topic, point the step at it; for every other topic, make a step with a new document whose notes list what the page says to cover. Add the stages to this roadmap document.${extra ? `\n\nAlso keep in mind: ${extra}` : ""}`;
+}
+
+/** What Explain with AI asks: a readable explanation of a step's topic, written into the step's document. */
+export function roadmapExplainPrompt(topic: string, roadmapTitle: string, context = ""): string {
+  return `Explain “${topic}” so I can learn it. It is a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”.${context ? ` ${context}` : ""}\n\nCover what it is, why it matters here, the key ideas (the ones this document lists, if it lists any), a small worked example, and common mistakes. Use short sections with headings. End with two or three questions I can use to check I understood.`;
+}
+
+/** What Dive deeper asks Agent mode: the step's topic as a roadmap of its own, in the step's document. */
+export function roadmapDiveDeeperPrompt(topic: string, roadmapTitle: string): string {
+  return `Dive deeper into “${topic}”, a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”: build a roadmap of its subtopics in this document.\n\nUse propose_roadmap with this document as the roadmap: 2 to 5 stages and 6 to 16 steps, from what to learn first to the most advanced, drawing on what this document already lists and on your own knowledge of the topic. Search my vault first: where one of my documents already teaches a subtopic, point the step at it; for every other subtopic, make a step with a new document whose notes list what to cover. Don't repeat the other steps of the parent roadmap.`;
 }

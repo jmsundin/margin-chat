@@ -29,7 +29,7 @@ export const PROPOSE_DOCUMENT_DEFINITION = {
 
 export const PROPOSE_ROADMAP_DEFINITION = {
   name: "propose_roadmap",
-  description: "Draft a learning roadmap for the user to approve: ordered stages of steps, each step pointing at one of the user's own documents that teaches it, with the steps it needs first. Search the vault before calling this and cite only documents your tools returned. Nothing is saved until the user approves it; approving adds the stages and steps to the roadmap document.",
+  description: "Draft a learning roadmap for the user to approve: ordered stages of steps, with the steps each one needs first. A step points at one of the user's own documents that teaches it, or, when the vault has none, carries notes for a new document that approving creates under the roadmap. Search the vault before calling this and cite only documents your tools returned. Nothing is saved until the user approves it; approving adds the stages and steps to the roadmap document.",
   parameters: { type: "object", properties: {
     roadmap_id: documentRef("The roadmap document the stages are added to"),
     goal: { type: "string", description: "What the roadmap is for, in a few words, such as \"Understand the biology of aging\"." },
@@ -37,11 +37,13 @@ export const PROPOSE_ROADMAP_DEFINITION = {
       title: { type: "string", description: "A short stage name." },
       steps: { type: "array", description: "The stage's steps, in a sensible order.", items: { type: "object", properties: {
         key: { type: "string", description: "A short ID for this step, unique in the roadmap, used in needs." },
-        document_id: { type: "string", description: "The document that teaches this step: an ID from search_vault, read_document or list_related." },
-        title: { type: "string", description: "A short name for the step, or an empty string to use the document's title." },
+        document_id: { type: "string", description: "The document that teaches this step: an ID from search_vault, read_document or list_related. An empty string when the vault has no document for it and notes is given." },
+        title: { type: "string", description: "A short name for the step, or an empty string to use the document's title. Required for a step with notes: it names the new document." },
+        // Strict tool schemas need every property in required, so "none" is null.
+        notes: { type: ["string", "null"], description: "null for a step with a document_id. For a step the vault has no document for: the new document's starting text in Markdown, such as the subtopics to cover as a list. Keep it short; the user fills it in as they learn." },
         why: { type: "string", description: "One short line on what the step covers or why it is here." },
         needs: { type: "array", items: { type: "string" }, description: "Keys of steps that must come first. Only real prerequisites; never a loop." },
-      }, required: ["key", "document_id", "title", "why", "needs"], additionalProperties: false } },
+      }, required: ["key", "document_id", "title", "notes", "why", "needs"], additionalProperties: false } },
     }, required: ["title", "steps"], additionalProperties: false } },
     summary: { type: "string", description: "One short line on the roadmap, shown to the user beside it." },
   }, required: ["roadmap_id", "goal", "stages", "summary"], additionalProperties: false },
@@ -58,6 +60,7 @@ const CONTENT_CHARACTERS = 40_000;
 const RUN_CHARACTERS = 80_000;
 const ROADMAP_STAGES = 12;
 const ROADMAP_STEPS = 60;
+const ROADMAP_NOTES_CHARACTERS = 2_000;
 const STEP_KEY = /^[A-Za-z0-9_.-]{1,60}$/u;
 const NOTE = "Shown to the user under your answer for approval; nothing has changed yet.";
 
@@ -156,13 +159,19 @@ export function createProposalTools({ chatRequest, snapshots, reachable = () => 
         if (keys.has(key)) return { ok: false, error: `The key "${key}" is used twice. Give every step its own key.` };
         keys.add(key);
         const documentId = String(step?.document_id ?? "").trim();
-        // A step cites the user's own material, so only documents the run could read.
-        if (!documentId || !allowed(documentId) || documentId === roadmapId) return { ok: false, error: `Step "${key}" doesn't point at a document you can reach. Cite a document ID your tools returned, other than the roadmap itself.` };
         const stepTitle = line(step?.title, 200);
+        // A step with no document carries notes for a new one, made under the roadmap on approval.
+        const notes = !documentId && typeof step?.notes === "string" ? step.notes.trim() : null;
+        if (notes !== null) {
+          if (!stepTitle) return { ok: false, error: `Step "${key}" makes a new document, so it needs a title.` };
+          if (notes.length > ROADMAP_NOTES_CHARACTERS) return { ok: false, error: `Keep a step's notes under ${ROADMAP_NOTES_CHARACTERS} characters; "${key}" is longer.` };
+        }
+        // Otherwise a step cites the user's own material, so only documents the run could read.
+        else if (!documentId || !allowed(documentId) || documentId === roadmapId) return { ok: false, error: `Step "${key}" doesn't point at a document you can reach. Cite a document ID your tools returned, other than the roadmap itself, or leave document_id empty and give notes for a new document.` };
         const why = line(step?.why, 300);
         const needs = [...new Set((Array.isArray(step?.needs) ? step.needs : []).map((value) => String(value).trim()).filter(Boolean))];
-        size += stepTitle.length + why.length + 80;
-        steps.push({ key, documentId, ...(stepTitle ? { title: stepTitle } : {}), ...(why ? { why } : {}), needs });
+        size += stepTitle.length + why.length + (notes?.length ?? 0) + 80;
+        steps.push({ key, ...(notes !== null ? { notes } : { documentId }), ...(stepTitle ? { title: stepTitle } : {}), ...(why ? { why } : {}), needs });
       }
       if (!steps.length) return { ok: false, error: `The stage "${title}" has no steps. Give each stage at least one step, or leave it out.` };
       stages.push({ title, steps });

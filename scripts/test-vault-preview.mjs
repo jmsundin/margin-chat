@@ -7,6 +7,7 @@
  * Optional synthetic suggestions: { action: "controls", jev: true }. No model calls
  * or external network are made. Optional { action: "controls", chat: true }
  * serves deterministic synthetic document replies; chat otherwise stays unavailable.
+ * With { web: true } as well, a roadmap built from a link reads that page from the network.
  */
 import { createServer } from "node:http";
 import { mkdtemp, readFile, stat } from "node:fs/promises";
@@ -19,13 +20,15 @@ import { createFileVaultStorage } from "../server/vault/storage.mjs";
 import { createDocumentService } from "../server/documents/index.mjs";
 import { readJsonBody, sendJson } from "../server/http/json.mjs";
 import { validateWorkspaceAnalysis } from "../server/semantic/index.mjs";
+import { readImportPage } from "../server/chat/agent/webImport.mjs";
+import { createProposalTools, describeProposalStep, documentInPrompt } from "../server/chat/agent/proposalTools.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
 await stat(join(dist, "index.html"));
 // PREVIEW_DIR reuses a vault saved by an earlier run (for timing runs on a large seeded vault).
 const directory = process.env.PREVIEW_DIR || await mkdtemp(join(tmpdir(), "margin-chat-preview-"));
-const controls = { offline: false, delayMs: 0, authDelayMs: 0, signedIn: true, free: false, jev: false, chat: false, userId: "preview-user" };
+const controls = { offline: false, delayMs: 0, authDelayMs: 0, signedIn: true, free: false, jev: false, chat: false, web: false, userId: "preview-user" };
 let activeApiRequests = 0;
 const requestCounts = { chat: 0, jevWorkspace: 0 };
 let lastChatRequest = null;
@@ -48,6 +51,57 @@ function user() {
 const key = (userId, documentId) => `${userId}/${documentId}`;
 const flashcardRows = { cards: new Map(), reviews: new Map(), seq: 0 };
 const ratchetRows = new Map();
+
+/**
+ * A synthetic agent run for a roadmap request. "Build this roadmap from the page at <link>" reads
+ * that page with the real reader (only with { action: "controls", web: true }, the one case this
+ * fixture uses the network); "Dive deeper" uses the list in the prompt's document. The outline's
+ * headings become stages and steps through the real propose_roadmap tool. No model is called.
+ */
+async function syntheticRoadmapRun(body) {
+  const prompt = String(body.messages?.at(-1)?.content ?? "");
+  const link = /Build this roadmap from the page at (\S+)/u.exec(prompt)?.[1];
+  const steps = [];
+  let outline = "", goal = "";
+  if (link) {
+    if (!controls.web) return null;
+    const page = await readImportPage(link, {});
+    outline = page.markdown;
+    goal = page.title;
+    steps.push({ label: `Read \u201c${page.title}\u201d`, detail: new URL(link).hostname, ok: true });
+  } else if (prompt.includes("Dive deeper into")) {
+    const document = documentInPrompt(body);
+    goal = document?.title || "This topic";
+    const topics = String(document?.text ?? "").split(/\n#/u)[0].split("\n").map((line) => /^\s*[-*]\s+(.+)$/u.exec(line)?.[1]?.trim()).filter(Boolean).slice(0, 12);
+    const half = Math.ceil(topics.length / 2);
+    outline = `## Start here\n${topics.slice(0, half).map((topic) => `### ${topic}\n- What it is\n- When to use it\n- A small example`).join("\n")}\n## Go further\n${topics.slice(half).map((topic) => `### ${topic}\n- How it works\n- Common mistakes`).join("\n")}`;
+  } else return null;
+  const stages = [];
+  for (const line of outline.split("\n")) {
+    const heading = /^(#{2,3})\s+(.+)$/u.exec(line);
+    const bullet = /^\s*[-*]\s+(.+)$/u.exec(line);
+    if (heading?.[1] === "##") stages.push({ title: heading[2].trim(), steps: [] });
+    else if (heading && stages.length) stages.at(-1).steps.push({ title: heading[2].trim(), notes: [] });
+    else if (bullet && stages.at(-1)?.steps.length) stages.at(-1).steps.at(-1).notes.push(`- ${bullet[1].trim()}`);
+    // A page with one level of headings: its list items are the steps.
+    else if (bullet && stages.length) stages.at(-1).flat = [...(stages.at(-1).flat ?? []), bullet[1].trim()];
+  }
+  let count = 0, previous = null;
+  const args = { roadmap_id: "", goal, summary: link ? "Follows the page's sections and topics." : "Subtopics, from first steps to advanced.",
+    stages: stages.map((stage) => ({ title: stage.title, steps: (stage.steps.length ? stage.steps : (stage.flat ?? [stage.title]).map((title) => ({ title, notes: [] }))).map((step, index) => {
+      const key = `s${count += 1}`;
+      const needs = index > 0 && previous ? [previous] : [];
+      previous = key;
+      return { key, document_id: "", title: step.title, notes: step.notes.join("\n"), why: "", needs };
+    }) })).filter((stage) => stage.steps.length).slice(0, 12) };
+  const tools = createProposalTools({ chatRequest: { ...body, conversation: body.conversation ?? { id: body.sourceDocumentId } }, snapshots: new Map() });
+  const output = tools.run("propose_roadmap", args);
+  steps.push({ ...describeProposalStep("propose_roadmap", args, output) });
+  const total = args.stages.reduce((sum, stage) => sum + stage.steps.length, 0);
+  return { steps, proposals: tools.list(), reply: output.ok
+    ? `I laid out ${goal} as ${args.stages.length} stages and ${total} steps${link ? ", following the page's order" : ""}. None of your documents cover these topics yet, so each step gets a new document with the points to cover. Approve it below to add it.`
+    : `I couldn't build the roadmap: ${output.error}` };
+}
 
 /**
  * Synthetic Ratchet replies: claims are the document's lines with a number or
@@ -224,7 +278,7 @@ const server = createServer(async (request, response) => {
             path: body.path, content: body.content, baseRevision: current.files[body.path]?.revision ?? null,
           }]);
         } else if (body.action === "controls") {
-          for (const field of ["offline", "signedIn", "free", "jev", "chat"]) if (typeof body[field] === "boolean") controls[field] = body[field];
+          for (const field of ["offline", "signedIn", "free", "jev", "chat", "web"]) if (typeof body[field] === "boolean") controls[field] = body[field];
           for (const field of ["delayMs", "authDelayMs", "chatDelayMs"]) if (Number.isSafeInteger(body[field]) && body[field] >= 0 && body[field] <= 120000) controls[field] = body[field];
           if (typeof body.userId === "string" && /^preview-[a-z0-9_-]+$/u.test(body.userId)) controls.userId = body.userId;
           if (body.seed !== false) await seed(controls.userId);
@@ -261,9 +315,22 @@ const server = createServer(async (request, response) => {
                 ? "The note's main claim is that rapamycin \"extends lifespan in mice\" by blocking mTOR. The weak link is the step to people: \"a weekly dose should be safe\" rests on the mouse data alone.\n\n### Try next\n\n- What human trials have tested weekly dosing?\n- Which immune side effects matter most at that dose?\n- Add a line on what result would change your mind."
               : asked.includes("Write up to") && asked.includes("flashcards")
                 ? "1. What does rapamycin block? :: mTOR\n\n2. Autophagy ::: The cell's recycling of its own parts\n\n3. Rapamycin {{c1::extends lifespan}} in {{c2::mice}}.\n\nThese cards cover the main claim."
+              : asked.includes("so I can learn it. It is a step in my roadmap")
+                ? "## What it is\n\nThis topic covers the rules a client and a server follow when they talk over the web: the client sends a request, the server sends back a response.\n\n## Why it matters here\n\nEvery route you write answers one kind of request, so knowing the parts of a request tells you what your code receives.\n\n## Key ideas\n\n- A request has a method, a path, headers and sometimes a body.\n- A response has a status code, headers and a body.\n- Status codes come in families: 2xx worked, 4xx the caller made a mistake, 5xx the server failed.\n\n## A small example\n\nA browser sends GET /items/3. The server finds item 3 and answers 200 with the item as JSON. If there is no item 3, it answers 404.\n\n## Check yourself\n\n1. Which part of a request says what to do with the resource?\n2. What does a 404 tell the caller?"
               : asked.includes("builds up in 3 to 5 stages")
                 ? "```mermaid\nflowchart LR\n%% stage: The drug\n  R[Rapamycin] --> M[mTOR blocked]\n%% stage: What it changes\n  M --> G[Less cell growth]\n  M --> A[More autophagy]\n%% stage: The claim\n  A --> L[Longer life in mice]\n%% stage: The open question\n  L -.-> H{Same in humans?}\n```"
               : `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;
+            // A roadmap request gets a synthetic agent run: the real propose_roadmap tool, fed an outline.
+            const roadmapRun = asked.includes("propose_roadmap") ? await syntheticRoadmapRun(body) : null;
+            if (roadmapRun) {
+              response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
+              response.write(`${JSON.stringify({ type: "metadata", metadata })}\n`);
+              for (const step of roadmapRun.steps) { response.write(`${JSON.stringify({ type: "step", step })}\n`); await new Promise((resolve) => setTimeout(resolve, 150)); }
+              response.write(`${JSON.stringify({ type: "delta", delta: roadmapRun.reply })}\n`);
+              response.end(`${JSON.stringify({ type: "done", metadata: { ...metadata, execution: { schemaVersion: 1, model: metadata.model, provider: "meta-api",
+                agent: { steps: roadmapRun.steps, stopReason: "answered", proposals: roadmapRun.proposals } } } })}\n`);
+              return;
+            }
             response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
             response.write(`${JSON.stringify({ type: "metadata", metadata })}\n`);
             // A slow model, to see what the page shows while it thinks.

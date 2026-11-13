@@ -35,12 +35,14 @@ function ProposalBody({ proposal, documentTitle, currentDocumentId, onOpen }: {
   if (proposal.kind === "roadmap") {
     const into = proposal.roadmapId === currentDocumentId ? "" : ` in “${documentTitle?.(proposal.roadmapId) || proposal.roadmapTitle || "a roadmap"}”`;
     const count = proposal.stages.reduce((sum, stage) => sum + stage.steps.length, 0);
+    const fresh = proposal.stages.reduce((sum, stage) => sum + stage.steps.filter((step) => !step.documentId).length, 0);
     return <>
-      <p className="agent-proposal-what">Roadmap for <strong>{`“${proposal.goal}”`}</strong>{into}: {proposal.stages.length} {proposal.stages.length === 1 ? "stage" : "stages"}, {count} {count === 1 ? "step" : "steps"}</p>
+      <p className="agent-proposal-what">Roadmap for <strong>{`“${proposal.goal}”`}</strong>{into}: {proposal.stages.length} {proposal.stages.length === 1 ? "stage" : "stages"}, {count} {count === 1 ? "step" : "steps"}
+        {fresh && proposal.status !== "approved" ? `. Approving makes ${fresh === count ? (fresh === 1 ? "a new document for it" : "a new document for each step") : `${fresh} new ${fresh === 1 ? "document" : "documents"}`} under the roadmap.` : ""}</p>
       <ol className="agent-proposal-roadmap">{proposal.stages.map((stage, index) => <li key={index}>
         <strong>{stage.title}</strong>
         <span>{stage.steps.map((step, stepIndex) => <span key={step.key} title={step.why}>
-          {stepIndex ? " · " : ""}{step.title || documentTitle?.(step.documentId) || "Missing document"}
+          {stepIndex ? " · " : ""}{step.title || (step.documentId ? documentTitle?.(step.documentId) : "") || "Missing document"}
         </span>)}</span>
       </li>)}</ol>
     </>;
