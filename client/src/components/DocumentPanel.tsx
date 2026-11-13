@@ -16,6 +16,9 @@ import { getBackendServiceModel, type RecentBackendServiceSelection } from "../l
 import type { RichDocumentCaretMenu, RichDocumentInvocation, RichDocumentDecoration, RichDocumentEditorProps } from "./RichDocumentEditor";
 
 /** The caret's action menu, with its paragraph read as a selected passage of this document. */
+/** Where follow-ups that belong above the document text are kept, apart from those under a block. */
+const TOP_OF_DOCUMENT = "\u0000top";
+
 export type DocumentCaretMenu = Omit<RichDocumentCaretMenu, "paragraph"> & { paragraph?: SelectionDraft };
 import RichDocumentEditor, { RichDocumentPlaceholder } from "./LazyRichDocumentEditor";
 import ServicePickerModal from "./ServicePickerModal";
@@ -312,7 +315,11 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     const anchor = shown.at(-1) ?? document.blocks.at(-1)?.id;
     if (!anchor) continue;
     const request = document.prompts.find((prompt) => prompt.id === active.promptId)?.content ?? item.content;
-    agentFollowUps.set(anchor, [...agentFollowUps.get(anchor) ?? [], <AgentFollowUp key={active.id} agent={agent} asking={Boolean(questionBlock)}
+    // Changes still waiting for a decision sit at the top of the document, where they're seen without scrolling to
+    // the end of a long one; once decided they stay under the reply as its record. A roadmap shows its own draft.
+    const waiting = !questionBlock && !props.roadmap && agent.proposals?.some((proposal) => !proposal.status);
+    const place = waiting ? TOP_OF_DOCUMENT : anchor;
+    agentFollowUps.set(place, [...agentFollowUps.get(place) ?? [], <AgentFollowUp key={active.id} agent={agent} asking={Boolean(questionBlock)}
       disabled={props.isSubmitting} currentDocumentId={conversation.id} documentTitle={props.documentTitle} onOpen={props.onOpenBranch}
       // The answer takes the question's place, and the agent hears what it asked and about which request.
       onAnswer={(answer) => questionBlock && props.onSubmit({ blockId: questionBlock.id, from: 0, to: questionBlock.content.length, quote: questionBlock.content,
@@ -615,6 +622,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {props.notice}
       {props.pageBar && editorMounted ? null : props.aiInstruction}
       {props.roadmap}
+      {agentFollowUps.get(TOP_OF_DOCUMENT)?.length ? <div className="document-proposals-top">{agentFollowUps.get(TOP_OF_DOCUMENT)}</div> : null}
       {board ? <Suspense fallback={<p className="document-board" role="status">Loading board…</p>}>
         <BoardCanvas key={`${conversation.id}:${board.id}`} markdown={board.content} theme={props.theme}
           readOnly={streamingIds.includes(board.id)} onChange={(content) => changeBoard(board.id, content)}

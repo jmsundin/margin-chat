@@ -3326,7 +3326,9 @@ function WorkspaceAppContent({
           onBillingRequired(getErrorText(error, "Add money to your prepaid balance to continue using hosted AI."));
           return;
         }
-        appendAssistantMessage(conversation.id, buildBackendErrorReply(conversation.serviceId, error));
+        // A document's text is the user's: a failed request is reported beside it, never written into it.
+        if (conversation.document || conversation.kind === "note") setDocumentErrors((current) => ({ ...current, [conversation.id]: buildBackendErrorReply(conversation.serviceId, error).replace(/\n+/gu, " ") }));
+        else appendAssistantMessage(conversation.id, buildBackendErrorReply(conversation.serviceId, error));
       },
     });
   }

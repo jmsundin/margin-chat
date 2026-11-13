@@ -148,6 +148,7 @@ export function createProposalTools({ chatRequest, snapshots, reachable = () => 
     if (!inputStages.length || inputStages.length > ROADMAP_STAGES) return { ok: false, error: `Give between 1 and ${ROADMAP_STAGES} stages.` };
     const keys = new Set();
     const stages = [];
+    let replaced = 0;
     let size = goal.length;
     for (const input of inputStages) {
       const title = line(input?.title, 200);
@@ -158,16 +159,15 @@ export function createProposalTools({ chatRequest, snapshots, reachable = () => 
         if (!STEP_KEY.test(key)) return { ok: false, error: `Step keys are short IDs of letters, digits, dots, dashes or underscores; "${line(key, 40)}" isn't one.` };
         if (keys.has(key)) return { ok: false, error: `The key "${key}" is used twice. Give every step its own key.` };
         keys.add(key);
-        const documentId = String(step?.document_id ?? "").trim();
+        const cited = String(step?.document_id ?? "").trim();
         const stepTitle = line(step?.title, 200);
-        // A step with no document carries notes for a new one, made under the roadmap on approval.
-        const notes = !documentId && typeof step?.notes === "string" ? step.notes.trim() : null;
-        if (notes !== null) {
-          if (!stepTitle) return { ok: false, error: `Step "${key}" makes a new document, so it needs a title.` };
-          if (notes.length > ROADMAP_NOTES_CHARACTERS) return { ok: false, error: `Keep a step's notes under ${ROADMAP_NOTES_CHARACTERS} characters; "${key}" is longer.` };
-        }
-        // Otherwise a step cites the user's own material, so only documents the run could read.
-        else if (!documentId || !allowed(documentId) || documentId === roadmapId) return { ok: false, error: `Step "${key}" doesn't point at a document you can reach. Cite a document ID your tools returned, other than the roadmap itself, or leave document_id empty and give notes for a new document.` };
+        // A step cites the user's own material only where the run could read it. Any other step with a
+        // title becomes a new document under the roadmap on approval, carrying its notes: a roadmap built
+        // from a page or from the model's own knowledge shouldn't be thrown out over one bad citation.
+        const documentId = cited && allowed(cited) && cited !== roadmapId ? cited : "";
+        const notes = documentId ? null : (typeof step?.notes === "string" ? step.notes.trim() : "").slice(0, ROADMAP_NOTES_CHARACTERS);
+        if (!documentId && !stepTitle) return { ok: false, error: `Step "${key}" has no document you can reach and no title. Give it a title (and notes) to make a new document, or cite a document ID your tools returned.` };
+        if (!documentId && cited) replaced += 1;
         const why = line(step?.why, 300);
         const needs = [...new Set((Array.isArray(step?.needs) ? step.needs : []).map((value) => String(value).trim()).filter(Boolean))];
         size += stepTitle.length + why.length + (notes?.length ?? 0) + 80;
@@ -178,10 +178,8 @@ export function createProposalTools({ chatRequest, snapshots, reachable = () => 
     }
     if (keys.size > ROADMAP_STEPS) return { ok: false, error: `Keep a roadmap to ${ROADMAP_STEPS} steps or fewer.` };
     const all = stages.flatMap((stage) => stage.steps);
-    for (const step of all) {
-      const unknown = step.needs.find((key) => !keys.has(key) || key === step.key);
-      if (unknown) return { ok: false, error: `Step "${step.key}" needs "${unknown}", which isn't another step's key.` };
-    }
+    // A need that names no other step is dropped rather than failing the whole roadmap.
+    for (const step of all) step.needs = step.needs.filter((key) => keys.has(key) && key !== step.key);
     // Prerequisites must not loop: peel off steps whose needs are all placed.
     const placed = new Set();
     for (let progress = true; progress;) {
@@ -192,7 +190,8 @@ export function createProposalTools({ chatRequest, snapshots, reachable = () => 
       const stuck = all.filter((step) => !placed.has(step.key)).map((step) => step.key).slice(0, 6);
       return { ok: false, error: `These steps' needs loop back on each other: ${stuck.join(", ")}. A roadmap can't loop; remove one of the needs.` };
     }
-    return add({ kind: "roadmap", roadmapId, roadmapTitle: line(titleOf(roadmapId), 300), goal, stages, summary: line(args.summary, 200) }, size);
+    const added = add({ kind: "roadmap", roadmapId, roadmapTitle: line(titleOf(roadmapId), 300), goal, stages, summary: line(args.summary, 200) }, size);
+    return added.ok && replaced ? { ...added, note: `${added.note} ${replaced} step${replaced === 1 ? "" : "s"} cited documents you can't reach, so each will be made as a new document instead. Don't call propose_roadmap again for that.` } : added;
   }
 
   return {
@@ -206,9 +205,11 @@ const quoted = (value) => `“${line(value, 80) || "Untitled"}”`;
 
 /** A run-log line for a proposal; never includes the proposed text. */
 export function describeProposalStep(name, args = {}, output = {}) {
-  if (output?.ok === false) return { label: name === PROPOSE_EDIT_DEFINITION.name ? "Couldn't propose an edit" : "Couldn't propose a new document", detail: line(output.error, 160) || null, ok: false };
+  if (output?.ok === false) {
+    const label = name === PROPOSE_EDIT_DEFINITION.name ? "Couldn't propose an edit" : name === PROPOSE_ROADMAP_DEFINITION.name ? "Couldn't propose the roadmap" : "Couldn't propose a new document";
+    return { label, detail: line(output.error, 160) || null, ok: false };
+  }
   if (name === PROPOSE_ROADMAP_DEFINITION.name) {
-    if (output?.ok === false) return { label: "Couldn't propose a roadmap", detail: line(output.error, 160) || null, ok: false };
     const steps = (Array.isArray(args.stages) ? args.stages : []).reduce((sum, stage) => sum + (Array.isArray(stage?.steps) ? stage.steps.length : 0), 0);
     return { label: `Proposed a roadmap for ${quoted(args.goal)}`, detail: `${steps} step${steps === 1 ? "" : "s"} for you to approve`, ok: true };
   }
