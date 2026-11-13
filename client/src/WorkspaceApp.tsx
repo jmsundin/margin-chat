@@ -6040,9 +6040,9 @@ function WorkspaceAppContent({
         progress={agentProgress[conversation.id]} budgetMicros={agentModeControls(conversation)?.showBudget ? agentModeControls(conversation)?.budgetMicros : undefined}
         onStop={() => stopChatStream(conversation.id)}
         onDraftDecision={(messageId, proposalId, action) => handleAgentProposal(conversation.id, messageId, proposalId, action)}
-        writingIds={pendingConversationIds} onExplain={(docId, context) => handleRoadmapStepAI(conversation.id, docId, "explain", context)} onDiveDeeper={(docId) => handleRoadmapStepAI(conversation.id, docId, "deeper")}
+        writingIds={pendingConversationIds} onExplain={(docId, context, roadmapId) => handleRoadmapStepAI(roadmapId ?? conversation.id, docId, "explain", context)} onDiveDeeper={(docId, roadmapId) => handleRoadmapStepAI(roadmapId ?? conversation.id, docId, "deeper")}
         cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}
-        onChange={(change) => handleRoadmapChange(conversation.id, change)}
+        onChange={(change) => handleRoadmapChange(conversation.id, change)} onChangeRoadmap={handleRoadmapChange}
         onOpen={(target) => handleNavigateDocumentConnector({ conversationId: target.docId, blockId: target.blockId })} /> : undefined}
       notice={view === "chat" && vault.clashedDocuments?.[conversation.id] ? <p className="version-clash-notice" role="status">
         Also changed on another device at the same time.
