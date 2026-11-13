@@ -9,6 +9,16 @@ const mobileQueries = ["(max-width: 700px)", "(pointer: coarse)"];
 const MobileKeyboardContext = createContext({ mobile: false, inputMode: "text" as "none" | "text", registerComposer: () => () => {}, overlayOpen: false });
 export const useMobileKeyboard = () => useContext(MobileKeyboardContext);
 
+/**
+ * Fields inside are for typing, not reading: a tap brings the software keyboard straight up,
+ * with no trip to the keyboard button (used for an open margin note on phones).
+ */
+export function MobileKeyboardDirect({ children }: { children: ReactNode }) {
+  const parent = useMobileKeyboard();
+  const value = useMemo(() => ({ ...parent, inputMode: "text" as const }), [parent]);
+  return <MobileKeyboardContext.Provider value={value}>{children}</MobileKeyboardContext.Provider>;
+}
+
 /** Keep native editable selection, but let the reader explicitly request the software keyboard. */
 export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const [mobile, setMobile] = useState(() => mobileQueries.some((query) => window.matchMedia(query).matches));
@@ -25,8 +35,12 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const target = useRef<HTMLElement | null>(null);
   const touchGesture = useRef<{ x: number; y: number; moved: boolean } | null>(null);
   const lastTouchActivation = useRef(-Infinity);
+  /** The keyboard button refocuses its field; that focus must not turn the keyboard back on. */
+  const toggling = useRef(false);
   const keyboardSession = useRef<{ height: number; width: number; reduced: boolean } | null>(null);
   const viewport = useVisualViewport(mobile);
+  const viewportRef = useRef(viewport);
+  viewportRef.current = viewport;
   const micSlot = useCallback((element: HTMLElement | null) => setMobileDockSlot("mic", element), []);
   const createSlot = useCallback((element: HTMLElement | null) => setMobileDockSlot("create", element), []);
   const topSlot = useCallback((element: HTMLElement | null) => setMobileDockSlot("top", element), []);
@@ -46,7 +60,13 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
       const field = element?.closest<HTMLElement>("[data-mobile-keyboard]") ?? null;
       target.current = field;
       setHasTarget(Boolean(field));
-      if (!field) setEnabled(false);
+      if (!field) { keyboardSession.current = null; setEnabled(false); }
+      // A field made for typing (an open margin note) brings the keyboard up on its own tap, so
+      // the writing bar shows and the keyboard's own dismiss returns to selection mode as usual.
+      else if (!toggling.current && field.closest("[data-mobile-keyboard-direct]")) {
+        keyboardSession.current ??= { height: viewportRef.current.height, width: viewportRef.current.width, reduced: false };
+        setEnabled(true);
+      }
     };
     document.addEventListener("focusin", focus);
     return () => document.removeEventListener("focusin", focus);
@@ -80,9 +100,12 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     // Finish React/ProseMirror updates before restarting the input session.
     // Opening uses native focus in the touch-end gesture (like Tiptap's iOS
     // focus path), rather than a scroll-suppressed or deferred focus request.
-    field.blur();
-    if (enabled) field.focus({ preventScroll: true });
-    else field.focus();
+    toggling.current = true;
+    try {
+      field.blur();
+      if (enabled) field.focus({ preventScroll: true });
+      else field.focus();
+    } finally { toggling.current = false; }
     if (input && start != null && end != null) input.setSelectionRange(start, end);
     else if (range && native) { native.removeAllRanges(); native.addRange(range); }
   }

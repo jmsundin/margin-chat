@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import "./DocumentMargin.css";
+import { MobileKeyboardDirect } from "./MobileKeyboard";
 
 export interface DocumentMarginItem {
   id: string;
@@ -93,6 +94,17 @@ function scrollsInside(target: EventTarget | null, stop: Element, deltaY: number
     if (deltaY < 0 ? element.scrollTop > 0 : element.scrollTop + element.clientHeight < element.scrollHeight - 1) return true;
   }
   return false;
+}
+
+/**
+ * Whether a tap leaves the open note open: taps inside the margin, in a menu or dialog the note
+ * opened, and on the phone's keyboard button and writing bar (which a note needs to be typed in).
+ */
+function keepsNoteOpen(aside: HTMLElement | null, target: EventTarget | null): boolean {
+  const element = target instanceof Element ? target : null;
+  if (!element) return true;
+  return Boolean(aside?.contains(element)
+    || element.closest("[role=menu], [role=dialog], .selection-toolbar-row, [data-mobile-keyboard-toggle], [data-mobile-keyboard-bar]"));
 }
 
 /**
@@ -198,7 +210,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   useEffect(() => { if (!marks) setOpenId(null); }, [marks]);
   useEffect(() => {
     if (!marks || !openId) return;
-    const close = (event: PointerEvent) => { if (!asideRef.current?.contains(event.target as Node)) setOpenId(null); };
+    const close = (event: PointerEvent) => { if (!keepsNoteOpen(asideRef.current, event.target)) setOpenId(null); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && asideRef.current?.contains(document.activeElement)) setOpenId(null); };
     document.addEventListener("pointerdown", close, true);
     document.addEventListener("keydown", escape);
@@ -214,11 +226,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   useEffect(() => { if (expandedId && !items.some((item) => item.id === expandedId)) setExpandedId(null); }, [expandedId, itemKey]);
   useEffect(() => {
     if (marks || !expandedId) return;
-    const close = (event: PointerEvent) => {
-      const target = event.target as Element | null;
-      if (asideRef.current?.contains(target) || target?.closest?.("[role=menu], [role=dialog], .selection-toolbar-row")) return;
-      setExpandedId(null);
-    };
+    const close = (event: PointerEvent) => { if (!keepsNoteOpen(asideRef.current, event.target)) setExpandedId(null); };
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && asideRef.current?.contains(document.activeElement)) setExpandedId(null); };
     document.addEventListener("pointerdown", close, true);
     document.addEventListener("keydown", escape);
@@ -282,10 +290,10 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
             aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${item.label || "Margin note"}`} title={item.label}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
             onClick={() => setOpenId((current) => current === item.id ? null : item.id)} />
-          {open ? <div className="document-margin-mark-note" data-margin-note-id={item.id} style={{ width: noteWidth }}
+          {open ? <div className="document-margin-mark-note" data-margin-note-id={item.id} data-mobile-keyboard-direct style={{ width: noteWidth }}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
             {item.anchored ? null : <span className="document-margin-label">About this document</span>}
-            {item.node}
+            <MobileKeyboardDirect>{item.node}</MobileKeyboardDirect>
           </div> : null}
         </div>;
       })}
