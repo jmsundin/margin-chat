@@ -1436,7 +1436,8 @@ function WorkspaceAppContent({
   }
   const startTourFromRequest = useEffectEvent(startTour);
   useEffect(() => { if (tourRequest) startTourFromRequest(); }, [tourRequest]);
-  useEffect(() => { if (isGraphView && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [isGraphView, onboarding.mapSeen]);
+  const mapShown = isGraphView || (mainViewMode === "chat" && sheet.mode !== "page");
+  useEffect(() => { if (mapShown && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [mapShown, onboarding.mapSeen]);
   const starterTasksDone = useMemo(() => completedStarterTasks(state, { map: onboarding.mapSeen, beside: notesBeside.length > 0 }),
     [state.conversations, state.sessions, onboarding.mapSeen, notesBeside.length]);
   const tourSteps = isMobileViewport ? PHONE_TOUR : DESKTOP_TOUR;
@@ -2155,7 +2156,11 @@ function WorkspaceAppContent({
     return () => document.removeEventListener("keydown", handleGraphWalk, true);
   }, []);
 
-  const setViewFromShortcut = useEffectEvent((mode: MainViewMode) => { if (mode !== mainViewMode) handleSetMainViewMode(mode); });
+  const setViewFromShortcut = useEffectEvent((mode: MainViewMode) => {
+    // Cmd+G shows or hides the map around the document.
+    if (mode === "graph") { if (mainViewMode !== "chat") handleSetMainViewMode("graph"); else handleToggleDocumentMap(); return; }
+    if (mode !== mainViewMode) handleSetMainViewMode(mode);
+  });
   useEffect(() => {
     function handleViewShortcut(event: KeyboardEvent) {
       const mode = viewForShortcut(event);
@@ -5882,17 +5887,17 @@ function WorkspaceAppContent({
     });
   }
 
-  function handleSetMainViewMode(nextViewMode: MainViewMode) {
+  function handleSetMainViewMode(requestedViewMode: MainViewMode) {
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
     setSearchExploreOpen(false);
     setSearchQuery("");
+    // The map is not a view of its own any more: asking for it shows the map around the document you're reading,
+    // beside the page, in the same view.
+    const nextViewMode: MainViewMode = requestedViewMode === "graph" ? "chat" : requestedViewMode;
     setMainViewMode(nextViewMode);
-    // The Map opens on the document you were reading, in whichever Map tab (Map or Focus) it was left on.
-    if (nextViewMode === "graph" && mainViewMode !== "graph" && state.conversations[activeConversation.id]) {
-      setGraphFocusRequest({ conversationId: activeConversation.id, requestId: ++graphFocusRequestCounterRef.current, keepViewMode: true });
-    }
+    if (requestedViewMode === "graph" && shownSheet.mode === "page") handleExpandSheet();
 
     if (isMobileViewport) {
       setLeftSidebarOpen(false);
@@ -6694,7 +6699,7 @@ function WorkspaceAppContent({
               currentChatOutline={currentChatOutline}
               currentChatTitle={activeConversation.title}
               groups={state.groups}
-              mainViewMode={mainViewMode}
+              mainViewMode={showMapModal ? "graph" : mainViewMode}
               onAssignGroup={handleAssignConversationGroup}
               onCreateGroup={handleCreateConversationGroup}
               onDeleteThread={handleDeleteThread}

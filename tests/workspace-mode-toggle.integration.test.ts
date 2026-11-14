@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-test("workspace mode toggle shows all three views, their shortcuts, and keyboard movement", async () => {
+test("workspace mode toggle shows Document and Tile views, their shortcuts, and keyboard movement", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/workspaceModeToggleHarness.tsx"], {
     cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
   });
