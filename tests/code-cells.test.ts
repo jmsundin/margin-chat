@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Window } from "happy-dom";
@@ -6,7 +6,14 @@ import { findRunnableFences, javaProgram, previewDocument, previewPage, replaceF
 import { JAVASCRIPT_WORKER, SQL_WORKER } from "../client/src/lib/codeRunner/workers";
 
 // The Markdown renderer sanitizes with DOMPurify, which needs a window when it loads.
-Object.defineProperty(globalThis, "window", { configurable: true, value: new Window({ url: "http://fixture.test" }) });
+// Non-database test files share one process in CI, so keep window writable and put
+// back whatever was there before: later files assign globalThis.window themselves.
+const previousWindow = Object.getOwnPropertyDescriptor(globalThis, "window");
+Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: new Window({ url: "http://fixture.test" }) });
+afterAll(() => {
+  if (previousWindow) Object.defineProperty(globalThis, "window", previousWindow);
+  else delete (globalThis as { window?: unknown }).window;
+});
 // When another test loaded DOMPurify first without a window, give its shared instance one.
 const { default: DOMPurify } = await import("dompurify");
 if (typeof DOMPurify.sanitize !== "function") Object.assign(DOMPurify, DOMPurify(globalThis.window as never));
