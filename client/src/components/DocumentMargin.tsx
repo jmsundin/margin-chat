@@ -136,6 +136,8 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const [left, setLeft] = useState<LeftColumn>(null);
   const [height, setHeight] = useState(0);
   const [hoverId, setHoverId] = useState<string | null>(null);
+  /** The note whose passage the pointer is on: it lights up here, in place of a hover card over the text. */
+  const [passageHoverId, setPassageHoverId] = useState<string | null>(null);
   /** Marks mode: the note opened from its dot. */
   const [openId, setOpenId] = useState<string | null>(null);
   /** On phones the open note is a sheet: half the screen, so its passage stays in view above it, or all of it. */
@@ -226,6 +228,26 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     };
   }, [bodyRef, schedule, syncScroll, itemKey]);
 
+  const itemIds = useRef<string[]>([]);
+  itemIds.current = items.map((item) => item.id);
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body) return;
+    const noteAt = (target: EventTarget | null) => {
+      const mark = target instanceof Element ? target.closest<HTMLElement>(".message-anchor[data-annotation-branches]") : null;
+      if (!mark || !body.contains(mark)) return null;
+      try {
+        const ids: unknown = JSON.parse(mark.dataset.annotationBranches ?? "[]");
+        return Array.isArray(ids) ? ids.find((id): id is string => typeof id === "string" && itemIds.current.includes(id)) ?? null : null;
+      } catch { return null; }
+    };
+    const over = (event: PointerEvent) => { if (event.pointerType !== "touch") setPassageHoverId(noteAt(event.target)); };
+    const out = (event: PointerEvent) => { if (!noteAt(event.relatedTarget)) setPassageHoverId(null); };
+    body.addEventListener("pointerover", over);
+    body.addEventListener("pointerout", out);
+    return () => { body.removeEventListener("pointerover", over); body.removeEventListener("pointerout", out); };
+  }, [bodyRef]);
+
   // Marks mode: a note chosen elsewhere (Children menu, search, a new question) opens from its dot.
   useEffect(() => { if (marks && activeId && items.some((item) => item.id === activeId)) setOpenId(activeId); }, [marks, activeId, itemKey]);
   useEffect(() => { if (!marks) setOpenId(null); }, [marks]);
@@ -266,7 +288,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
 
   // The passage of the note being read or pointed at stays lit in the text. The editor owns
   // its DOM and would undo a class added to the passage, so a scoped style rule lights it.
-  const linkedId = hoverId ?? (marks ? openId : null) ?? (activeId && items.some((item) => item.id === activeId) ? activeId : null);
+  const linkedId = hoverId ?? passageHoverId ?? (marks ? openId : null) ?? (activeId && items.some((item) => item.id === activeId) ? activeId : null);
   const escape = (value: string) => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
   const pendingRule = items.filter((item) => item.pending).map((item) =>
     `.document-panel-content:has(> .document-margin[data-margin-notes-for="${escape(documentId)}"]) > .document-body .message-anchor[data-annotation-branches*='"${escape(item.id)}"']`).join(",");
@@ -306,7 +328,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
         const placement = placements[item.id];
         const open = openId === item.id;
         return <div key={item.id} className="document-margin-mark-slot" style={{ top: placement?.top ?? 0, visibility: placement ? undefined : "hidden" }}>
-          <button type="button" className={`document-margin-mark${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}`}
+          <button type="button" className={`document-margin-mark${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}${item.id === passageHoverId ? " is-pointed" : ""}`}
             ref={(element) => { itemRefs.current[item.id] = element; }}
             aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${item.label || "Margin note"}`} title={item.label}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
@@ -363,7 +385,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       {items.map((item) => {
         const placement = placements[item.id];
         const onLeft = placement?.left !== undefined && left;
-        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}${onLeft ? " is-left" : ""}${placement && placedIds.current.has(item.id) ? "" : " is-placing"}`}
+        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${onLeft ? " is-left" : ""}${placement && placedIds.current.has(item.id) ? "" : " is-placing"}`}
           data-margin-note-id={item.id} ref={(element) => { itemRefs.current[item.id] = element; }}
           onPointerDownCapture={() => setExpandedId(item.id)}
           style={{ top: placement?.top ?? 0, left: onLeft ? left.x : DOCUMENT_MARGIN_GUTTER, visibility: placement ? undefined : "hidden",

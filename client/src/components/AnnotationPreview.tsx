@@ -15,6 +15,17 @@ function annotationIds(element: HTMLElement, key: "annotationBranches" | "annota
   } catch { return []; }
 }
 
+const SHOWN_NOTE = ".document-margin-item, .document-margin-mark-note, .note-sheet";
+
+/**
+ * A note already showing in a margin beside its passage needs no card over the text: pointing at the
+ * passage lights the note itself instead. Notes hidden by a closed margin, or folded to a dot, still get one.
+ */
+export function isShownInMargin(id: string, root: ParentNode = document) {
+  return [...root.querySelectorAll<HTMLElement>(SHOWN_NOTE)].some((element) => element.dataset.marginNoteId === id
+    && element.isConnected && getComputedStyle(element).visibility !== "hidden" && !element.closest("[hidden]"));
+}
+
 function selectedText() {
   const selection = window.getSelection();
   return Boolean(selection && !selection.isCollapsed);
@@ -63,7 +74,7 @@ export default function AnnotationPreview(props: AnnotationPreviewProps) {
 
   function hasContent(element: HTMLElement) {
     const { anchors, notes } = latest.current;
-    return annotationIds(element, "annotationBranches").some((id) => anchors.some((link) => link.branchConversationId === id)) ||
+    return annotationIds(element, "annotationBranches").some((id) => !isShownInMargin(id) && anchors.some((link) => link.branchConversationId === id)) ||
       annotationIds(element, "annotationNotes").some((id) => notes.some((note) => note.id === id));
   }
 
@@ -195,7 +206,7 @@ export default function AnnotationPreview(props: AnnotationPreviewProps) {
     };
   }, [props.containerRef]);
 
-  const branches = target ? props.anchors.filter((link) => annotationIds(target, "annotationBranches").includes(link.branchConversationId)) : [];
+  const branches = target ? props.anchors.filter((link) => annotationIds(target, "annotationBranches").includes(link.branchConversationId) && !isShownInMargin(link.branchConversationId)) : [];
   const notes = target ? props.notes.filter((note) => annotationIds(target, "annotationNotes").includes(note.id)) : [];
   const visible = Boolean(target?.isConnected && (branches.length || notes.length));
 
