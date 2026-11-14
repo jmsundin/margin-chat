@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { flushSync } from "react-dom";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
@@ -147,6 +147,31 @@ export interface DocumentPanelProps {
 
 const BoardCanvas = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.BoardCanvas })));
 
+/**
+ * Scrolls the page under a margin note until the element shows above the margin's bottom edge.
+ * The margin clips its notes and moves with the page's own scroll, so focus alone can't reveal it.
+ * Tries for a few frames while the note grows and the page makes room. Returns a cleanup.
+ */
+function revealInMargin(ref: RefObject<HTMLElement | null>) {
+  const GAP = 16;
+  let frame = 0;
+  let tries = 0;
+  const step = () => {
+    const element = ref.current;
+    const margin = element?.closest<HTMLElement>(".document-margin");
+    const body = margin?.parentElement?.querySelector<HTMLElement>(":scope > .panel-body");
+    if (!element || !margin || !body) return;
+    const box = element.getBoundingClientRect();
+    const edge = Math.min(margin.getBoundingClientRect().bottom, window.innerHeight);
+    const room = box.top - margin.getBoundingClientRect().top - GAP;
+    const needed = Math.min(box.bottom + GAP - edge, room);
+    if (needed > 1 && body.scrollTop + body.clientHeight < body.scrollHeight - 1) body.scrollTop += needed;
+    if (needed > 1 && ++tries < 30) frame = window.requestAnimationFrame(step);
+  };
+  frame = window.requestAnimationFrame(step);
+  return () => window.cancelAnimationFrame(frame);
+}
+
 function freshBlock(content = ""): Block {
   const now = new Date().toISOString();
   return { id: `block-${crypto.randomUUID()}`, kind: "markdown", content, createdAt: now, updatedAt: now, authorship: "user" };
@@ -207,7 +232,12 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     setInvocation(null);
     setPrompt("");
   }, composerRef);
-  useEffect(() => { if (invocation && !mobileKeyboard.mobile) promptRef.current?.focus(); }, [invocation, mobileKeyboard.mobile]);
+  useEffect(() => {
+    if (!invocation || mobileKeyboard.mobile) return;
+    promptRef.current?.focus();
+    // In a margin note the prompt can open below the margin's clipped edge, where focus can't scroll to it.
+    return revealInMargin(composerRef);
+  }, [invocation, mobileKeyboard.mobile]);
   // Who wrote which lines, where the vault records it (§9). Margin notes and file viewers don't show it.
   const authorshipView = useAuthorshipMode();
   const generationModels = useMemo(() => new Map(document.generations.map((generation) => [generation.id, generation.modelId])), [document.generations]);
