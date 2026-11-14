@@ -36,7 +36,7 @@ async function render(activeThreadId: string) {
       activeOutlineItemId: null, activeThreadId, collapsed: false,
       currentChatOutline: [], currentChatTitle: "", groups: {}, mainViewMode: "chat",
       onAssignGroup: noop, onCreateGroup: noop, onDeleteThread: noop, onNewChat: noop, onNewNote: noop, onOpenInbox: noop,
-      onOpenProfile: noop, onOpenSettings: noop, onOpenSearch: noop, onPinThread: noop, onRenameThread: noop,
+      onOpenProfile: noop, onOpenSearch: noop, onPinThread: noop, onRenameThread: noop,
       onSelectOutlineItem: noop, onSelectThread: noop, onToggleGroup: noop, onToggleTheme: noop, onUnpinThread: noop,
       pinnedThreads: [], streamingThreadIds: new Set(), theme: "dark", threads,
     } as any));

@@ -38,7 +38,7 @@ async function renderSidebar(collapsed = false) {
       onAssignGroup: (id, groupId) => events.push(`group:${id}:${groupId}`),
       onCreateGroup: (name) => events.push(`create:${name}`), onDeleteThread: noop,
       onNewChat: () => events.push("document"), onNewNote: () => events.push("note"), onOpenInbox: () => events.push("inbox"),
-      onOpenProfile: noop, onOpenSettings: noop, onOpenSearch: noop,
+      onOpenProfile: noop, onOpenSearch: noop,
       onPinThread: (id) => events.push(`pin:${id}`), onRenameThread: noop, onSelectOutlineItem: noop,
       onSelectThread: (id) => events.push(`select:${id}`), onToggleGroup: noop,
       onToggleTheme: noop, onUnpinThread: noop, pinnedThreads: [], streamingThreadIds: new Set(),

@@ -62,7 +62,7 @@ function Harness() {
     onSelectSidebarSection: (section) => setMapExplorerActive(section === "explore"),
     onAssignGroup: noop, onCreateGroup: noop, onDeleteThread: noop,
     onNewChat: () => events.push("new"), onNewNote: noop, onOpenInbox: () => events.push("inbox"),
-    onOpenProfile: () => events.push("profile"), onOpenSettings: () => events.push("settings"),
+    onOpenProfile: () => events.push("profile"),
     onOpenSearch: () => events.push("search"), onPinThread: noop, onRenameThread: noop,
     onSelectOutlineItem: (id) => { events.push(`outline:${activeId}:${id}`); setActiveOutlineItemId(id); },
     onSelectThread: (id, options) => {
@@ -97,7 +97,7 @@ function outline(title: string) {
   return element(`nav[aria-label="Outline for ${title}"].is-expanded-panel`);
 }
 function assertUtilitiesVisible() {
-  for (const label of ["Open document view", "Open tile view", "Open map view", "New document", "Search documents", "More workspace actions", "Open profile", "Open settings", "Switch to light theme"]) {
+  for (const label of ["Open document view", "Open tile view", "Open map view", "New document", "Search documents", "More workspace actions", "Open profile", "Switch to light theme"]) {
     assert(visible(`[aria-label="${label}"]`), `${label} must remain reachable with an expanded outline.`);
   }
 }
@@ -158,14 +158,14 @@ try {
   assert.equal(angularOutline.querySelector('[aria-current="location"]')?.textContent, "Components");
   checks.push("switching Documents and Outline preserves list position and the active heading");
 
-  for (const label of ["New document", "Search documents", "Open profile", "Open settings", "Switch to light theme"]) {
+  for (const label of ["New document", "Search documents", "Open profile", "Switch to light theme"]) {
     await click(`[aria-label="${label}"]`);
   }
   await click('[aria-label="More workspace actions"]');
   await clickText("Cloud Inbox", ".sidebar-workspace-action");
   await click('[aria-label="Open tile view"]');
   await click('[aria-label="Open document view"]');
-  for (const event of ["new", "search", "profile", "settings", "theme", "inbox", "view:tiles", "view:chat"]) assert(events.includes(event));
+  for (const event of ["new", "search", "profile", "theme", "inbox", "view:tiles", "view:chat"]) assert(events.includes(event));
   assert(visible('nav[aria-label="Outline for Angular"]'));
   checks.push("creation, search, More, view switching, and footer actions work while the outline is open");
 

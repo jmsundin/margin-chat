@@ -50,7 +50,7 @@ function renderSidebar(
       onNewChat={() => {}}
       onNewNote={() => {}}
       onOpenProfile={() => {}}
-      onOpenSettings={() => {}}
+     
       onOpenSearch={() => {}}
       onPinThread={() => {}}
       onRenameThread={() => {}}
@@ -136,7 +136,7 @@ describe("thread sidebar pinning", () => {
         onNewChat={() => {}}
         onNewNote={() => {}}
         onOpenProfile={() => {}}
-        onOpenSettings={() => {}}
+       
         onOpenSearch={() => {}}
         onPinThread={() => {}}
         onRenameThread={() => {}}

@@ -62,7 +62,6 @@ interface ThreadSidebarProps {
   /** Start the guided tour from the beginning. */
   onTakeTour?: () => void;
   onOpenProfile: () => void;
-  onOpenSettings: () => void;
   onOpenSearch: () => void;
   /** Cards to study now; null hides Review (no cards written yet). */
   flashcardsDue?: number | null;
@@ -199,24 +198,6 @@ function SortIcon() {
     <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
       strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
       <path d="M7 4v16M3.5 16.5 7 20l3.5-3.5M13 6h8M13 11h6M13 16h4" />
-    </svg>
-  );
-}
-
-function SettingsIcon() {
-  return (
-    <svg
-      aria-hidden="true"
-      className="sidebar-utility-icon"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth="1.9"
-    >
-      <circle cx="12" cy="12" r="3.2" />
-      <path d="M19.4 15a1 1 0 0 0 .2 1.1l.1.1a1.9 1.9 0 0 1-2.7 2.7l-.1-.1a1 1 0 0 0-1.1-.2 1 1 0 0 0-.6.9V20a1.9 1.9 0 0 1-3.8 0v-.2a1 1 0 0 0-.6-.9 1 1 0 0 0-1.1.2l-.1.1a1.9 1.9 0 1 1-2.7-2.7l.1-.1a1 1 0 0 0 .2-1.1 1 1 0 0 0-.9-.6H4a1.9 1.9 0 0 1 0-3.8h.2a1 1 0 0 0 .9-.6 1 1 0 0 0-.2-1.1l-.1-.1a1.9 1.9 0 1 1 2.7-2.7l.1.1a1 1 0 0 0 1.1.2 1 1 0 0 0 .6-.9V4a1.9 1.9 0 0 1 3.8 0v.2a1 1 0 0 0 .6.9 1 1 0 0 0 1.1-.2l.1-.1a1.9 1.9 0 1 1 2.7 2.7l-.1.1a1 1 0 0 0-.2 1.1 1 1 0 0 0 .9.6h.2a1.9 1.9 0 1 1 0 3.8h-.2a1 1 0 0 0-.9.6Z" />
     </svg>
   );
 }
@@ -374,7 +355,6 @@ export default function ThreadSidebar({
   onImportChatHistory,
   onTakeTour,
   onOpenProfile,
-  onOpenSettings,
   onOpenSearch,
   flashcardsDue = null,
   onOpenFlashcards,
@@ -1335,20 +1315,10 @@ export default function ThreadSidebar({
           aria-label="Open profile"
           className="sidebar-utility-button"
           onClick={onOpenProfile}
-          title="Profile"
+          title="Profile and settings"
           type="button"
         >
           <ProfileIcon />
-        </button>
-
-        <button
-          aria-label="Open settings"
-          className="sidebar-utility-button"
-          onClick={onOpenSettings}
-          title="Settings"
-          type="button"
-        >
-          <SettingsIcon />
         </button>
 
         <button

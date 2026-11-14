@@ -20,8 +20,8 @@ export const DESKTOP_TOUR: TourStep[] = [
     body: "Document, Tiles and Map View. The Map (⌘G) shows each document as a dot, with lines for side docs, notes and links." },
   { targets: [".space-pill", ".document-tabs-list"], title: "Spaces and tabs",
     body: "Tabs are the documents you have open. Make a space for a project from the button on the left; it keeps the documents you add, so you can come back to them." },
-  { targets: ['[aria-label="Open settings"]'], title: "Bring your other AI apps",
-    body: "Connect Claude, ChatGPT or Gemini so they can search and save to your vault. Settings → Agents has the steps, and so does marginchat.com/connect." },
+  { targets: ['[aria-label="Open profile"]'], title: "Bring your other AI apps",
+    body: "Connect Claude, ChatGPT or Gemini so they can search and save to your vault. Profile → Connected apps has the steps, and so does marginchat.com/connect." },
 ];
 
 export const PHONE_TOUR: TourStep[] = [
@@ -35,7 +35,7 @@ export const PHONE_TOUR: TourStep[] = [
   { targets: [".document-header-title"], title: "Tabs and spaces",
     body: "Tap the title to switch between your open documents and your spaces." },
   { targets: [".workspace-menu-button"], title: "Bring your other AI apps",
-    body: "Connect Claude, ChatGPT or Gemini so they can search and save to your vault. In the sidebar, Settings → Agents has the steps." },
+    body: "Connect Claude, ChatGPT or Gemini so they can search and save to your vault. In the sidebar, Profile → Connected apps has the steps." },
 ];
 
 const PAD = 6;

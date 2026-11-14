@@ -6663,11 +6663,6 @@ function WorkspaceAppContent({
                 setProfileInitialTab(null);
                 setProfileModalOpen(true);
               }}
-              onOpenSettings={() => {
-                setProfileSaveError(null);
-                setProfileInitialTab("appearance");
-                setProfileModalOpen(true);
-              }}
               onOpenSearch={handleOpenSearch}
               flashcardsDue={flashcards.totalCards ? flashcards.dueCount : null}
               onOpenFlashcards={() => { setFlashcardReview({ title: "All cards" }); if (isMobileViewport) setLeftSidebarOpen(false); }}
