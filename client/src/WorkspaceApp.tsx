@@ -194,6 +194,7 @@ import {
   loadStoredState,
 } from "./lib/appState";
 import { getConversationRequestPayload } from "./lib/chatContext";
+import { buildLookupMessages, meaningCardLine, parseLookupReply, savedMeaningIn, wordsDeckTitle, type LanguagePair, type LookupAnswer, type LookupRequest, type SavedMeaning } from "./lib/languageLearning";
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
@@ -3238,6 +3239,84 @@ function WorkspaceAppContent({
   async function handleAskBoardNote(conversationId: string, request: BoardNoteRequest): Promise<string> {
     return requestMermaidDiagram(conversationId, request.note, request.signal,
       (conversation, prompt) => buildBoardNoteMessage(conversation, prompt, request, documentAIInstruction(currentStateRef.current.conversations, conversation)));
+  }
+
+  /** Language learning mode: the document's pair of languages is saved on it, so it opens this way next time. */
+  function handleLanguageLearningChange(conversationId: string, pair: LanguagePair | null) {
+    setState((current) => {
+      const conversation = current.conversations[conversationId];
+      if (!conversation) return current;
+      const same = pair ? conversation.languageLearning?.target === pair.target && conversation.languageLearning?.base === pair.base : !conversation.languageLearning;
+      if (same) return current;
+      const { languageLearning: _previous, ...rest } = conversation;
+      const next = { ...current, conversations: { ...current.conversations, [conversationId]: { ...rest, ...(pair ? { languageLearning: pair } : {}), updatedAt: new Date().toISOString() } } };
+      currentStateRef.current = next;
+      return next;
+    });
+  }
+
+  /** What tapped or selected text means: one short model call with only the text and its sentence, nothing else from the vault. */
+  async function handleLookUpMeaning(conversationId: string, request: LookupRequest, signal: AbortSignal): Promise<LookupAnswer> {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) throw new Error("This document is no longer open.");
+    if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
+    const lookup = createMainConversation({ id: createId("conversation"), createdAt: new Date().toISOString(), serviceId: conversation.serviceId, modelId: conversation.modelId });
+    lookup.title = "Look up a meaning";
+    try {
+      const { reply } = await requestChatReply({
+        ai: { ...normalizeAISettings(conversation.ai), mode: "fast", contextScope: "conversation", agent: false, agentAuto: false, selectedConversationIds: [] },
+        workspaceContext: [], workspaceContextTruncated: false, expectedUserId: user.id,
+        conversation: getConversationRequestPayload({}, lookup), messages: buildLookupMessages(request, createId),
+        modelId: conversation.modelId, serviceId: conversation.serviceId, signal,
+      });
+      return parseLookupReply(reply, request.pair);
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) onAuthExpired();
+      else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
+      throw error;
+    } finally {
+      void onRefreshBilling();
+    }
+  }
+
+  /** The document a language's saved meanings go in ("Spanish words"), if there is one. */
+  function findWordsDeck(conversations: Record<string, Conversation>, target: string): Conversation | null {
+    const title = wordsDeckTitle(target);
+    return Object.values(conversations).find((conversation) => conversation.title === title && !conversation.vaultFile && !conversation.noteChat) ?? null;
+  }
+
+  /** A saved meaning becomes a flashcard line in that language's words document, made the first time. */
+  function handleSaveMeaning(saved: SavedMeaning): string {
+    const title = wordsDeckTitle(saved.pair.target);
+    // The card asks from the language being learned: a line in the reader's own language is turned around.
+    const [front, back] = saved.from === saved.pair.base ? [saved.meaning, saved.text] : [saved.text, saved.meaning];
+    const line = meaningCardLine(front, back, saved.from === saved.pair.base ? "" : saved.sentence);
+    const now = new Date().toISOString();
+    const deck = findWordsDeck(currentStateRef.current.conversations, saved.pair.target);
+    const fresh = deck ? null : { id: createId("note-conversation"), noteId: createId("note"), title, createdAt: now };
+    setState((current) => {
+      const existing = findWordsDeck(current.conversations, saved.pair.target);
+      // The words document is made beside the lesson without opening it: the reader stays where they are.
+      const base = existing || !fresh ? current
+        : { ...createMapNote(current, { ...fresh, content: "" }), activeConversationId: current.activeConversationId, rootId: current.rootId };
+      const conversation = existing ?? (fresh ? base.conversations[fresh.id] : undefined);
+      if (!conversation) return current;
+      const blocks = getEditableDocument(conversation).blocks;
+      const empty = blocks.length === 1 && !blocks[0].content.trim() ? blocks[0] : null;
+      const block = { id: createId("block"), kind: "markdown" as const, content: line, createdAt: now, updatedAt: now, authorship: "user" as const };
+      const withCard = empty
+        ? { ...conversation, document: { ...getEditableDocument(conversation), blocks: [{ ...empty, content: line, updatedAt: now }] }, updatedAt: now }
+        : insertDocumentBlock(conversation, block, undefined, now);
+      const next = { ...base, conversations: { ...base.conversations, [conversation.id]: withCard } };
+      currentStateRef.current = next;
+      return next;
+    });
+    return title;
+  }
+
+  function savedMeaningFor(text: string, pair: LanguagePair): string | null {
+    const deck = findWordsDeck(currentStateRef.current.conversations, pair.target);
+    return deck ? savedMeaningIn(getEditableDocumentText(deck), text) : null;
   }
 
   /** One model call that must come back as a Mermaid diagram, billed and checked like any Ask AI. */
@@ -6385,6 +6464,12 @@ function WorkspaceAppContent({
       onRename={(title) => handleRenameThread(conversation.id, title)}
       onSubmit={(request) => handleDocumentSubmit(conversation.id, request)} onStop={() => stopChatStream(conversation.id)}
       onAskDiagram={(request) => handleAskDiagram(conversation.id, request)}
+      languageLearning={conversation.vaultFile ? undefined : {
+        pair: conversation.languageLearning ?? null,
+        onChange: (pair) => handleLanguageLearningChange(conversation.id, pair),
+        lookUp: (request, signal) => handleLookUpMeaning(conversation.id, request, signal),
+        save: handleSaveMeaning, savedMeaning: savedMeaningFor,
+      }}
       onAskBoardNote={(request) => handleAskBoardNote(conversation.id, request)}
       onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); const diagram = isMermaidDiagramPassage(selection.quote); setSelectionResponseDestination(diagram ? "inline" : defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(diagram); }}
       onCaretMenu={(menu) => { setSelectionDraft(null); setCaretMenu(menu); }}

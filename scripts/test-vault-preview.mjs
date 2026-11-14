@@ -108,6 +108,22 @@ async function syntheticRoadmapRun(body) {
  * "lifespan" in them; each claim with passages is judged in turn supported,
  * contradicted, unsupported, citing its first passage's longest line word for word.
  */
+/** Language learning look-ups: a few Spanish words and their meanings, anything else translated in brackets. */
+function syntheticLookupReply(messages) {
+  let request = {};
+  try { const user = messages.at(-1)?.content ?? ""; request = JSON.parse(user.slice(user.indexOf("{"))); } catch { /* A plain reply then. */ }
+  const text = String(request.selected ?? "").trim();
+  const words = { pesa: ["weighs", "pesar", "verb", "Here: the bag is heavier.", ["is heavy", "regrets"]], bolsa: ["bag", "", "noun", "", ["stock market", "purse"]],
+    ligera: ["light", "ligero", "adjective", "Figurative here: she feels light, carefree.", ["light-hearted", "slight"]], mercado: ["market", "", "noun", "", []] };
+  const known = words[text.toLowerCase()];
+  const fromBase = /^(the|note|she|bag)\b/iu.test(text);
+  const answer = known
+    ? { from: "es", to: "en", meaning: known[0], lemma: known[1], partOfSpeech: known[2], note: known[3], others: known[4] }
+    : fromBase ? { from: "en", to: "es", meaning: `[es] ${text}`, lemma: "", partOfSpeech: "phrase", note: "", others: [] }
+    : { from: "es", to: "en", meaning: text.split(/\s+/u).length > 3 ? "When she gets home, the bag weighs more." : `[en] ${text}`, lemma: "", partOfSpeech: text.includes(" ") ? "phrase" : "word", note: "", others: [] };
+  return JSON.stringify(answer);
+}
+
 function syntheticRatchetReply(asked) {
   const prompt = (() => { try { return JSON.parse(asked).at(-1)?.content ?? ""; } catch { return ""; } })();
   const data = (() => { try { return JSON.parse(prompt.slice(prompt.lastIndexOf("\n\n") + 2)); } catch { return null; } })();
@@ -307,7 +323,8 @@ const server = createServer(async (request, response) => {
             // A diagram edit gets a changed diagram, wrapped in the kind of words the app must drop.
             const asked = JSON.stringify(body.messages ?? []);
             const ratchetReply = asked.includes("Find the checkable claims") || asked.includes("Check each claim against the passages") ? syntheticRatchetReply(JSON.stringify(body.messages ?? [])) : null;
-            const reply = ratchetReply ? ratchetReply : asked.includes("The user wrote a note on a whiteboard")
+            const lookupReply = asked.includes("concise bilingual dictionary") ? syntheticLookupReply(body.messages ?? []) : null;
+            const reply = lookupReply ? lookupReply : ratchetReply ? ratchetReply : asked.includes("The user wrote a note on a whiteboard")
               ? "```mermaid\nflowchart TD\n  N[Sleep under 6 hours] --> C[Higher cortisol]\n  N --> I[Worse insulin response]\n  C --> R[More belly fat]\n  I --> R\n  R --> Q{Fix sleep first?}\n```"
               : asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
               ? "Here is the updated diagram:\n\n```mermaid\nflowchart TD\n  A[Pack] --> S[Pack snacks]\n  S --> B{Rain?}\n  B -->|yes| C[Museum]\n  B -->|no| D[Beach]\n```\n\nI added a snack step."

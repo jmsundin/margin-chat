@@ -7,7 +7,7 @@ import {
   VALID_SERVICE_IDS,
 } from "./constants.mjs";
 import { createStateError } from "./errors.mjs";
-import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock, normalizeAIInstruction } from "@margin-chat/workspace-contracts";
+import { normalizeAISettings, normalizeAIExecution, normalizePublicTopicSource, normalizeLinkedConversationIds, normalizeEditableDocument, normalizeDocumentLayout, normalizeDocumentDock, normalizeAIInstruction, normalizeLanguageLearning } from "@margin-chat/workspace-contracts";
 
 const DEFAULT_SERVICE_ID = "backend-services";
 
@@ -540,6 +540,7 @@ function normalizeConversation(expectedId, input) {
     ...(input.hiddenFromAI === true ? { hiddenFromAI: true } : {}),
     ...(input.agentEdit === "locked" || input.agentEdit === "open" ? { agentEdit: input.agentEdit } : {}),
     ...(normalizeAIInstruction(input.aiInstruction) ? { aiInstruction: normalizeAIInstruction(input.aiInstruction) } : {}),
+    ...(normalizeLanguageLearning(input.languageLearning) ? { languageLearning: normalizeLanguageLearning(input.languageLearning) } : {}),
     ...(input.noteChat === true ? { noteChat: true } : {}),
     kind:
       input.kind === undefined || input.kind === null

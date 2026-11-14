@@ -1,4 +1,5 @@
 import "../lib/dictationEditors";
+import type { DocumentLanguageLearning } from "../lib/languageLearning";
 import { Extension, Node as TiptapNode, type Editor, type EditorEvents, type JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
@@ -128,6 +129,8 @@ export interface RichDocumentEditorProps {
   renderBlockPreview?: (block: DocumentBlock) => ReactNode;
   /** Shown above the text, beside the view switch where the editor has one. */
   toolbarStart?: ReactNode;
+  /** Language learning mode for this document (Live Preview editor only). Without it the mode isn't offered. */
+  languageLearning?: DocumentLanguageLearning;
   /** One "Live Preview ▾" menu instead of three view buttons, for the quiet page's single row above the text. */
   compactModes?: boolean;
   hidePlaceholder?: boolean;
