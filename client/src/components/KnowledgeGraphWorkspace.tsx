@@ -19,7 +19,7 @@ import { MapExploredHistory, MapPreviewBar, MapPreviewDetails, MapPreviewLayer, 
 import { getStandaloneNote } from "../lib/standaloneNotes";
 import TopicExplorer from "./TopicExplorer";
 import type { Conversation } from "../types";
-import { MapPathBar, MapPathLayer, MapPathList, MapPathPickBanner, MapPathPicker, MapPathsMenu, type MapPathActions } from "./MapPaths";
+import { MapPathBar, MapPathLayer, MapPathList, MapPathPickBanner, MapPathPicker, MapPathsMenu, MapRoadmapFlags, type MapPathActions } from "./MapPaths";
 import { buildMapPath, isPathDocument, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
 import type { MapSpotlight } from "../lib/mapSpotlight";
 import "./KnowledgeGraphWorkspace.css";
@@ -174,9 +174,18 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   const hasPaths = Boolean(pathActions);
   const pathSummaries = useMemo(() => hasPaths ? listMapPaths(conversations) : [], [hasPaths, conversations]);
   const activePathNote = activePathId && isPathDocument(conversations[activePathId]) ? conversations[activePathId] : null;
+  /** Where each roadmap starts on the map, so it can wear a flag there. */
+  const roadmapStarts = useMemo(() => hasPaths ? pathSummaries.flatMap((summary) => {
+    const note = conversations[summary.id];
+    const first = note ? buildMapPath(note, conversations).steps[0] : undefined;
+    return first ? [{ ...summary, docId: first.docId }] : [];
+  }).slice(0, 12) : [], [hasPaths, pathSummaries, conversations]);
   const activePath = useMemo(() => activePathNote && hasPaths ? buildMapPath(activePathNote, conversations) : null, [activePathNote, hasPaths, conversations]);
+  // Turning a roadmap on shows the whole map, so every step is in view wherever it sits.
+  const [scopeRequest, setScopeRequest] = useState<{ choice: "all"; requestId: number } | null>(null);
   function setActivePath(id: string | null, trail: string[] = []) {
     setActivePathIdState(id); setPathTrail(trail); setPathMessage(null); setPathFrame((frame) => frame + 1);
+    if (id && id !== activePathId) setScopeRequest({ choice: "all", requestId: ++counter.current });
     rememberActivePath(pathsKey, id);
   }
   function setPathLayout(layout: "map" | "list") { setPathLayoutState(layout); rememberPathLayout(layout); }
@@ -424,6 +433,21 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     </DismissibleDetails>
   </>;
 
+  // The map's ⋯ menu holds these, so its bar keeps only search, the scope and Roadmaps.
+  const closeMenu = (element: HTMLElement) => element.closest("details")?.removeAttribute("open");
+  const menuActions = <>
+    <span className="graph-map-menu-label">Add and explore</span>
+    <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onCreateMapNote({}); }}>New note</button>
+    {onAddTopicConnections && publicMapAccount ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); openSources("add"); }}>Add from Wikipedia</button> : null}
+    <button type="button" onClick={(event) => { closeMenu(event.currentTarget); setSourceFormOpen(true); }}>Add a web source</button>
+    <button type="button" title="Explore any topic in a scratch map that stays out of your workspace"
+      onClick={(event) => { closeMenu(event.currentTarget); setExploring(true); setSelectedPreview(null); setHistoryOpen(false); setSourcesFor(null); setConnectingId(null); }}>Explore a topic</button>
+    <button type="button" title="Explored history: previews you have not kept" aria-label={`Explored history${historyCount ? `, ${historyCount} items` : ""}`}
+      onClick={(event) => { closeMenu(event.currentTarget); setHistoryOpen(true); setSelectedPreview(null); setSourcesFor(null); }}>
+      Explored history{historyCount ? <span className="graph-map-lens-badge">{historyCount > 99 ? "99+" : historyCount}</span> : null}</button>
+  </>;
+  void addActions;
+
   return <section ref={sectionRef} className="knowledge-graph-workspace" aria-label="Knowledge maps"
     onDragOver={(event) => { if (!event.defaultPrevented && event.dataTransfer.types.includes("text/uri-list")) { event.preventDefault(); event.dataTransfer.dropEffect = "link"; } }}
     onDrop={(event) => { if (event.defaultPrevented) return; const url = droppedLink(event); if (!url) return; event.preventDefault(); setSearchRequest({ query: url, requestId: ++counter.current }); }}>
@@ -467,6 +491,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
             onSelect={selectPreview} onKeep={(id) => keep([id])} onHide={(id) => updateExploration((current) => setOnMap(current, [id], false))} />
           {onMapIds.length && !activePath ? <MapPreviewBar count={onMapIds.length} onKeepAll={() => keep(onMapIds)} onClear={() => updateExploration((current) => setOnMap(current, onMapIds, false))} /> : null}
           {activePath && !picking && pathLayout === "map" ? <MapPathLayer context={context} path={activePath} currentDocId={mapSelection} /> : null}
+          {!activePath && !picking && pathActions && roadmapStarts.length ? <MapRoadmapFlags context={context} starts={roadmapStarts}
+            onPick={(id) => setActivePath(id)} /> : null}
           {picking ? <MapPathPicker context={context} ids={pickIds} picked={picking}
             onToggle={(id) => setPicking((current) => current ? current.includes(id) ? current.filter((item) => item !== id) : [...current, id] : current)} /> : null}
         </>}
@@ -478,7 +504,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
             const made = pathActions.onDraftPath(goal);
             if ("error" in made) return made.error;
             setPicking(null); setActivePath(made.id); return null;
-          }} /> : null}{addActions}</>}
+          }} /> : null}</>}
+        menuItems={menuActions} scopeRequest={scopeRequest}
         focusRequest={personalProps.focusRequest ?? personalFocus}
         onFocusRequestHandled={(id) => { if (personalProps.focusRequest?.requestId === id) personalProps.onFocusRequestHandled?.(id); else setPersonalFocus(null); }}
         onConnectConversation={(source, target) => { if (source !== target) { onSetMapConnection(source, target, true); setConnectingId(null); } }}

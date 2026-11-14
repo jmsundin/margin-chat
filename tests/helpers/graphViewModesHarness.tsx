@@ -121,10 +121,11 @@ async function settle() {
   }
   assert.equal(frames.size, 0, "Switching views settles without animation loops");
 }
-function groupingChip(): any { return container.querySelector(".graph-map-navigation > .graph-map-grouping > summary"); }
+// Grouping lives in the map's ⋯ menu as a row of buttons.
+function groupingButtons(): any[] { return [...container.querySelectorAll(".graph-map-view-options .graph-map-grouping-buttons button")]; }
+function groupedBy() { return groupingButtons().find((item) => item.getAttribute("aria-pressed") === "true")?.textContent; }
 async function groupBy(label: string) {
-  await click(groupingChip());
-  await click([...container.querySelectorAll('.graph-map-grouping [role="radio"]')].find((item: any) => item.textContent.startsWith(label)));
+  await click(groupingButtons().find((item) => item.textContent.startsWith(label)));
 }
 async function click(target: any) { await act(async () => target.click()); await settle(); }
 async function choose(label: string, value: string) {
@@ -311,7 +312,11 @@ try {
 
   // Arrange is split by what each view can change: Tidy up rewrites saved
   // positions on Canvas, Layout reshapes computed views, and the rest have none.
-  const bottomMenus = () => [...container.querySelectorAll(".graph-map-layout-options > summary")].map((summary: any) => summary.textContent.trim());
+  // Both live in the map's ⋯ menu now.
+  const bottomMenus = () => [
+    ...([...container.querySelectorAll(".graph-map-menu-main button")].some((item: any) => item.textContent.startsWith("Tidy up")) ? ["Tidy up"] : []),
+    ...(container.querySelector(".graph-map-menu-main .graph-map-layout-options") ? ["Layout"] : []),
+  ];
   await fresh("arrange-menus");
   assert.deepEqual(bottomMenus(), [], "Map boxes arrange themselves, so Tidy up waits until grouping is off");
   await groupBy("None");
@@ -337,8 +342,7 @@ try {
   browser.localStorage.setItem("margin-map-canvas-groups:tidy-undo", "false");
   await fresh("tidy-undo");
   assert.equal(container.querySelector(".graph-map-tidy-undo"), null);
-  await click(element(".graph-map-layout-options > summary"));
-  await click(element('[aria-label="Auto-arrange graph with ELK"]'));
+  await click([...container.querySelectorAll(".graph-map-menu-main button")].find((item: any) => item.textContent.startsWith("Tidy up")));
   for (let wait = 0; wait < 200 && !layoutWriteLog.length; wait++) await settle();
   assert.equal(layoutWriteLog.length, 1, "Auto-arrange writes one set of positions");
   const arranged = layoutWriteLog[0];
@@ -379,7 +383,7 @@ try {
     assert(Math.abs((boxX() - boxBefore) - (stageX() - stageBefore)) < 0.5, "Group boxes pan in step with the cards, not after React catches up");
     await settle();
   }
-  assert.equal(groupingChip()?.getAttribute("aria-label"), "Group documents by: My groups");
+  assert.equal(groupedBy(), "My groups");
   await groupBy("Topics");
   assert(boxNames().length > 0, "Topics puts the documents in boxes found from their links");
   assert(!boxNames().includes("Research"), "Topic boxes are not your groups");
@@ -387,7 +391,7 @@ try {
   assert.deepEqual(boxNames(), [], "Group: None hides the boxes");
   await fresh("canvas-group-boxes");
   assert.deepEqual(boxNames(), [], "The grouping is remembered");
-  assert.equal(groupingChip()?.getAttribute("aria-label"), "Group documents by: None");
+  assert.equal(groupedBy(), "None");
   checks.push("The Map boxes your groups without overlap, switches to topics, and Group: None turns boxes off");
   process.stdout.write(`${JSON.stringify({ checks })}\n`);
 } finally {

@@ -794,7 +794,7 @@ async function checkDocumentLayoutChoices() {
 
     await selectDocument("link-a");
     const beforeFocus = structuredClone(location());
-    await click(button("Focus connections", '.conversation-graph-zoom button'));
+    await click(button("Focus connections"));
     assertFocusedDocuments("link-a", 1, ["link-a", "manual-hub"]);
     assert.equal(container.querySelectorAll('.graph-personal-connection').length, 1, "Focusing a link's target includes its incoming saved relationship");
     assert.equal(container.querySelectorAll('.conversation-graph-edges path[data-child-conversation-id]').length, 0,
@@ -846,7 +846,7 @@ async function checkDocumentLayoutChoices() {
     await click(button("All documents", ".graph-map-neighborhood button"));
 
     await selectDocument("tree-leaf");
-    await click(button("Focus connections", '.conversation-graph-zoom button'));
+    await click(button("Focus connections"));
     assertFocusedDocuments("tree-leaf", 1, ["tree-leaf", "tree-child"]);
     assert.equal(container.querySelector('[data-conversation-id="tree-root"]'), null, "Breadcrumb ancestors do not bypass the map's one-hop boundary");
     await click(button("Show more connections"));

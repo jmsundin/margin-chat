@@ -104,7 +104,10 @@ async function settle() {
   assert.equal(frames.size, 0, "Workspace animation effects settle.");
 }
 async function click(target: any) { assert(target, "Expected a click target"); await act(async () => target.click()); await settle(); }
-async function switchMode(label: "Document View" | "Tile View" | "Map View") {
+async function toggleMap(label: string) {
+  await click([...container.querySelectorAll(`[aria-label="${label}"]`)].find(isVisible));
+}
+async function switchMode(label: "Document View" | "Tile View") {
   await click([...container.querySelectorAll('.workspace-mode-control [role="radio"]')].find((item) => isVisible(item) && item.getAttribute("aria-label") === label));
 }
 try {
@@ -140,9 +143,11 @@ try {
   assert.equal(editorMounts, initialMounts, "Returning to Document does not recreate existing editors.");
   checks.push("returning to Document preserves edits, scroll position, and every editor instance");
 
-  await switchMode("Map View");
+  // The map has no view of its own: it opens beside the document from the button at the top right.
+  await toggleMap("Show the map around this document");
   const initialMap = element(".conversation-graph-viewport");
   assert(isVisible(initialMap));
+  assert(isVisible(initialDocument), "The document stays in view beside the map.");
   const stage = element(".conversation-graph-stage");
   const originalTransform = stage.style.transform;
   // Zoom out keeps the open document in view; the Map only re-centers on it when it has gone off screen.
@@ -151,19 +156,23 @@ try {
   assert.notEqual(retainedTransform, originalTransform, "The map camera changed before testing retention.");
   const warmMounts = editorMounts;
   const warmDestroys = editorDestroys;
-  for (const label of ["Tile View", "Document View", "Map View", "Document View", "Map View"] as const) {
-    await switchMode(label);
-    assert.equal(container.querySelector(".conversation-graph-viewport"), initialMap, "Returning to Map retains its canvas instance.");
-    assert.equal(isVisible(initialMap), label === "Map View");
-    assert.equal(isVisible(initialDocument), label === "Document View");
-    if (label === "Map View") assert.equal(stage.style.transform, retainedTransform, "Returning to Map preserves its camera position and zoom.");
+  for (const step of ["Tile View", "Document View", "close", "open", "close", "open"] as const) {
+    if (step === "open") await toggleMap("Show the map around this document");
+    else if (step === "close") await toggleMap("Cover the map with the page");
+    else await switchMode(step);
+    const mapShown = step === "open" || step === "Document View";
+    assert.equal(container.querySelector(".conversation-graph-viewport") ?? initialMap, initialMap, "Returning to Map retains its canvas instance.");
+    assert.equal(isVisible(initialMap), mapShown, `Map visibility after ${step}`);
+    assert.equal(isVisible(initialDocument), step !== "Tile View");
+    if (mapShown) assert.equal(stage.style.transform, retainedTransform, "Returning to Map preserves its camera position and zoom.");
     for (const wrapper of container.querySelectorAll("[data-workspace-view]")) {
       assert.equal(wrapper.hasAttribute("inert"), wrapper.hasAttribute("hidden"), "Only visible views can receive input.");
     }
     assert.equal(editorMounts, warmMounts, "Warm mode switches create no editors.");
     assert.equal(editorDestroys, warmDestroys, "Warm mode switches destroy no editors.");
   }
-  checks.push("repeated Document, Tiles, and Map switches retain the map and perform no editor teardown or setup");
+  await toggleMap("Cover the map with the page");
+  checks.push("repeated Document, Tiles, and map open/close retain the map and perform no editor teardown or setup");
 
   await switchMode("Tile View");
   const unrelatedTile = [...container.querySelectorAll(".thread-tile-card")].find((item) => item.textContent?.includes("Unrelated project"));
@@ -193,7 +202,7 @@ try {
   assert(isVisible(element(".thread-tile-card")), "Ctrl+Shift+L opens Tiles.");
   await shortcut("D", true);
   assert([...container.querySelectorAll(".document-workspace")].some(isVisible), "Ctrl+Shift+D opens Document.");
-  checks.push("keyboard shortcuts switch between Map, Tiles and Document");
+  checks.push("keyboard shortcuts open the map beside the document and switch Tiles and Document");
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

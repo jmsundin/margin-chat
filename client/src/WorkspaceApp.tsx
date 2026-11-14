@@ -6367,7 +6367,7 @@ function WorkspaceAppContent({
       </p> : undefined}
       // A note in the margin sits on the page it would point back to, so it has no "Keep reading".
       bodyFooter={!embedded && !inMargin && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
-        ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
+        ? <DocumentKeepReading neighbors={{ ...documentNeighbors, children: getChildTabDocuments(conversation) }} onOpen={handleOpenNeighbor} /> : null}
       fullScreenToggle={!embedded && view === "chat" && !dockHeader && (maximized || (!isMobileViewport && shownSheet.mode === "page")) ? renderFullScreenButton(conversation) : undefined}
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={embedded || (view === "chat" && getMinimizedChildNodes(conversation)) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
