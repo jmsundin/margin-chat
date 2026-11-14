@@ -3,7 +3,7 @@ import {
   isBackendModelIdForService,
 } from "../lib/backendModels.mjs";
 import { HttpError } from "../lib/errors.mjs";
-import { AGENT_BUDGET_CHOICES_MICROS, DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
+import { AGENT_BUDGET_CHOICES_MICROS, AGENT_SERVICE_CHOICES, DEFAULT_AGENT_BUDGET_MICROS } from "@margin-chat/workspace-contracts";
 import { validateVaultFileContext } from "./fileContext.mjs";
 
 const VALID_MESSAGE_ROLES = new Set(["assistant", "system", "user"]);
@@ -34,6 +34,8 @@ export function validateAIOptions(input) {
     throw new HttpError(400, "Unsupported agent search scope.");
   }
   if (ai.agentAuto !== undefined && typeof ai.agentAuto !== "boolean") throw new HttpError(400, "agentAuto must be a boolean.");
+  if (ai.agentService !== undefined && !AGENT_SERVICE_CHOICES.includes(ai.agentService)) throw new HttpError(400, "agentService must be one of the offered agent models.");
+  if (ai.agentXSearch !== undefined && typeof ai.agentXSearch !== "boolean") throw new HttpError(400, "agentXSearch must be a boolean.");
   if (ai.allowedProviders !== undefined && (!Array.isArray(ai.allowedProviders) ||
       ai.allowedProviders.some((provider) => !AI_PROVIDERS.has(provider)))) {
     throw new HttpError(400, "allowedProviders must contain supported provider names.");
@@ -47,6 +49,8 @@ export function validateAIOptions(input) {
       // Kept with Agent mode off too: they apply when a prompt turns it on automatically.
       : { ...(ai.agentBudgetMicros !== undefined ? { agentBudgetMicros: ai.agentBudgetMicros } : {}), ...(ai.agentScope !== undefined ? { agentScope: ai.agentScope } : {}) }),
     ...(ai.agentAuto === false ? { agentAuto: false } : {}),
+    ...(ai.agentService !== undefined ? { agentService: ai.agentService } : {}),
+    ...(ai.agentXSearch === true ? { agentXSearch: true } : {}),
     ...(ai.allowedProviders === undefined ? {} : { allowedProviders: [...new Set(ai.allowedProviders)] }),
   };
 }

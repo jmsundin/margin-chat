@@ -32,6 +32,20 @@ export default function AIControls({ conversation, conversations, disabled, onCh
       {!agentOn ? <label className="ai-agent-auto"><input type="checkbox" disabled={disabled} checked={settings.agentAuto !== false}
         onChange={(event) => { const { agentAuto: _agentAuto, ...rest } = settings; onChange(event.target.checked ? rest : { ...rest, agentAuto: false }); }} />
         Turn on Agent mode by itself when a question needs my documents, a link, or more context</label> : null}
+      {conversation.serviceId === "backend-services" ? <label>Agent model
+        <select aria-label="Agent model" disabled={disabled} value={settings.agentService ?? "meta-api"} onChange={(event) => {
+          const { agentService: _agentService, agentXSearch: _agentXSearch, ...rest } = settings;
+          const service = event.target.value as NonNullable<AISettings["agentService"]>;
+          onChange(service === "meta-api" ? rest : { ...rest, agentService: service, ...(service === "xai-api" && settings.agentXSearch ? { agentXSearch: true } : {}) });
+        }}>
+          <option value="meta-api">Muse Wonder (Meta)</option>
+          <option value="anthropic-api">Claude Opus 5.5 (Anthropic)</option>
+          <option value="xai-api">Grok 4.7 (xAI)</option>
+        </select>
+      </label> : null}
+      {(conversation.serviceId === "backend-services" && settings.agentService === "xai-api") || conversation.serviceId === "xai-api" ? <label className="ai-agent-auto"><input type="checkbox" disabled={disabled} checked={settings.agentXSearch === true}
+        onChange={(event) => { const { agentXSearch: _agentXSearch, ...rest } = settings; onChange(event.target.checked ? { ...rest, agentXSearch: true } : rest); }} />
+        Let Grok search posts on X as well as the web</label> : null}
       <label>Context available to AI
         <select aria-label="Context available to AI" disabled={disabled} value={settings.contextScope} onChange={(event) => onChange({ ...settings, contextScope: event.target.value as AISettings["contextScope"] })}>
           <option value="conversation">This conversation, its branch context and attachments</option>

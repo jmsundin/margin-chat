@@ -13,6 +13,8 @@ export function getHostedModelPrice(env, provider, model) {
       (price.cachedInputMicrosPerMillionTokens !== undefined && (!isCount(price.cachedInputMicrosPerMillionTokens) || price.cachedInputMicrosPerMillionTokens > price.inputMicrosPerMillionTokens)) ||
       (price.cacheWriteInputMicrosPerMillionTokens !== undefined && !isCount(price.cacheWriteInputMicrosPerMillionTokens)) ||
       (price.webSearchMicrosPerSearch !== undefined && !isCount(price.webSearchMicrosPerSearch)) ||
+      (price.xPostMicrosPerPost !== undefined && !isCount(price.xPostMicrosPerPost)) ||
+      (price.xUserMicrosPerUser !== undefined && !isCount(price.xUserMicrosPerUser)) ||
       (provider === "gemini" && !isCount(price.maxReasoningTokens))) {
     throw new HttpError(503, `Hosted usage pricing is unavailable for ${provider}:${model}. Use a personal API key or ask the administrator to configure this model.`);
   }
@@ -56,33 +58,89 @@ export function normalizeProviderUsage(provider, payload, kind = "generation") {
   if (kind !== "embedding" && isCount(total) && isCount(inputTokens) && isCount(outputTokens)) outputTokens = Math.max(outputTokens, total - inputTokens);
   if (![inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, reasoningTokens].every(isCount) || cachedInputTokens + cacheWriteInputTokens > inputTokens) return null;
   const webSearches = webSearchCount(provider, payload);
-  return { inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, reasoningTokens, ...(webSearches ? { webSearches } : {}) };
+  // Grok's X search is billed per post and per profile it fetched, which xAI reports in usage.
+  const details = provider === "xai" ? raw.server_side_tool_usage_details : null;
+  const xPosts = isCount(details?.x_posts_fetched) ? details.x_posts_fetched : 0;
+  const xUsers = isCount(details?.x_users_fetched) ? details.x_users_fetched : 0;
+  return { inputTokens, outputTokens, cachedInputTokens, cacheWriteInputTokens, reasoningTokens, ...(webSearches ? { webSearches } : {}),
+    ...(xPosts ? { xPosts } : {}), ...(xUsers ? { xUsers } : {}) };
 }
 
-/** Searches a provider's built-in web search ran for one Responses API call. They're billed per
- * search on top of tokens, and usage doesn't count them, so each web_search_call item counts once. */
+/** Searches a provider's built-in web search ran for one call. They're billed per search on top of
+ * tokens. Claude and Grok count them in usage; other Responses APIs don't, so each web_search_call
+ * item counts once. */
 function webSearchCount(provider, payload) {
-  if (provider === "anthropic" || provider === "gemini" || !Array.isArray(payload?.output)) return 0;
+  if (provider === "gemini") return 0;
+  if (provider === "anthropic") {
+    const count = payload?.usage?.server_tool_use?.web_search_requests;
+    return isCount(count) ? count : 0;
+  }
+  const reported = provider === "xai" ? payload?.usage?.server_side_tool_usage_details?.web_search_calls : undefined;
+  if (isCount(reported)) return reported;
+  if (!Array.isArray(payload?.output)) return 0;
   return payload.output.filter((item) => item?.type === "web_search_call" && item.status !== "failed").length;
 }
 
-/** The most built-in web searches a Responses request body allows, or 0 when it offers none. */
-function webSearchLimit(body) {
-  if (!Array.isArray(body?.tools) || !body.tools.some((tool) => tool?.type === "web_search")) return 0;
+/** What one round of Grok's built-in tools may run, for its reservation. xAI caps rounds, not calls. */
+const XAI_WEB_SEARCHES_PER_TURN = 4;
+const XAI_X_POSTS_PER_TURN = 60;
+const XAI_X_USERS_PER_TURN = 10;
+/** Input tokens a search's results or a fetched post may add on the provider's side, beyond the request body. */
+const SEARCH_INPUT_TOKENS = 10_000;
+const X_POST_INPUT_TOKENS = 300;
+
+const toolOfType = (body, match) => Array.isArray(body?.tools) ? body.tools.find((tool) => typeof tool?.type === "string" && match(tool.type)) : undefined;
+
+function xaiTurns(body) {
+  if (!isCount(body.max_turns) || body.max_turns === 0) throw new HttpError(503, "Hosted search requests require a limit on rounds of searching.");
+  return body.max_turns;
+}
+
+/** The most built-in web searches a request body allows, or 0 when it offers none. */
+function webSearchLimit(provider, body) {
+  if (provider === "anthropic") {
+    const tool = toolOfType(body, (type) => type.startsWith("web_search_"));
+    if (!tool) return 0;
+    if (!isCount(tool.max_uses) || tool.max_uses === 0) throw new HttpError(503, "Hosted web search requests require a search limit.");
+    return tool.max_uses;
+  }
+  if (!toolOfType(body, (type) => type === "web_search")) return 0;
+  if (provider === "xai") return xaiTurns(body) * XAI_WEB_SEARCHES_PER_TURN;
   if (!isCount(body.max_tool_calls) || body.max_tool_calls === 0) throw new HttpError(503, "Hosted web search requests require a search limit.");
   return body.max_tool_calls;
+}
+
+/** The most posts and profiles Grok's X search may fetch in one request, or zeros when it isn't offered. */
+function xSearchLimits(provider, body) {
+  if (provider !== "xai" || !toolOfType(body, (type) => type === "x_search")) return { xPosts: 0, xUsers: 0 };
+  const turns = xaiTurns(body);
+  return { xPosts: turns * XAI_X_POSTS_PER_TURN, xUsers: turns * XAI_X_USERS_PER_TURN };
+}
+
+/** Input tokens search results and fetched pages may add on Claude's and Grok's side. */
+function serverToolInputAllowance(provider, body, searches, xPosts) {
+  if (provider !== "anthropic" && provider !== "xai") return 0;
+  const fetch = provider === "anthropic" ? toolOfType(body, (type) => type.startsWith("web_fetch_")) : undefined;
+  const fetchTokens = fetch ? (isCount(fetch.max_uses) ? fetch.max_uses : 0) * (isCount(fetch.max_content_tokens) ? fetch.max_content_tokens : SEARCH_INPUT_TOKENS) : 0;
+  if (fetch && (!isCount(fetch.max_uses) || !isCount(fetch.max_content_tokens))) throw new HttpError(503, "Hosted web fetch requests require a page limit.");
+  return searches * SEARCH_INPUT_TOKENS + fetchTokens + xPosts * X_POST_INPUT_TOKENS;
 }
 
 export function calculateUsageMicros(usage, price) {
   const cacheWriteInputTokens = usage.cacheWriteInputTokens ?? 0;
   const webSearches = usage.webSearches ?? 0;
+  const xPosts = usage.xPosts ?? 0;
+  const xUsers = usage.xUsers ?? 0;
+  if ((xPosts > 0 && !isCount(price.xPostMicrosPerPost)) || (xUsers > 0 && !isCount(price.xUserMicrosPerUser))) throw new HttpError(503, "Hosted X search pricing is not configured for this model.");
   if (cacheWriteInputTokens > 0 && !isCount(price.cacheWriteInputMicrosPerMillionTokens)) throw new HttpError(503, "Hosted cache-write pricing is not configured for this model.");
   if (webSearches > 0 && !isCount(price.webSearchMicrosPerSearch)) throw new HttpError(503, "Hosted web search pricing is not configured for this model.");
   const numerator = BigInt(usage.inputTokens - usage.cachedInputTokens - cacheWriteInputTokens) * BigInt(price.inputMicrosPerMillionTokens) +
     BigInt(usage.cachedInputTokens) * BigInt(price.cachedInputMicrosPerMillionTokens ?? price.inputMicrosPerMillionTokens) +
     BigInt(cacheWriteInputTokens) * BigInt(price.cacheWriteInputMicrosPerMillionTokens ?? 0) +
     BigInt(usage.outputTokens) * BigInt(price.outputMicrosPerMillionTokens) +
-    BigInt(webSearches) * BigInt(price.webSearchMicrosPerSearch ?? 0) * MILLION;
+    BigInt(webSearches) * BigInt(price.webSearchMicrosPerSearch ?? 0) * MILLION +
+    BigInt(xPosts) * BigInt(price.xPostMicrosPerPost ?? 0) * MILLION +
+    BigInt(xUsers) * BigInt(price.xUserMicrosPerUser ?? 0) * MILLION;
   const amount = (numerator + MILLION - 1n) / MILLION;
   if (amount > BigInt(Number.MAX_SAFE_INTEGER)) throw new HttpError(413, "This model request exceeds the supported prepaid usage limit.");
   return Number(amount);
@@ -99,18 +157,21 @@ export function createHostedUsageMeter({ env, billingService, requestId, userId,
       // Reserve from UTF-8 bytes of the complete serialized body, including
       // tool schemas/history, with additional provider framing allowance.
       // Audio bodies are not JSON, so their caller states the bound instead.
-      const inputBound = inputTokenLimit ?? Buffer.byteLength(JSON.stringify(body), "utf8") + 1024;
+      const searchBound = webSearchLimit(provider, body);
+      const xBound = xSearchLimits(provider, body);
+      const inputBound = inputTokenLimit ?? Buffer.byteLength(JSON.stringify(body), "utf8") + 1024 + serverToolInputAllowance(provider, body, searchBound, xBound.xPosts);
       const outputBound = maxOutputTokens + (provider === "gemini" ? price.maxReasoningTokens : 0);
       if (!isCount(outputBound)) throw new HttpError(503, "Invalid hosted output token limit.");
-      const searchBound = webSearchLimit(body);
       if (searchBound && !isCount(price.webSearchMicrosPerSearch)) throw new HttpError(503, `Hosted web search pricing is unavailable for ${provider}:${model}.`);
+      if (xBound.xPosts && (!isCount(price.xPostMicrosPerPost) || !isCount(price.xUserMicrosPerUser))) throw new HttpError(503, `Hosted X search pricing is unavailable for ${provider}:${model}.`);
       const estimate = { inputTokens: inputBound, outputTokens: outputBound, cachedInputTokens: 0,
         cacheWriteInputTokens: price.cacheWriteInputMicrosPerMillionTokens > price.inputMicrosPerMillionTokens ? inputBound : 0,
-        reasoningTokens: provider === "gemini" ? price.maxReasoningTokens : 0, ...(searchBound ? { webSearches: searchBound } : {}) };
+        reasoningTokens: provider === "gemini" ? price.maxReasoningTokens : 0, ...(searchBound ? { webSearches: searchBound } : {}),
+        ...(xBound.xPosts ? { xPosts: xBound.xPosts, xUsers: xBound.xUsers } : {}) };
       const amountMicros = Math.max(1, calculateUsageMicros(estimate, price));
       const childRequestId = `${requestId}:${++sequence}`;
       const metadata = { executionId: requestId, operation, kind, provider, model, pricing: price, inputTokenLimit: inputBound, outputTokenLimit: outputBound,
-        ...(searchBound ? { webSearchLimit: searchBound } : {}) };
+        ...(searchBound ? { webSearchLimit: searchBound } : {}), ...(xBound.xPosts ? { xPostLimit: xBound.xPosts, xUserLimit: xBound.xUsers } : {}) };
       await billingService.reserveHostedRequest({ requestId: childRequestId, userId, amountMicros, metadata });
       let dispatched = false;
       let rejected = false;
@@ -143,7 +204,8 @@ export function createHostedUsageMeter({ env, billingService, requestId, userId,
             // the provider already generated. Only final usage releases a hold.
             const measured = unbilled ? { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, reasoningTokens: 0 } : finalUsage ? usage : estimate;
             const cost = calculateUsageMicros(measured, price);
-            const exceededReservation = measured.inputTokens > inputBound || measured.outputTokens > outputBound || (measured.webSearches ?? 0) > searchBound || cost > amountMicros;
+            const exceededReservation = measured.inputTokens > inputBound || measured.outputTokens > outputBound || (measured.webSearches ?? 0) > searchBound
+              || (measured.xPosts ?? 0) > xBound.xPosts || (measured.xUsers ?? 0) > xBound.xUsers || cost > amountMicros;
             settlementEntry = {
               ...metadata, ...measured, amountMicros: Math.min(cost, amountMicros), reservedMicros: amountMicros,
               usageSource: unbilled ? "not-billed" : finalUsage ? "provider" : "estimated-upper-bound",

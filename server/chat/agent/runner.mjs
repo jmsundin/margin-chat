@@ -52,9 +52,10 @@ function webAddress(value) {
  * calls is the answer. When a call's text turns out to be followed by tool calls,
  * `onRetract` withdraws what was streamed and the text is kept as a note step.
  *
- * With `webSearch`, providers with built-in web search (Meta) may search the web
- * inside their calls, up to AGENT_WEB_SEARCHES per run; each search is a step, and
- * the pages the answer cites are kept as the run's `webSources`.
+ * With `webSearch`, providers with built-in web search (Meta, Claude, Grok) may search the web
+ * inside their calls, up to about AGENT_WEB_SEARCHES per run; each search is a step, and
+ * the pages the answer cites are kept as the run's `webSources`. With `xSearch`, Grok may
+ * search posts on X too; those searches count toward the same allowance.
  *
  * With `questions`, the agent may call ask_user, which ends the run with its
  * question as the reply (stopReason "question"); the user's next message answers it.
@@ -90,9 +91,9 @@ function finishedRoadmap(args) {
 }
 
 export async function runAgent({ provider, apiKey, chatRequest, model, systemInstruction, maxOutputTokens, maxInputCharacters,
-  signal, usageMeter, workspace = null, webSearch = false, questions = false, proposals = false, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity, onRoadmapDraft }) {
+  signal, usageMeter, workspace = null, webSearch = false, xSearch = false, questions = false, proposals = false, budgetMicros = DEFAULT_AGENT_BUDGET_MICROS, timeLimitMs = AGENT_TIME_LIMIT_MS, now = Date.now, readPage, importSection, onDocuments, onDelta, onRetract, onStep, onThinking, onActivity, onRoadmapDraft }) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
-  const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter, webSearch },
+  const adapter = createAgentAdapter(provider, { apiKey, chatRequest, model, systemInstruction, maxOutputTokens, signal, usageMeter, webSearch, xSearch: webSearch && xSearch },
     agentToolDefinitions(chatRequest, workspace, { documents: Boolean(onDocuments), questions, proposals }));
   let searchesLeft = webSearch ? AGENT_WEB_SEARCHES[chatRequest.ai?.mode] ?? AGENT_WEB_SEARCHES.balanced : 0;
   const cited = new Map();
@@ -122,7 +123,8 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
   const live = {
     thinking: async (delta) => { await onThinking?.(delta); },
     writing: async () => { await onActivity?.("writing"); },
-    searching: async (query) => { await onActivity?.("searching", { label: query ? `Searching the web for ${quote(query)}` : "Searching the web" }); },
+    searching: async (query, where = "the web") => { await onActivity?.("searching", { label: query ? `Searching ${where} for ${quote(query)}` : `Searching ${where}` }); },
+    reading: async () => { await onActivity?.("searching", { label: "Reading a web page" }); },
     tool: async (name) => { await onActivity?.("tool", { label: agentToolActivity(name) }); },
     // A roadmap is shown as it is written: each time another step is finished, what there is so far.
     toolArguments: async (name, text) => {
@@ -195,7 +197,11 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     await recordThinking(result.thinking);
     for (const search of result.searches ?? []) {
       searchesLeft = Math.max(0, searchesLeft - 1);
-      await record({ kind: "tool", tool: "web_search", label: search.query ? `Searched the web for ${quote(search.query)}` : "Searched the web", ok: search.ok });
+      const x = search.kind === "x";
+      const fetched = search.kind === "fetch";
+      await record({ kind: "tool", tool: x ? "x_search" : fetched ? "web_fetch" : "web_search", ok: search.ok,
+        label: fetched ? search.query ? `Read ${search.query}` : "Read a web page"
+          : search.query ? `Searched ${x ? "X" : "the web"} for ${quote(search.query)}` : `Searched ${x ? "X" : "the web"}` });
     }
     for (const page of result.sources ?? []) {
       const url = webAddress(page.url);
