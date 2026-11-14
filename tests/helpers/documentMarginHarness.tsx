@@ -47,6 +47,13 @@ try {
   assert(container.querySelector('[data-margin-note-id="late"]')?.classList.contains("is-expanded"), "The open note opens wider.");
   assert(container.querySelector("style")?.textContent?.includes(`'"late"'`), "The open note's passage is lit in the text.");
 
+  const passage = (id: string) => container.querySelector(`.message-anchor[data-annotation-branches='${JSON.stringify([id])}']`)!;
+  await act(async () => passage("early").dispatchEvent(new browser.PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" })));
+  assert(container.querySelector('[data-margin-note-id="early"]')?.classList.contains("is-pointed"), "Pointing at a passage lights its note in the margin.");
+  assert(container.querySelector("style")?.textContent?.includes(`'"early"'`), "…and its passage, like pointing at the note does.");
+  await act(async () => passage("early").dispatchEvent(new browser.PointerEvent("pointerout", { bubbles: true, relatedTarget: container.querySelector(".document-body") })));
+  assert.equal(container.querySelector(".is-pointed"), null, "Leaving the passage puts the note back.");
+
   ids = ["early", "crowded", "late"];
   await act(async () => root.render(createElement(Doc)));
   assert.equal(top("early"), 96);

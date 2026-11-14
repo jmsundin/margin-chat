@@ -128,6 +128,28 @@ try {
   checks.push("removed annotations dismiss stale preview");
 
   await act(async () => root.render(createElement(ChatPanel, props)));
+  const shownNote = browser.document.createElement("div");
+  shownNote.className = "document-margin-item";
+  shownNote.dataset.marginNoteId = "branch";
+  browser.document.body.append(shownNote);
+  const userHighlight = () => container.querySelector('[data-message-id="question"] [data-annotation-branches]')!;
+  await act(async () => userHighlight().dispatchEvent(new browser.PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" })));
+  await act(pause);
+  assert.equal(dialog(), null, "A note already showing in the margin gets no hover card over its passage.");
+  await act(async () => userHighlight().dispatchEvent(new browser.PointerEvent("pointerout", { bubbles: true })));
+  await act(async () => assistantMark().dispatchEvent(new browser.PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" })));
+  await act(pause);
+  assert(dialog()?.textContent?.includes("A private thought"));
+  assert(!dialog()?.textContent?.includes("A useful explanation."), "The card leaves out the note the margin already shows.");
+  await act(async () => browser.document.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  shownNote.style.visibility = "hidden";
+  await act(async () => userHighlight().dispatchEvent(new browser.PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" })));
+  await act(pause);
+  assert(dialog()?.textContent?.includes("A useful explanation."), "A note not showing in the margin still gets its card.");
+  await act(async () => browser.document.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+  shownNote.remove();
+  checks.push("notes already in the margin need no hover card");
+
   await act(async () => assistantMark().dispatchEvent(new browser.PointerEvent("pointerover", { bubbles: true, pointerType: "mouse" })));
   await act(async () => root.unmount());
   await act(pause);

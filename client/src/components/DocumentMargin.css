@@ -27,7 +27,7 @@
 .document-margin-mark { position: relative; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
 .document-margin-mark::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--quiet-note-dot, var(--sage)); transition: transform .15s ease; }
 .document-margin-mark.is-ai::after { background: var(--quiet-ai-ink, var(--accent)); }
-.document-margin-mark:hover::after, .document-margin-mark.is-open::after { transform: scale(1.35); }
+.document-margin-mark:hover::after, .document-margin-mark.is-open::after, .document-margin-mark.is-pointed::after { transform: scale(1.35); }
 .document-margin-mark:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 /* Bigger targets for fingers, same small dot. */
 @media (pointer: coarse) { .document-margin-mark { width: 28px; height: 28px; margin-top: -6px; } .document-margin-mark::after { inset: 10px; } }
@@ -105,3 +105,9 @@
 .note-sheet-body .margin-document-frame .live-document-host, .is-quiet-page .note-sheet-body .margin-document-frame .live-document-host { font-size: 16px; }
 /* The note's menu lives in the page's ⋮ on phones, so its empty header goes. */
 .note-sheet-body .margin-document-frame .document-header:not(:has(button)) { display: none; }
+
+/* Pointing at a note's passage lights the note itself, beside the text, rather than a card over it. */
+.document-margin-item::before { content: ""; position: absolute; inset: -6px -8px -6px 18px; border-radius: 10px; background: var(--margin-linked-passage); opacity: 0; transition: opacity .15s ease; pointer-events: none; }
+.document-margin-item.is-left::before { inset: -6px -8px; }
+.document-margin-item.is-pointed::before { opacity: .55; }
+@media (prefers-reduced-motion: reduce) { .document-margin-item::before { transition: none; } }
