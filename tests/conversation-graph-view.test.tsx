@@ -649,6 +649,17 @@ describe("typed relations on the map", () => {
     expect(markup).toContain('class="graph-relation-edge is-mention is-mention"');
     expect(markup).toContain('marker-end="url(#graph-relation-arrow-mention)"');
   });
+
+  test("a crowded map keeps lines away from the picked document thin, grey and without arrows", () => {
+    const crowded: Record<string, Conversation> = { ...conversations };
+    for (let index = 0; index < 16; index += 1) crowded[`step-${index}`] = createConversation({ id: `step-${index}`, title: `Step ${index}`,
+      ...(index ? { relations: [{ type: "depends-on", targetConversationId: `step-${index - 1}` }] } : {}) });
+    const markup = renderToStaticMarkup(<ConversationGraphView activeConversationId="root" conversations={crowded} groups={{}}
+      onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => null} onOpenConversation={() => {}} onToggleGroup={() => {}} />);
+    const quiet = markup.match(/class="graph-relation-edge is-depends-on[^"]*"[^>]*data-line-quiet="true"/g) ?? [];
+    expect(quiet.length).toBe(15);
+    expect(markup).not.toContain('marker-end="url(#graph-relation-arrow-depends-on)"');
+  });
 });
 
 describe("card budget", () => {
