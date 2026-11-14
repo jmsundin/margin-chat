@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { createEmptyState } from "../client/src/initialState";
 import {
   completedStarterTasks, isPristineWorkspace, seedStarterDocument, STARTER_NOTE_ID, STARTER_SIDE_DOCUMENT_ID,
@@ -73,6 +74,42 @@ describe("Start here document", () => {
     expect(list).toContain(`- [x] ${STARTER_TASKS.find((task) => task.id === "map")!.line}`);
     expect(list).toContain(`- [ ] ${STARTER_TASKS.find((task) => task.id === "side")!.line}`);
     expect(tickStarterTasks(ticked, done)).toBe(ticked);
+  });
+
+  test("opening any note beside its page ticks that task, in old Start here wording too", () => {
+    const seeded = seedStarterDocument(createEmptyState(), at);
+    expect(completedStarterTasks(seeded, { beside: true }).has("side")).toBe(true);
+    const task = STARTER_TASKS.find((item) => item.id === "side")!;
+    const old = starter(seeded);
+    const blocks = old.document!.blocks.map((item, index) => index === 1 ? { ...item, content: item.content.replace(task.line, task.legacy![0]) } : item);
+    const legacy: AppState = { ...seeded, conversations: { ...seeded.conversations, [old.id]: { ...old, document: { ...old.document!, blocks } } } };
+    const list = starter(tickStarterTasks(legacy, new Set(["side"]))).document!.blocks[1].content;
+    expect(list).toContain(`- [x] ${task.legacy![0]}`);
+  });
+});
+
+describe("Start here and the tour name only buttons that exist", () => {
+  // The same Start here and tour greet new accounts and the guest trial, so wording left behind by a
+  // UI change shows up in both. This fails when they name a selection button the toolbars no longer have.
+  const source = (path: string) => readFileSync(new URL(`../client/src/${path}`, import.meta.url), "utf8");
+  const toolbars = ["WorkspaceApp.tsx", "components/MobileSelectionActions.tsx", "components/SelectionToolbar.tsx"].map(source).join("\n");
+  const hasButton = (name: string) => [`"${name}"`, `>${name}<`, `"✦ ${name}"`, `>✦ ${name}<`].some((form) => toolbars.includes(form));
+
+  test("every “choose **X**” in the Try it list is a selection button", () => {
+    const named = STARTER_TASKS.flatMap((task) => [...task.line.matchAll(/choose \*\*(?:✦ )?([^*]+)\*\*/g)].map((match) => match[1]));
+    expect(named.length).toBeGreaterThan(0);
+    for (const name of named) expect({ name, exists: hasButton(name) }).toEqual({ name, exists: true });
+  });
+
+  test("the tour's list of selection buttons matches the toolbars", () => {
+    const tour = source("components/GuidedTour.tsx");
+    const lists = [...tour.matchAll(/(?:Select any words for|A row appears with) ([^.]+)\./g)].map((match) => match[1]);
+    expect(lists.length).toBe(2);
+    for (const list of lists) {
+      for (const name of list.split(/, | and /).map((item) => item.replace(/^✦ /, "").trim())) {
+        expect({ name, exists: hasButton(name) }).toEqual({ name, exists: true });
+      }
+    }
   });
 });
 

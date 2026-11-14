@@ -21,9 +21,14 @@ const ASSET_ORIGIN = "https://www.marginchat.com";
 
 export type StarterTask = "note" | "side" | "ai" | "map" | "session";
 
-export const STARTER_TASKS: { id: StarterTask; line: string }[] = [
+/**
+ * `legacy` lines are older wordings of a task still sitting in Start here documents made before it changed,
+ * so those documents keep ticking themselves off too.
+ */
+export const STARTER_TASKS: { id: StarterTask; line: string; legacy?: string[] }[] = [
   { id: "note", line: "Select a sentence below and choose **Note**: a comment that stays beside the text." },
-  { id: "side", line: "Select a phrase and choose **Side doc**: a new idea that grows out of it, in its own pane." },
+  { id: "side", line: "Click the dot beside a note to open it next to the page. Drag the line between them to make it a whole page.",
+    legacy: ["Select a phrase and choose **Side doc**: a new idea that grows out of it, in its own pane."] },
   { id: "ai", line: "Select some text and choose **✦ Ask AI**, or press Space on an empty line to ask about the page." },
   { id: "map", line: "Open **Map View** (⌘G) to see how your documents connect." },
   { id: "session", line: "Make a **space** from the button left of the tabs: a place for one project's documents that you can come back to." },
@@ -44,7 +49,7 @@ const sections = [
   "Margin Chat is for working through hard questions with documents and AI. This page is an ordinary document: edit it, keep it as a reference, or delete it when you're done.",
   starterTaskBlock(),
   `## A passage to work with\n\n${PASSAGE}`,
-  "The first sentence already has a margin note beside it, and “hallmarks of aging” has a side document. Click either highlight to open it.",
+  "The first sentence already has a note beside it, and “hallmarks of aging” has one that grew into a document of its own. Click either highlight to open it.",
   "## What a document can hold\n\nEverything below is plain Markdown, so the same files open in Obsidian or any text editor. Click into a block to see how it's written.",
   "### Text\n\n**Bold**, *italic*, ==highlighted==, ~~struck out~~ and `inline code`. Links open with ⌘-click: [a web page](https://en.wikipedia.org/wiki/DNA_repair), or another document in your vault: [[Hallmarks of aging]].",
   "### Lists\n\n- Bullet points, with Tab to indent\n  - like this\n1. Numbered steps\n2. that renumber themselves\n- [ ] And tasks you can tick",
@@ -109,7 +114,7 @@ export function seedStarterDocument(state: AppState, at = new Date().toISOString
 }
 
 /** Which starter tasks the workspace shows were done by the person, not by the starter itself. */
-export function completedStarterTasks(state: AppState, seen: { map?: boolean } = {}): Set<StarterTask> {
+export function completedStarterTasks(state: AppState, seen: { map?: boolean; beside?: boolean } = {}): Set<StarterTask> {
   const done = new Set<StarterTask>();
   for (const conversation of Object.values(state.conversations)) {
     if (!madeByPerson(conversation.id)) continue;
@@ -118,6 +123,7 @@ export function completedStarterTasks(state: AppState, seen: { map?: boolean } =
     if (conversation.document?.generations.length || conversation.messages.some((message) => message.role === "assistant")) done.add("ai");
   }
   if (seen.map) done.add("map");
+  if (seen.beside) done.add("side");
   if (Object.keys(state.sessions?.items ?? {}).filter(madeByPerson).length > 0) done.add("session");
   return done;
 }
@@ -134,8 +140,10 @@ export function tickStarterTasks(state: AppState, done: ReadonlySet<StarterTask>
     let content = item.content;
     for (const task of STARTER_TASKS) {
       if (!done.has(task.id)) continue;
-      const open = `- [ ] ${task.line}`;
-      if (content.includes(open)) content = content.replace(open, `- [x] ${task.line}`);
+      for (const line of [task.line, ...(task.legacy ?? [])]) {
+        const open = `- [ ] ${line}`;
+        if (content.includes(open)) content = content.replace(open, `- [x] ${line}`);
+      }
     }
     if (content === item.content) return item;
     changed = true;
