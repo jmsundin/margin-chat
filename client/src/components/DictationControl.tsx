@@ -5,9 +5,10 @@ import {
   renewLiveDictationSession,
   requestDictationTranscript,
   requestLiveDictationSession,
+  type LiveDictationSession,
 } from "../lib/api";
 import { joinTranscripts } from "../lib/dictationText";
-import { startLiveTranscription, type LiveTranscription } from "../lib/liveDictation";
+import { LIVE_SAMPLE_RATE, startLiveTranscription, type LiveTranscription } from "../lib/liveDictation";
 import { MicIcon } from "./DictationButton";
 import {
   dictationHints,
@@ -51,8 +52,8 @@ const SHORTEST_RECORDING_MS = 300;
 const LIVE_RENEW_MS = 9 * 60 * 1000;
 // Pieces of a long recording transcribed at once.
 const TRANSCRIBE_CONCURRENCY = 2;
-// Meter loudness that counts as talking, well above a quiet room's.
-const SPEECH_LEVEL = 0.12;
+// Audio held for a live session that is still connecting: a minute at most.
+const MAX_WAITING_SAMPLES = 60 * LIVE_SAMPLE_RATE;
 
 /** The document's corner mic, where its recording shows. On phones it's in the screen's button stack. */
 function slotFor(target: HTMLElement): HTMLElement | null {
@@ -116,10 +117,9 @@ interface Pieces {
   /** Stops every piece's request when voice typing is cancelled. */
   controller: AbortController;
   hints: DictationHints;
-  /** Whether the live connection is up, so what the mic hears reaches it. */
-  liveOpen: boolean;
-  /** The person was already talking before the live connection was up, so its words miss the start. */
-  missedStart: boolean;
+  /** What the mic heard before the live session was ready; it goes out the moment it is. */
+  waiting: Int16Array[];
+  waitingSamples: number;
 }
 
 function formatElapsed(ms: number) {
@@ -178,6 +178,11 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     run.token = null;
   }, [userId]);
 
+  // A live session asked for by a recording that never started: end its charge.
+  const releaseSession = useCallback((session: Promise<LiveDictationSession> | null) => {
+    session?.then((started) => { if (started.token) void finishLiveDictationSession(started.token, userId); }, () => undefined);
+  }, [userId]);
+
   /** Starts transcribing a piece of the recording, unless it already is. */
   const transcribePiece = useCallback((pieces: Pieces, index: number): Promise<string> => {
     const existing = pieces.texts[index];
@@ -210,26 +215,28 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
     if (piecesRef.current) switchToPieces(piecesRef.current);
   }, [endCharge, switchToPieces]);
 
-  const beginLive = useCallback((stream: MediaStream, target: HTMLElement, pieces: Pieces): LiveRun => {
+  /** Connects the live session asked for when the recording started, and hands it the audio heard so far. */
+  const beginLive = useCallback((target: HTMLElement, pieces: Pieces, session: Promise<LiveDictationSession> | null): LiveRun => {
     const run: LiveRun = { transcription: null, preview: startDictationPreview(target), token: null, ended: false, renewTimer: 0 };
-    if (typeof RTCPeerConnection === "undefined") { run.ended = true; return run; }
+    if (!session) { run.ended = true; return run; }
     void (async () => {
       try {
-        const session = await requestLiveDictationSession({ expectedUserId: userId, ...pieces.hints });
-        run.token = session.token;
+        const { clientSecret, token } = await session;
+        run.token = token;
         if (run.ended) { endCharge(run); return; }
-        const transcription = await startLiveTranscription({
-          stream, clientSecret: session.clientSecret,
+        const transcription = startLiveTranscription({
+          clientSecret,
           onText: (text) => {
             if (run.ended) return;
             if (run.preview) run.preview.update(text);
             else setLiveText(text);
           },
           onDrop: () => dropLive(run),
-          onOpen: () => { pieces.liveOpen = true; },
         });
-        if (run.ended) { transcription.close(); endCharge(run); return; }
         run.transcription = transcription;
+        pieces.waiting.forEach((pcm) => transcription.append(pcm));
+        pieces.waiting = [];
+        pieces.waitingSamples = 0;
         if (run.token) {
           // Long sessions keep going: bill the time so far and hold the next stretch.
           run.renewTimer = window.setInterval(() => {
@@ -330,9 +337,9 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       if (last.size) pieces.audio.push(last);
       setLiveText("");
       if ((phaseRef.current as Phase).kind !== "transcribing") { live?.preview?.discard(); return; }
-      // The recording holds every word from the moment the mic opened. When the live words missed the start,
-      // or came back empty, the recording is transcribed instead, with the live words to fall back on.
-      if (text !== null && text.trim() && !pieces.missedStart) {
+      // The live session heard everything from the moment the mic opened. When it came back empty,
+      // the recording is transcribed instead, with whatever live words there were to fall back on.
+      if (text !== null && text.trim()) {
         deliver(target, text, live?.preview ?? null);
         return;
       }
@@ -373,13 +380,25 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
   const start = useCallback(async (target: HTMLElement) => {
     if (phaseRef.current.kind === "starting" || phaseRef.current.kind === "recording" || phaseRef.current.kind === "transcribing") return;
     setPhase({ kind: "starting", target });
+    const hints = dictationHints(target);
+    // The live session is asked for while the microphone opens, not after, and the mic's audio waits for it.
+    const canStream = typeof WebSocket !== "undefined";
+    const session = canStream ? requestLiveDictationSession({ expectedUserId: userId, ...hints }) : null;
+    session?.catch(() => undefined);
     try {
-      const pieces: Pieces = { audio: [], texts: [], batch: false, done: new Set(), controller: new AbortController(), hints: dictationHints(target), liveOpen: false, missedStart: false };
+      const pieces: Pieces = { audio: [], texts: [], batch: false, done: new Set(), controller: new AbortController(), hints, waiting: [], waitingSamples: 0 };
       const recording = await startDictationRecording({
-        onLevel: (next) => {
-          setLevel(next);
-          if (!pieces.liveOpen && next >= SPEECH_LEVEL) pieces.missedStart = true;
-        },
+        onLevel: setLevel,
+        ...(canStream ? {
+          pcmRate: LIVE_SAMPLE_RATE,
+          onPcm: (pcm: Int16Array) => {
+            const live = liveRef.current;
+            if (live?.transcription) { live.transcription.append(pcm); return; }
+            if (live?.ended || pieces.waitingSamples + pcm.length > MAX_WAITING_SAMPLES) return;
+            pieces.waiting.push(pcm);
+            pieces.waitingSamples += pcm.length;
+          },
+        } : {}),
         segmentMs,
         onSegment: (audio) => {
           pieces.audio.push(audio);
@@ -387,18 +406,19 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
         },
       });
       // Esc or a second press while the microphone was opening.
-      if ((phaseRef.current as Phase).kind !== "starting") { recording.cancel(); return; }
+      if ((phaseRef.current as Phase).kind !== "starting") { recording.cancel(); releaseSession(session); return; }
       recordingRef.current = recording;
       piecesRef.current = pieces;
-      const live = beginLive(recording.stream, target, pieces);
+      const live = beginLive(target, pieces, session);
       liveRef.current = live;
       if (live.ended) switchToPieces(pieces);
       setPhase({ kind: "recording", target, startedAt: Date.now() });
     } catch (error) {
       keyPressRef.current = null;
+      releaseSession(session);
       showNotice(target, describeError(error));
     }
-  }, [beginLive, segmentMs, showNotice, switchToPieces, transcribePiece]);
+  }, [beginLive, releaseSession, segmentMs, showNotice, switchToPieces, transcribePiece, userId]);
 
   const toggle = useCallback((target: HTMLElement | null) => {
     const current = phaseRef.current;

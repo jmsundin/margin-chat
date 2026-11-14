@@ -138,7 +138,7 @@ describe("voice typing transcription", () => {
     expect((calls[0].init.headers as Record<string, string>).Authorization).toBe("Bearer hosted-key");
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       expires_after: { anchor: "created_at", seconds: 60 },
-      session: { type: "transcription", audio: { input: { transcription: { model: "gpt-live-transcribe", language: "en" }, turn_detection: null } } },
+      session: { type: "transcription", audio: { input: { format: { type: "audio/pcm", rate: 24000 }, transcription: { model: "gpt-live-transcribe", language: "en" }, turn_detection: null } } },
     });
     expect(reservations[0]).toMatchObject({ userId: "member", amountMicros: 60_000 });
     advance(45_000);

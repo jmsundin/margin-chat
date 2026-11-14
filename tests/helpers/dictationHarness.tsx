@@ -35,7 +35,22 @@ Object.defineProperty(browser.navigator, "mediaDevices", { configurable: true, v
 } });
 // The mic's loudness meter: silent unless a check says the person is talking.
 let micLoudness = 0;
+// The mic's raw samples, fed by a check through `speak`.
+let micProcessor: { onaudioprocess: ((event: any) => void) | null } | null = null;
+const speak = (ms: number, level: number) => {
+  for (let at = 0; at < ms; at += 40) {
+    const samples = new Float32Array(1920).map((_, index) => level * Math.sin((2 * Math.PI * 220 * index) / 48000));
+    micProcessor?.onaudioprocess?.({ inputBuffer: { getChannelData: () => samples } });
+  }
+};
 class FakeAudioContext {
+  sampleRate = 48000;
+  destination = {};
+  resume() { return Promise.resolve(); }
+  createScriptProcessor() {
+    micProcessor = { onaudioprocess: null, connect() {}, disconnect() {} } as any;
+    return micProcessor;
+  }
   createAnalyser() {
     return { fftSize: 0, connect() {}, getByteTimeDomainData(samples: Uint8Array) { samples.fill(128 + Math.round(micLoudness * 127)); } };
   }
@@ -43,6 +58,8 @@ class FakeAudioContext {
   close() { return Promise.resolve(); }
 }
 Object.defineProperty(globalThis, "AudioContext", { configurable: true, value: FakeAudioContext });
+// No live transcription until the live checks below install their fake connection.
+Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: undefined });
 const requests: { url: string; contentType: string | null; size: number }[] = [];
 const cleanups: { kind: string; prompt: string }[] = [];
 let cleanupReply: (prompt: string) => Response = (prompt) => Response.json({ title: prompt.replace(/^\w/u, (letter) => letter.toUpperCase()).replace(/ (\w+)$/u, ", $1.") });
@@ -235,40 +252,43 @@ assert.equal(emptied.text(), "Words so far");
 assert.equal(emptied.pending(), false);
 checks.push("an empty final keeps the live words");
 
-let channel: FakeChannel | null = null;
+let channel: FakeSocket | null = null;
 const sent: string[] = [];
-// What OpenAI answers the stop's commit with.
+// What OpenAI answers each commit with.
 let finalTurn = { item_id: "turn-1", transcript: "Hello there, live world." };
-class FakeChannel {
-  readyState = "open";
+// Whether a new connection opens straight away, or waits for a check to open it.
+let openAtOnce = true;
+let socketsClosed = 0;
+const socketOpens: { url: string; protocols: string[] }[] = [];
+class FakeSocket {
+  readyState = 0;
   listeners = new Map<string, ((event: any) => void)[]>();
+  constructor(url: string, protocols: string[]) {
+    socketOpens.push({ url, protocols });
+    channel = this;
+    if (openAtOnce) setTimeout(() => this.open(), 1);
+  }
   addEventListener(type: string, listener: (event: any) => void) { this.listeners.set(type, [...(this.listeners.get(type) ?? []), listener]); }
-  emit(event: unknown) { for (const listener of this.listeners.get("message") ?? []) listener({ data: JSON.stringify(event) }); }
+  fire(type: string, event: unknown) { for (const listener of this.listeners.get(type) ?? []) listener(event); }
+  open() { this.readyState = 1; this.fire("open", {}); }
+  emit(event: unknown) { this.fire("message", { data: JSON.stringify(event) }); }
   send(message: string) {
     sent.push(message);
-    setTimeout(() => this.emit({ type: "conversation.item.input_audio_transcription.completed", ...finalTurn }), 5);
+    if (JSON.parse(message).type === "input_audio_buffer.commit") {
+      setTimeout(() => this.emit({ type: "conversation.item.input_audio_transcription.completed", ...finalTurn }), 5);
+    }
   }
-  close() { this.readyState = "closed"; }
+  close() { if (this.readyState !== 3) socketsClosed += 1; this.readyState = 3; }
 }
-let peersClosed = 0;
-class FakePeerConnection {
-  localDescription: { sdp: string } | null = null;
-  addTrack() {}
-  createDataChannel() { channel = new FakeChannel(); return channel; }
-  async createOffer() { return { type: "offer", sdp: "offer-sdp" }; }
-  async setLocalDescription(description: { sdp: string }) { this.localDescription = description; }
-  async setRemoteDescription() {}
-  close() { peersClosed += 1; }
-}
-Object.defineProperty(globalThis, "RTCPeerConnection", { configurable: true, value: FakePeerConnection });
+Object.defineProperty(globalThis, "WebSocket", { configurable: true, value: FakeSocket });
+const sentTypes = () => sent.map((message) => JSON.parse(message).type);
 await act(async () => { document.querySelector<HTMLButtonElement>(".dictation-pill.is-notice .dictation-pill-button")?.click(); });
 composer.focus();
 composer.setSelectionRange(composer.value.length, composer.value.length);
 await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
 assert.ok(channel, `live connection opened: ${JSON.stringify(liveRequests)} ${document.querySelector(".dictation-pill")?.outerHTML}`);
-assert.equal(liveRequests[1].url, "https://api.openai.com/v1/realtime/calls");
-assert.equal(liveRequests[1].authorization, "Bearer ek_test");
-assert.equal(liveRequests[1].body, "offer-sdp");
+assert.deepEqual(socketOpens.at(-1), { url: "wss://api.openai.com/v1/realtime?intent=transcription", protocols: ["realtime", "openai-insecure-api-key.ek_test"] });
+speak(400, 0.3);
 await act(async () => {
   channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-1", delta: "Hello" });
   channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-1", delta: " there" });
@@ -279,10 +299,11 @@ await pause(350);
 const transcribeCalls = requests.length;
 await act(async () => { window.dispatchEvent(shortcut()); await pause(450); });
 assert.equal(latest, "Ask hello world Hello there, live world.");
-assert.deepEqual(sent.map((message) => JSON.parse(message).type), ["input_audio_buffer.commit"]);
+assert.ok(sentTypes().slice(0, -1).every((type) => type === "input_audio_buffer.append"), sentTypes().join());
+assert.equal(sentTypes().at(-1), "input_audio_buffer.commit");
 assert.equal(requests.length, transcribeCalls, "no second transcription of the recording");
 assert.ok(liveRequests.some((request) => request.url === "/api/dictation/live/finish" && JSON.parse(request.body).token === "hold-token"), "hosted hold settled");
-assert.equal(peersClosed, 1);
+assert.equal(socketsClosed, 1);
 assert.equal(document.querySelector(".dictation-pill"), null);
 assert.deepEqual(cleanups, []);
 checks.push("shows live words and swaps in the final text");
@@ -371,33 +392,52 @@ assert.equal(document.querySelector(".dictation-pill"), null, "no \"didn't catch
 assert.equal(requests.length, transcribedBeforeEmpty);
 checks.push("stopping keeps the live words when the final comes back empty");
 
-// Talking before the live connection is up: the recording heard it all, so it's what gets typed.
+// Talking before the live connection is up: the mic's audio waits, then goes out the moment it opens.
 channel = null;
-micLoudness = 0.5;
-finalTurn = { item_id: "turn-6", transcript: "and the rest." };
-transcribeReply = () => Response.json({ text: "First words and the rest." });
+openAtOnce = false;
+sent.length = 0;
+finalTurn = { item_id: "turn-6", transcript: "First words and the rest." };
+transcribeReply = () => Response.json({ text: "should not be needed" });
 const typedBeforeEarly = latest;
+const transcribedBeforeEarly = requests.length;
 await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
-micLoudness = 0;
-await act(async () => { channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-6", delta: "and the rest" }); await pause(10); });
-assert.equal(latest, `${typedBeforeEarly} and the rest`);
+speak(480, 0.3);
+assert.equal(sent.length, 0, "nothing goes out before the connection opens");
+await act(async () => { channel!.open(); await pause(5); });
+const early = sent.map((message) => JSON.parse(message)).filter((event) => event.type === "input_audio_buffer.append");
+const earlySamples = early.reduce((sum, event) => sum + atob(event.audio).length / 2, 0);
+assert.ok(earlySamples >= 11000 && earlySamples <= 12500, `audio from before the connection: ${earlySamples} samples`);
+await act(async () => { channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-6", delta: "First words and the rest" }); await pause(10); });
+assert.equal(latest, `${typedBeforeEarly} First words and the rest`);
 await pause(350);
 await act(async () => { window.dispatchEvent(shortcut()); await pause(450); });
 assert.equal(latest, `${typedBeforeEarly} First words and the rest.`);
+assert.equal(requests.length, transcribedBeforeEarly, "no transcription of the recording afterwards");
+openAtOnce = true;
 checks.push("words said before the live connection opened are kept");
 
-// If that transcription fails, the live words are typed rather than lost.
+// A pause mid-dictation ends a turn, so its words settle while the person keeps talking.
 channel = null;
-micLoudness = 0.5;
-finalTurn = { item_id: "turn-7", transcript: "only the end." };
-transcribeReply = () => Response.json({ error: "OpenAI is busy." }, { status: 503 });
-const typedBeforeBusy = latest;
+sent.length = 0;
+finalTurn = { item_id: "turn-7", transcript: "First thought." };
+const typedBeforePause = latest;
 await act(async () => { window.dispatchEvent(shortcut()); await pause(30); });
-micLoudness = 0;
+await act(async () => {
+  channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-7", delta: "first thought" });
+  speak(3200, 0.3);
+  assert.ok(!sentTypes().includes("input_audio_buffer.commit"), "no commit while talking");
+  speak(840, 0);
+  await pause(20);
+});
+assert.equal(sentTypes().filter((type) => type === "input_audio_buffer.commit").length, 1, "the pause commits the turn");
+assert.equal(latest, `${typedBeforePause} First thought.`);
+await act(async () => { channel!.emit({ type: "conversation.item.input_audio_transcription.delta", item_id: "turn-8", delta: "Second one" }); await pause(10); });
+finalTurn = { item_id: "turn-8", transcript: "Second one." };
+speak(300, 0.3);
 await pause(350);
 await act(async () => { window.dispatchEvent(shortcut()); await pause(450); });
-assert.equal(latest, `${typedBeforeBusy} only the end.`);
-checks.push("falls back to the live words when the recording can't be transcribed");
+assert.equal(latest, `${typedBeforePause} First thought. Second one.`);
+checks.push("pauses settle words while talking, so stopping only waits for the last few");
 finalTurn = { item_id: "turn-1", transcript: "Hello there, live world." };
 
 // Holding plain Space talks, like Claude Code: a tap types its space, a hold takes it back and records until release.

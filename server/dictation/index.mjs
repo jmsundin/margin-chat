@@ -164,7 +164,8 @@ export function createDictationService({ env = process.env, billingService = nul
           expires_after: { anchor: "created_at", seconds: 60 },
           session: {
             type: "transcription",
-            audio: { input: { transcription: {
+            // The app streams 24 kHz PCM over a WebSocket, so audio heard before the connection opened can go out at once.
+            audio: { input: { format: { type: "audio/pcm", rate: 24000 }, transcription: {
               model, ...(language ? { language } : {}),
               ...(hints.prompt ? { prompt: hints.prompt } : {}),
               ...(hints.keywords.length ? { keywords: hints.keywords } : {}),
