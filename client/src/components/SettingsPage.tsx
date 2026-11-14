@@ -472,8 +472,13 @@ export default function SettingsPage({
             <span aria-hidden="true" className="profile-dialog-avatar settings-page-avatar">{getInitials(user.displayName)}</span>
             <span className="settings-page-me-copy">
               <strong>{user.displayName}</strong>
-              <span>{guest ? "Free trial" : user.email}</span>
+              <span title={guest ? undefined : user.email}>{guest ? "Free trial" : user.email}</span>
             </span>
+            <button className={`settings-page-logout${guest ? " is-guest" : ""}`} disabled={isSaving || billingSubmitting || passwordChanging}
+              onClick={() => { if (!passwordChangingRef.current) void onLogout(); }} title={guest ? undefined : "Log out"} type="button">
+              {guest ? null : <SettingsIcon path="M10 4H5v16h5M14 8l4 4-4 4M18 12H9" />}
+              <span className={guest ? undefined : "settings-page-visually-hidden"}>{guest ? "Sign up free" : "Log out"}</span>
+            </button>
           </div>
           <label className="settings-page-search">
             <SettingsIcon path="M11 4.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13ZM20 20l-4.2-4.2" />
@@ -511,11 +516,6 @@ export default function SettingsPage({
             ))}
             {!visibleSections.length ? <p className="settings-page-empty">No settings match “{query.trim()}”.</p> : null}
           </div>
-          <button className="settings-page-item settings-page-logout" disabled={isSaving || billingSubmitting || passwordChanging}
-            onClick={() => { if (!passwordChangingRef.current) void onLogout(); }} type="button">
-            <SettingsIcon path="M10 4H5v16h5M14 8l4 4-4 4M18 12H9" />
-            <span className="settings-page-item-label">{guest ? "Sign up free" : "Log out"}</span>
-          </button>
         </nav> : null}
 
         {showSection ? <div className="settings-page-main" ref={profileBodyRef}>
