@@ -150,21 +150,26 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     await record({ kind: "thinking", label, ok: true });
   };
 
+  // Work already drafted is never thrown away: a run that can't go on ends with its draft for the user to review.
+  const endWithDraft = async (modelCalls, { toolTruncated: truncated = toolTruncated, model: endModel = model } = {}) => {
+    const drafted = executeTool.proposals();
+    const reply = drafted.some((proposal) => proposal.kind === "roadmap") ? "The roadmap is drafted and ready for you to review." : "The draft is ready for you to review.";
+    await onDelta?.(reply);
+    return {
+      model: endModel, reply, steps, toolTruncated: truncated,
+      agent: { steps, stopReason: "answered", reasoning: reasoningShared ? "shared" : "not-shared", modelCalls,
+        ...(usageMeter ? { spentMicros: spent() } : {}), ...(metered ? { budgetMicros } : {}),
+        ...(cited.size ? { webSources: [...cited.values()] } : {}), proposals: drafted },
+    };
+  };
+
   for (let call = 1; call <= AGENT_MAX_MODEL_CALLS; call += 1) {
     signal?.throwIfAborted();
     // The model's own tool calls count toward the history too (a 47-step roadmap is thousands of characters),
     // so a run that outgrows its room first sheds what it no longer needs; work already drafted is never thrown away.
     if (Number.isSafeInteger(maxInputCharacters) && adapter.size > maxInputCharacters && !adapter.compact(maxInputCharacters)) {
-      const drafted = executeTool.proposals();
-      if (!drafted.length) throw new HttpError(413, "Workspace tool history exceeded the allowed context budget. Narrow the selected context and try again.");
-      const reply = drafted.some((proposal) => proposal.kind === "roadmap") ? "The roadmap is drafted and ready for you to review." : "The draft is ready for you to review.";
-      await onDelta?.(reply);
-      return {
-        model, reply, steps, toolTruncated: true,
-        agent: { steps, stopReason: "answered", reasoning: reasoningShared ? "shared" : "not-shared", modelCalls: call - 1,
-          ...(usageMeter ? { spentMicros: spent() } : {}), ...(metered ? { budgetMicros } : {}),
-          ...(cited.size ? { webSources: [...cited.values()] } : {}), proposals: drafted },
-      };
+      if (!executeTool.proposals().length) throw new HttpError(413, "Workspace tool history exceeded the allowed context budget. Narrow the selected context and try again.");
+      return endWithDraft(call - 1, { toolTruncated: true });
     }
     const stopReason = metered && spent() >= budgetMicros ? "budget"
       : now() - startedAt >= timeLimitMs ? "time-limit"
@@ -172,7 +177,15 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
     streamed = "";
     // Say at once that a model call has started: some models think for a while before they stream anything.
     await onActivity?.("thinking", { label: call === 1 ? "Reading your request" : "Thinking about what it found", call });
-    const result = await adapter.call({ allowTools: !stopReason, extraInstruction: stopReason ? WRAP_UP[stopReason] : null, live, webSearches: searchesLeft });
+    let result;
+    try {
+      result = await adapter.call({ allowTools: !stopReason, extraInstruction: stopReason ? WRAP_UP[stopReason] : null, live, webSearches: searchesLeft });
+    } catch (error) {
+      // A model call that fails after the run drafted something (its wrap-up, say) still hands over the draft.
+      if (signal?.aborted || error?.name === "AbortError" || error?.billingFailure || error?.statusCode === 402 || !executeTool.proposals().length) throw error;
+      if (streamed) await onRetract?.();
+      return endWithDraft(call - 1);
+    }
     signal?.throwIfAborted();
     const answered = !result.toolCalls.length || stopReason;
     if (!answered && streamed) {
@@ -201,7 +214,11 @@ export async function runAgent({ provider, apiKey, chatRequest, model, systemIns
       },
     });
     if (answered) {
-      if (!result.text.trim()) throw new HttpError(502, `${provider} returned a response without assistant text.`);
+      if (!result.text.trim()) {
+        // Some models end with no words after their last tool call; a drafted change speaks for itself.
+        if (executeTool.proposals().length) return endWithDraft(call, { model: result.model });
+        throw new HttpError(502, `${provider} returned a response without assistant text.`);
+      }
       if (!streamed) await onDelta?.(result.text);
       return finish(result.text, stopReason ?? "answered");
     }

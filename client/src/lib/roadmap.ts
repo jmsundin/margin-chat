@@ -433,3 +433,80 @@ export function roadmapExplainPrompt(topic: string, roadmapTitle: string, contex
 export function roadmapDiveDeeperPrompt(topic: string, roadmapTitle: string): string {
   return `Dive deeper into “${topic}”, a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”: build a roadmap of its subtopics in this document.\n\nUse propose_roadmap with this document as the roadmap: 2 to 5 stages and 6 to 16 steps, from what to learn first to the most advanced, drawing on what this document already lists and on your own knowledge of the topic. Search my vault first: where one of my documents already teaches a subtopic, point the step at it; for every other subtopic, make a step with a new document whose notes list what to cover. Don't repeat the other steps of the parent roadmap.`;
 }
+
+/** A Draft with AI request, as roadmapDraftPrompt writes it. */
+export function isRoadmapDraftRequest(content: string): boolean {
+  return content.includes("propose_roadmap") && content.includes("Add the stages to this roadmap document.");
+}
+
+/**
+ * How the newest Draft with AI request in this roadmap ended when it left no draft
+ * to approve here: what the agent said instead, so the roadmap page never ends a run
+ * in silence. Null while there is a draft waiting, after one was decided, or when
+ * the newest request has no reply (still running, or it failed and its error shows).
+ */
+export function roadmapDraftOutcome(conversation: Conversation): { messageId: string; reply: string; elsewhere: string | null } | null {
+  const messages = conversation.messages;
+  let index = -1;
+  for (let at = messages.length - 1; at >= 0; at -= 1) {
+    if (messages[at].role === "user" && isRoadmapDraftRequest(messages[at].content)) { index = at; break; }
+  }
+  if (index < 0) return null;
+  const replies = messages.slice(index + 1).filter((message) => message.role === "assistant");
+  if (!replies.length) return null;
+  const roadmaps = replies.flatMap((message) => (message.execution?.agent?.proposals ?? []).filter((proposal) => proposal.kind === "roadmap"));
+  if (roadmaps.some((proposal) => proposal.roadmapId === conversation.id)) return null;
+  const reply = replies.at(-1)!;
+  const elsewhere = roadmaps.find((proposal) => !proposal.status);
+  return { messageId: reply.id, reply: reply.content.trim(),
+    elsewhere: elsewhere?.kind === "roadmap" ? elsewhere.roadmapTitle || "another document" : null };
+}
+
+/** Draft with AI without Agent mode: one answer laid out as an outline the app reads as stages and steps. */
+export function roadmapOutlinePrompt(input: string): string {
+  const link = roadmapDraftLink(input);
+  return `Lay out a learning roadmap for: ${input.trim()}${link ? `\n\nFollow the page at ${link} if you know it.` : ""}
+
+Answer with only an outline in this exact Markdown form, in the order to learn things, with 2 to 8 stages and 4 to 40 steps in all:
+
+# <what the roadmap is for, in a few words>
+## <stage title>
+### <step title>
+- <a point to cover in this step>
+- <another point>
+
+No other text before or after the outline.`;
+}
+
+/**
+ * The roadmap in an outline answer (# goal, ## stages, ### steps with "- " points)
+ * as a draft waiting for approval, each step a new document carrying its points as
+ * notes and needing the step before it. Null when the answer has no steps.
+ */
+export function roadmapOutlineProposal(reply: string, roadmapId: string, roadmapTitle: string, fallbackGoal: string): AgentRoadmapProposal | null {
+  const stages: { title: string; steps: { key: string; title: string; notes: string; needs: string[] }[] }[] = [];
+  let goal = "";
+  let count = 0;
+  let previous: string | null = null;
+  for (const raw of reply.split("\n")) {
+    const line = raw.trim();
+    const heading = /^(#{1,4})\s+(.+?)\s*#*$/u.exec(line);
+    const point = /^(?:[-*+]|\d+[.)])\s+(.+)$/u.exec(line);
+    const title = heading?.[2].replace(/\*\*/gu, "").trim().slice(0, 200) ?? "";
+    if (heading && heading[1].length === 1) goal ||= title;
+    else if (heading && heading[1].length === 2 && stages.length < 12) stages.push({ title, steps: [] });
+    else if (heading && stages.length && count < 60) {
+      const key = `s${count += 1}`;
+      stages.at(-1)!.steps.push({ key, title, notes: "", needs: previous ? [previous] : [] });
+      previous = key;
+    } else if (point && stages.at(-1)?.steps.length) {
+      const step = stages.at(-1)!.steps.at(-1)!;
+      const notes = `${step.notes}${step.notes ? "\n" : ""}- ${point[1].trim()}`;
+      if (notes.length <= 2_000) step.notes = notes;
+    }
+  }
+  const kept = stages.filter((stage) => stage.title && stage.steps.length);
+  if (!kept.length) return null;
+  return { id: "proposal-1", kind: "roadmap", roadmapId, roadmapTitle, goal: (goal || fallbackGoal.trim() || "Roadmap").slice(0, 200),
+    summary: "Drafted without Agent mode, from the model's own knowledge.", stages: kept };
+}
