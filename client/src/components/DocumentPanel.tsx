@@ -700,7 +700,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           const blocks = selection.joinBlockIds ? joinDocumentBlocks(document.blocks, selection.sourceBlockId, selection.joinBlockIds) : document.blocks;
           props.onSelection({ ...selection, prompt: "", sourceKind: "message", sourceContent: blocks?.find((block) => block.id === selection.sourceBlockId)?.content });
         }}
-        renderBlockPreview={(block)=><MarkdownMessage anchors={[]} content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering obsidian theme={props.theme}/>}
+        renderBlockPreview={(block)=><MarkdownMessage anchors={[]} codeCells content={block.content} conversationId={conversation.id} messageId={block.sourceMessageId ?? `document:${block.id}`} notes={[]} onOpenBranch={props.onOpenBranch} pendingSelection={null} registerAnchorRef={props.registerAnchorRef} registerNoteAnchorRef={()=>{}} enableMermaidRendering obsidian theme={props.theme}/>}
         renderAfterBlock={(block) => <>
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPromptMarker)}
           {agentFollowUps.get(block.id)}

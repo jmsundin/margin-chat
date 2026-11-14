@@ -1,0 +1,122 @@
+/* A runnable code block: a quiet card, the editor full width, output and preview under it. */
+.code-cell.code-cell {
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --cell-bg: var(--message-code-bg, rgba(8, 12, 16, 0.82));
+  --cell-border: var(--message-code-border, rgba(224, 236, 230, 0.08));
+  --cell-ink: var(--ink, #ecf4ef);
+  --cell-muted: var(--muted, #97a9a2);
+  --cell-run: var(--sage, #7acaa4);
+  --cell-stop: var(--accent, #ff8d6d);
+  --cell-error: #ff8f8f;
+  margin: 0.75em 0;
+  border: 1px solid var(--cell-border);
+  border-radius: 10px;
+  background: var(--cell-bg);
+  color: var(--cell-ink);
+  overflow: hidden;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+}
+:root[data-theme="light"] .code-cell, .code-cell:not(.is-dark) { --cell-error: #b42318; }
+
+.code-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 6px 4px 12px;
+  border-bottom: 1px solid var(--cell-border);
+  min-height: 34px;
+}
+.code-cell-language { font: 600 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: 0.02em; color: var(--cell-muted); }
+.code-cell-note { font-size: 12px; color: var(--cell-muted); }
+.code-cell-spacer { flex: 1; }
+.code-cell .code-cell-button {
+  font: 600 13px/1 system-ui, -apple-system, "Segoe UI", sans-serif;
+  border: 1px solid var(--cell-border);
+  background: transparent;
+  color: var(--cell-ink);
+  border-radius: 7px;
+  padding: 6px 10px;
+  cursor: pointer;
+  min-height: 28px;
+}
+.code-cell .code-cell-button:hover { border-color: var(--cell-muted); }
+.code-cell .code-cell-button:focus-visible { outline: 2px solid var(--focus-ring, var(--cell-run)); outline-offset: 1px; }
+.code-cell .code-cell-button.is-run { color: var(--cell-run); border-color: color-mix(in srgb, var(--cell-run) 45%, transparent); }
+.code-cell .code-cell-button.is-stop { color: var(--cell-stop); border-color: color-mix(in srgb, var(--cell-stop) 45%, transparent); }
+.code-cell .code-cell-button.is-quiet { border-color: transparent; color: var(--cell-muted); font-weight: 500; }
+
+.code-cell.code-cell .code-cell-editor .cm-editor { background: transparent; color: var(--cell-ink); font-size: 13.5px; line-height: 1.55; max-height: 70vh; }
+.code-cell.code-cell .code-cell-editor .cm-editor.cm-focused { outline: none; }
+.code-cell.code-cell .code-cell-editor .cm-scroller { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; line-height: 1.55; overflow: auto; }
+.code-cell.code-cell .code-cell-editor .cm-content { padding: 8px 0; min-height: 0; caret-color: var(--cell-ink); font: inherit; }
+.code-cell.code-cell .code-cell-editor .cm-line { padding: 0 12px 0 6px; overflow-wrap: normal; }
+.code-cell.code-cell .code-cell-editor .cm-gutters { background: transparent; border-right: 0; color: var(--cell-muted); opacity: 0.7; }
+.code-cell.code-cell .code-cell-editor .cm-lineNumbers .cm-gutterElement { padding: 0 8px 0 10px; min-width: 28px; }
+.code-cell.code-cell .code-cell-editor .cm-activeLine { background: color-mix(in srgb, var(--cell-ink) 4%, transparent); }
+.code-cell.code-cell .code-cell-editor .cm-activeLineGutter { background: transparent; color: var(--cell-ink); }
+.code-cell.code-cell:not(:focus-within) .code-cell-editor .cm-activeLine { background: transparent; }
+.code-cell.code-cell:not(:focus-within) .code-cell-editor .cm-activeLineGutter { color: inherit; }
+.code-cell.code-cell .code-cell-editor .cm-cursor { border-left-color: var(--cell-ink); }
+.code-cell.code-cell .code-cell-editor .cm-selectionBackground, .code-cell.code-cell .code-cell-editor .cm-focused .cm-selectionBackground { background: color-mix(in srgb, var(--cell-run) 28%, transparent) !important; }
+.code-cell.code-cell .code-cell-editor .cm-matchingBracket { background: color-mix(in srgb, var(--cell-run) 22%, transparent); outline: none; }
+.code-cell.code-cell .code-cell-editor .cm-placeholder { color: var(--cell-muted); }
+
+/* Syntax colours (classHighlighter's tok-* classes), one set per theme. */
+.code-cell .tok-keyword, .code-cell .tok-operatorKeyword, .code-cell .tok-modifier { color: #c678dd; }
+.code-cell .tok-string, .code-cell .tok-string2 { color: #98c379; }
+.code-cell .tok-number, .code-cell .tok-bool, .code-cell .tok-atom { color: #d19a66; }
+.code-cell .tok-comment { color: #7f8c8d; font-style: italic; }
+.code-cell .tok-typeName, .code-cell .tok-className, .code-cell .tok-namespace { color: #e5c07b; }
+.code-cell .tok-definition, .code-cell .tok-function { color: #61afef; }
+.code-cell .tok-propertyName, .code-cell .tok-attributeName { color: #e06c75; }
+.code-cell .tok-tagName { color: #e06c75; }
+.code-cell .tok-attributeValue { color: #98c379; }
+.code-cell .tok-meta { color: #56b6c2; }
+.code-cell:not(.is-dark) .tok-keyword, .code-cell:not(.is-dark) .tok-operatorKeyword, .code-cell:not(.is-dark) .tok-modifier { color: #8b2fb3; }
+.code-cell:not(.is-dark) .tok-string, .code-cell:not(.is-dark) .tok-string2, .code-cell:not(.is-dark) .tok-attributeValue { color: #2f7a1f; }
+.code-cell:not(.is-dark) .tok-number, .code-cell:not(.is-dark) .tok-bool, .code-cell:not(.is-dark) .tok-atom { color: #a35200; }
+.code-cell:not(.is-dark) .tok-comment { color: #6a737d; }
+.code-cell:not(.is-dark) .tok-typeName, .code-cell:not(.is-dark) .tok-className, .code-cell:not(.is-dark) .tok-namespace { color: #8a6100; }
+.code-cell:not(.is-dark) .tok-definition, .code-cell:not(.is-dark) .tok-function { color: #1f5fbf; }
+.code-cell:not(.is-dark) .tok-propertyName, .code-cell:not(.is-dark) .tok-attributeName, .code-cell:not(.is-dark) .tok-tagName { color: #b3261e; }
+.code-cell:not(.is-dark) .tok-meta { color: #0b7285; }
+
+.code-cell-output { border-top: 1px solid var(--cell-border); padding: 8px 12px 10px; display: flex; flex-direction: column; gap: 6px; }
+.code-cell-status, .code-cell-result, .code-cell-table-note { font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--cell-muted); }
+.code-cell.code-cell .code-cell-stream, .code-cell.code-cell .code-cell-error {
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  border-radius: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 320px;
+  overflow: auto;
+  color: var(--cell-ink);
+}
+.code-cell.code-cell .code-cell-stream.is-stderr, .code-cell.code-cell .code-cell-error { color: var(--cell-error); }
+.code-cell.code-cell .code-cell-table-scroll { overflow: auto; max-height: 320px; border: 1px solid var(--cell-border); border-radius: 6px; }
+.code-cell.code-cell .code-cell-table table { border: 0; border-collapse: collapse; width: max-content; min-width: 100%; margin: 0; font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.code-cell.code-cell .code-cell-table th, .code-cell.code-cell .code-cell-table td { padding: 4px 10px; border-bottom: 1px solid var(--cell-border); text-align: left; white-space: nowrap; }
+.code-cell.code-cell .code-cell-table th { position: sticky; top: 0; background: var(--panel-strong, var(--cell-bg)); color: var(--cell-muted); font-weight: 600; }
+.code-cell.code-cell .code-cell-table tr:last-child td { border-bottom: 0; }
+.code-cell.code-cell .code-cell-table td.is-null { color: var(--cell-muted); font-style: italic; }
+
+.code-cell-conflict { border-top: 1px solid var(--cell-border); padding: 8px 12px; font-size: 13px; color: var(--cell-error); display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+
+.code-cell-preview { border-top: 1px solid var(--cell-border); }
+.code-cell-preview-label, .code-cell-hint { font: 12px/1 system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--cell-muted); padding: 8px 12px 6px; }
+.code-cell-hint { border-top: 1px solid var(--cell-border); padding-bottom: 8px; }
+.code-cell-preview iframe { display: block; width: 100%; border: 0; background: #fff; }
+.code-cell.is-dark .code-cell-preview iframe { background: #1b1d22; }
+
+/* In a document, the cell sits where the fence was. */
+.live-document-preview .code-cell, .message-content .code-cell { max-width: 100%; }
+@media (max-width: 600px) {
+  .code-cell.code-cell .code-cell-editor .cm-lineNumbers .cm-gutterElement { padding: 0 6px 0 6px; min-width: 20px; }
+}

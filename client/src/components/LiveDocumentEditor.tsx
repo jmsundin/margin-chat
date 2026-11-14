@@ -15,6 +15,8 @@ import { getMarkdownBackspaceEdit, getMarkdownEnterEdit } from "../lib/markdownE
 import { formatDocumentDateTime } from "../lib/documentDateTime";
 import { drawingMarkdown, EMPTY_DRAWING, isDrawingMarkdown, readDrawing } from "../lib/documentDrawing";
 import { findMermaidFences, MERMAID_BLOCK_SELECTOR, replaceMermaidFence } from "../lib/mermaidDiagrams";
+import { findRunnableFences, writeFenceSource } from "../lib/codeRunner/languages";
+import { CodeCellScopeContext, type CodeCellScope } from "../lib/codeRunner/codeCellScope";
 import { freshDocumentBlockId, isDraftBlockId, reconcileDocumentBlocks, sameBlockList } from "../lib/continuousDocument";
 import { isMediaFile, parseMediaBlock } from "../lib/documentMedia";
 import { useVaultMedia } from "../lib/vaultMedia";
@@ -553,6 +555,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const needsContinuation = editable && (!lastBlock || Boolean(lastBlock.content) || readOnlyIds.has(lastBlock.id));
   const visibleBlocks = useMemo(() => needsContinuation ? [...props.blocks, draft] : props.blocks, [needsContinuation, props.blocks, draft]);
   const blockById = useMemo(() => new Map(visibleBlocks.map((block) => [block.id, block])), [visibleBlocks]);
+  /** The document's runnable code blocks in reading order: SQL cells build on the ones above, CSS styles the HTML above. */
+  const codeCells = useMemo(() => visibleBlocks.flatMap((block) => findRunnableFences(block.content).map((fence) => ({ blockId: block.id, start: fence.start, language: fence.language, source: fence.source }))), [visibleBlocks]);
+  const codeCellList = useMemo(() => codeCells.map(({ language, source }) => ({ language, source })), [codeCells]);
   const placeholderText = props.onInvokeAI ? "Write here, or press Space for AI…" : "Write here…";
 
   function emit(next: DocumentBlock[], edit?: DocumentEditOptions) {
@@ -1558,6 +1563,27 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return createPortal(renderPreview(block), element, key);
   }
 
+  /**
+   * What the code cells in a rendered block (or part of one, from `partFrom`)
+   * see: the whole document's cells, and a save that writes an edited cell back
+   * into its fence only while the fence still holds what the cell last saw.
+   */
+  function codeCellScope(id: string, partFrom: number, readOnly: boolean): CodeCellScope {
+    const offset = codeCells.findIndex((cell) => cell.blockId === id && cell.start >= partFrom);
+    return {
+      cells: codeCellList,
+      offset: offset < 0 ? codeCellList.length : offset,
+      save: readOnly ? undefined : (index, previous, next) => {
+        const current = latest.current.blocks.find((block) => block.id === id);
+        if (!current) return false;
+        const content = writeFenceSource(current.content, partFrom, index, previous, next);
+        if (content === null) return false;
+        setBlockContent(id, content);
+        return true;
+      },
+    };
+  }
+
   /** A rendered block, or a rendered part of one (a table or diagram among its paragraphs). */
   function renderPreview(block: DocumentBlock, part?: TextSpan) {
     const id = block.id;
@@ -1587,7 +1613,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       if (!window.getSelection()?.isCollapsed || (event.target instanceof Element && event.target.closest("a, button, input, summary, [data-annotation-branches]"))) return;
       editBlock(id, offset);
     }}>
-      {props.renderBlockPreview?.(part ? { ...block, content: markdown } : block) ?? <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(markdown) }} />}
+      <CodeCellScopeContext.Provider value={codeCellScope(id, offset, readOnly)}>
+        {props.renderBlockPreview?.(part ? { ...block, content: markdown } : block) ?? <div className="message-content" dangerouslySetInnerHTML={{ __html: renderObsidianMarkdownToHtml(markdown) }} />}
+      </CodeCellScopeContext.Provider>
       {diagrams.length > 0 && <div className="live-document-diagram-actions">
         {diagrams.map((_fence, index) => <button key={index} type="button" onMouseDown={(event) => event.preventDefault()} onClick={() => openDiagram(block, firstFence + index)}>
           {diagrams.length > 1 ? `Edit diagram ${index + 1}` : "Edit diagram"}

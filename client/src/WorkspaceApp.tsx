@@ -1658,6 +1658,8 @@ function WorkspaceAppContent({
       const target = event.target instanceof Element ? event.target : null;
       const host = target?.closest(".live-document-host");
       if (!host || host.closest(".margin-document-frame, .document-margin")) return;
+      // Enter inside a code cell (or any other editor shown within the document) is a new line of code, not a line of writing to ask about.
+      if (target?.closest(".live-document-widget, .code-cell")) return;
       const id = host.closest<HTMLElement>("[data-block-editor-conversation-id]")?.dataset.blockEditorConversationId;
       if (!id) return;
       // Only the line or list item where Enter was pressed, read before the key moves the caret.

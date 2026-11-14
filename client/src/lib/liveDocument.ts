@@ -1,5 +1,6 @@
 import { parser as markdownParser, GFM } from "@lezer/markdown";
 import { getRichDocumentFallbackReason } from "./richDocumentMarkdown";
+import { findRunnableFences } from "./codeRunner/languages";
 import { parseMediaBlock } from "./documentMedia";
 import { isDrawingMarkdown } from "./documentDrawing";
 import { readBlockLatex } from "./latexSyntax";
@@ -99,6 +100,8 @@ export function isTableBlock(content: string) {
 /** Why Markdown shows rendered rather than as styled text, or null. */
 function renderedReason(content: string) {
   if (isTableBlock(content)) return "Table";
+  // Runnable code (SQL, Python, JS, TS, Java, HTML, CSS) shows as a code cell with its own editor.
+  if (findRunnableFences(content).length) return "Code";
   const math = readBlockLatex(content.trim());
   const reason = math && !math.trailing.trim() ? "Math" : getRichDocumentFallbackReason(content);
   // A comment-only block would render as nothing, leaving no line to click into.
