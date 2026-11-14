@@ -8,6 +8,12 @@
  *   Back lines                         the back, up to the next blank line
  *   The {{c1::mitochondria}} makes ATP  a cloze card for each c-number
  *
+ *   Question                           a multiple-choice card: a `?` card whose front
+ *   - [ ] wrong                        ends in a task list with one ticked choice; the
+ *   - [x] right                        back (optional) explains it. See flashcardQuiz.ts.
+ *   ?
+ *   Why
+ *
  *   :::card                            a card whose sides may hold blank lines, lists,
  *   Front                              code or images, with `?` (or `??`) between them;
  *   ?                                  without one, a block holding {{c1::…}} is a cloze
@@ -19,6 +25,8 @@
  * device has the same id; editing the front makes a new id, and
  * {@link relinkFlashcards} carries the old card's history over to it.
  */
+
+import { quizParts } from "./flashcardQuiz";
 
 export type FlashcardKind = "basic" | "reverse" | "cloze";
 
@@ -149,7 +157,30 @@ function proseParagraphs(markdown: string): Paragraph[] {
     current.push(line);
   }
   flush();
-  return paragraphs;
+  return joinQuizQuestions(paragraphs);
+}
+
+const CHOICE_LINE = /^\s{0,3}[-*+]\s+\[[ xX]\]\s+\S/u;
+
+/**
+ * A quiz's question often ends up a paragraph of its own, above its choices: documents
+ * keep a list in its own block. A plain paragraph followed by choices and a `?` line
+ * is read as one quiz.
+ */
+function joinQuizQuestions(paragraphs: Paragraph[]): Paragraph[] {
+  const joined: Paragraph[] = [];
+  for (const paragraph of paragraphs) {
+    const previous = joined[joined.length - 1];
+    if (paragraph.kind === "prose" && previous?.kind === "prose" && CHOICE_LINE.test(paragraph.lines[0].text)
+      && paragraph.lines.some((line) => SEPARATOR.test(line.text))
+      && previous.lines.every((line) => !CHOICE_LINE.test(line.text) && !SEPARATOR.test(line.text) && !splitInline(line.text.replace(LIST_PREFIX, "")))
+      && !clozeNumbers(previous.lines.map((line) => line.text).join("\n")).length) {
+      joined[joined.length - 1] = { kind: "prose", lines: [...previous.lines, ...paragraph.lines] };
+      continue;
+    }
+    joined.push(paragraph);
+  }
+  return joined;
 }
 
 /**
@@ -167,7 +198,8 @@ export function parseFlashcardSources(docId: string, markdown: string): { cards:
   const ordinals: Record<FlashcardKind, number> = { basic: 0, reverse: 0, cloze: 0 };
   const seen = new Set<string>();
   const add = (ids: string[], kind: FlashcardKind, key: string, front: string, back: string, cloze?: number, source?: string) => {
-    if (!front.trim() || !back.trim()) return;
+    // A quiz may leave its back (the explanation) empty.
+    if (!front.trim() || (!back.trim() && !(kind === "basic" && quizParts(front)))) return;
     const id = cardId(docId, kind, key, cloze);
     if (seen.has(id)) return; // the same card written twice is one card
     seen.add(id);
@@ -201,12 +233,14 @@ export function parseFlashcardSources(docId: string, markdown: string): { cards:
       }
       const text = (part: SourceLine[]) => part.map((line) => line.text).join("\n").trim();
       if (separator >= 0) addPair("block", paragraph.from, paragraph.to, text(lines.slice(0, separator)), text(lines.slice(separator + 1)), lines[separator].text.trim() === "??");
+      else if (quizParts(text(lines))) addPair("block", paragraph.from, paragraph.to, text(lines), "", false);
       else if (clozeNumbers(text(lines)).length) addCloze("cloze-block", paragraph.from, paragraph.to, text(lines));
       continue;
     }
     const from = lines[0].from, to = lines[lines.length - 1].to;
     const separator = lines.findIndex((line) => SEPARATOR.test(line.text));
-    if (separator > 0 && separator < lines.length - 1) {
+    const quizFront = separator > 0 && separator === lines.length - 1 && quizParts(lines.slice(0, separator).map((line) => line.text).join("\n"));
+    if (separator > 0 && (separator < lines.length - 1 || quizFront)) {
       const front = lines.slice(0, separator).map((line) => line.text).join("\n").trim();
       const back = lines.slice(separator + 1).map((line) => line.text).join("\n").trim();
       addPair("lines", from, to, front, back, lines[separator].text.trim() === "??");

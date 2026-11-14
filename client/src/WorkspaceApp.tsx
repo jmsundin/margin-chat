@@ -136,11 +136,11 @@ import { createMapPath, pathNameFromGoal } from "./lib/mapPaths";
 import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
 import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
-import MakeCardsDialog from "./components/MakeCardsDialog";
+import MakeCardsDialog, { type MakeCardsRequest } from "./components/MakeCardsDialog";
 import ClaimsPanel, { VerdictChip } from "./components/ClaimsPanel";
 import { useRatchet } from "./lib/useRatchet";
 import { VERDICT_LABELS, type RatchetAsk } from "./lib/ratchet";
-import { buildFlashcardAIMessage, parseFlashcardReply, type FlashcardDraft } from "./lib/flashcardAI";
+import { buildFlashcardAIMessage, parseFlashcardReply, type FlashcardDraft, type FlashcardStyle } from "./lib/flashcardAI";
 import { applyFlashcardEdit, flashcardDraftFor, type FlashcardDraft as FlashcardEditDraft } from "./lib/flashcardEdit";
 import AIInstructionLine from "./components/AIInstructionLine";
 import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
@@ -1485,32 +1485,64 @@ function WorkspaceAppContent({
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
   const flashcards = useFlashcards({ userId: user.id, conversations: state.conversations, enabled: vault.ready });
   /** The open review: every card, or one document with its notes and side documents. */
-  const [flashcardReview, setFlashcardReview] = useState<{ title: string; docIds?: ReadonlySet<string> } | null>(null);
+  const [flashcardReview, setFlashcardReview] = useState<{ title: string; docIds?: ReadonlySet<string>; docId?: string } | null>(null);
   const flashcardCountByDoc = useMemo(() => {
     const counts = new Map<string, number>();
     for (const { card } of flashcards.scheduled) counts.set(card.docId, (counts.get(card.docId) ?? 0) + 1);
     return counts;
   }, [flashcards.scheduled]);
-  const [makeCardsFor, setMakeCardsFor] = useState<string | null>(null);
+  /**
+   * The open "make cards" dialog: for a document (or the passage selected in it), or with
+   * docId null, for a deck the person picks or a new document on a topic.
+   */
+  const [makeCards, setMakeCards] = useState<{
+    docId: string | null; passage?: string; afterBlockId?: string; style?: FlashcardStyle; autoStart?: boolean;
+    onAdded?: (cardIds: string[]) => void;
+  } | null>(null);
+  /** The new document a topic's cards will go in, named before the AI is asked so the cards' ids match it. */
+  const newDeckRef = useRef<{ id: string; noteId: string; title: string; createdAt: string } | null>(null);
+  const flashcardDecks = useMemo(() => [...flashcardCountByDoc.keys()]
+    .map((id) => state.conversations[id])
+    .filter((conversation): conversation is Conversation => Boolean(conversation && !conversation.vaultFile && !isHiddenFromAI(conversation)))
+    .map((conversation) => ({ id: conversation.id, title: conversation.title }))
+    .sort((a, b) => a.title.localeCompare(b.title)), [flashcardCountByDoc, state.conversations]);
 
-  /** The AI suggests cards from a document; they come back for the person to choose from. */
-  async function handleSuggestFlashcards(conversationId: string, focus: string, signal: AbortSignal): Promise<FlashcardDraft[]> {
-    const conversation = currentStateRef.current.conversations[conversationId];
-    if (!conversation) throw new Error("This document is no longer open.");
-    if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
-    const existing = [...flashcards.snapshot.cards.values()].filter((card) => card.docId === conversationId && !card.removed);
-    const prompt: Message = { id: createId("message"), role: "user", content: focus.trim() ? `Make flashcards about: ${focus.trim()}` : "Make flashcards from this document", createdAt: new Date().toISOString() };
+  /** The AI suggests cards or quiz questions; they come back for the person to choose from. */
+  async function handleSuggestFlashcards(target: NonNullable<typeof makeCards>, request: MakeCardsRequest, signal: AbortSignal): Promise<FlashcardDraft[]> {
+    const docId = target.docId ?? request.deckId;
+    let conversations = currentStateRef.current.conversations;
+    let conversation: Conversation | undefined;
+    if (docId) {
+      conversation = conversations[docId];
+      if (!conversation) throw new Error("This document is no longer open.");
+      if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
+    } else {
+      // A new topic: the document is made when the person adds the cards; until then the AI sees it as it will be.
+      const title = request.focus.trim().slice(0, 100);
+      if (!title) throw new Error("Say what the new questions are about.");
+      const deck = { id: createId("note-conversation"), noteId: createId("note"), title, createdAt: new Date().toISOString() };
+      const preview = createMapNote(currentStateRef.current, { ...deck, content: "" });
+      conversation = preview.conversations[deck.id];
+      if (!conversation) throw new Error("A new document couldn't be made just now.");
+      conversations = preview.conversations;
+      newDeckRef.current = deck;
+    }
+    const existing = [...flashcards.snapshot.cards.values()].filter((card) => card.docId === conversation.id && !card.removed);
+    const what = request.style === "quiz" ? "quiz questions" : "flashcards";
+    const prompt: Message = { id: createId("message"), role: "user", createdAt: new Date().toISOString(),
+      content: !docId ? `Make ${what} about ${conversation.title}` : request.focus.trim() ? `Make ${what} about: ${request.focus.trim()}` : target.passage ? `Make ${what} from the selected passage` : `Make ${what} from this document` };
     const message = buildFlashcardAIMessage(conversation, prompt, {
-      focus, existingFronts: existing.map((card) => card.front), instruction: documentAIInstruction(currentStateRef.current.conversations, conversation),
+      focus: docId ? request.focus : "", style: request.style, passage: target.passage, topic: !docId,
+      existingFronts: existing.map((card) => card.front), instruction: docId ? documentAIInstruction(conversations, conversation) : null,
     });
     try {
       const { reply } = await requestChatReply({
-        ...prepareAIContext(currentStateRef.current.conversations, conversation, [message]),
+        ...prepareAIContext(conversations, conversation, [message]),
         ai: withJevConsent(conversation.ai, jevEnabled), expectedUserId: user.id,
-        conversation: await conversationRequestPayload(currentStateRef.current.conversations, conversation), messages: [message],
+        conversation: await conversationRequestPayload(conversations, conversation), messages: [message],
         modelId: conversation.modelId, serviceId: conversation.serviceId, signal,
       });
-      return parseFlashcardReply(reply, conversationId, new Set(existing.map((card) => card.id)));
+      return parseFlashcardReply(reply, conversation.id, new Set(existing.map((card) => card.id)));
     } catch (error) {
       if (isApiErrorStatus(error, 401)) onAuthExpired();
       else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
@@ -1520,19 +1552,47 @@ function WorkspaceAppContent({
     }
   }
 
-  /** Chosen cards go to the end of the document as AI-written lines the person can edit. */
-  function handleAddFlashcards(conversationId: string, drafts: FlashcardDraft[]) {
+  /**
+   * Chosen cards go into the document as AI-written blocks the person can edit: after the
+   * selected passage, at the end, or as a new document on the topic.
+   */
+  function handleAddFlashcards(target: NonNullable<typeof makeCards>, drafts: FlashcardDraft[], request: MakeCardsRequest) {
     if (!drafts.length) return;
     const now = new Date().toISOString();
+    const docId = target.docId ?? request.deckId;
+    const deck = docId ? null : newDeckRef.current;
+    if (!docId && !deck) return;
+    const blockBase = createId("block");
     setState((current) => {
-      const conversation = current.conversations[conversationId];
+      const base = deck ? createMapNote(current, { ...deck, content: "" }) : current;
+      const conversation = base.conversations[docId ?? deck!.id];
       if (!conversation) return current;
-      const blockBase = createId("block");
-      const next = drafts.reduce((document, draft, index) => insertDocumentBlock(document, {
-        id: `${blockBase}:${index}`, kind: "markdown", content: draft.markdown, createdAt: now, updatedAt: now, authorship: "ai",
-      }, undefined, now), conversation);
-      return { ...current, conversations: { ...current.conversations, [conversationId]: next } };
+      let afterId = deck ? undefined : target.afterBlockId;
+      const next = drafts.reduce((document, draft, index) => {
+        const id = `${blockBase}:${index}`;
+        const after = afterId ? getEditableDocument(document).blocks.find((block) => block.id === afterId) : undefined;
+        const inserted = insertDocumentBlock(document, { id, kind: "markdown", content: draft.markdown, createdAt: now, updatedAt: now, authorship: "ai" },
+          after ? { blockId: after.id, offset: after.content.length } : undefined, now);
+        if (after) afterId = id;
+        return inserted;
+      }, conversation);
+      return { ...base, conversations: { ...base.conversations, [conversation.id]: next } };
     });
+    if (deck) newDeckRef.current = null;
+    target.onAdded?.(drafts.flatMap((draft) => draft.cards.map((card) => card.id)));
+  }
+
+  /** Cards can be written into Markdown documents the AI may read (not PDFs or images). */
+  const canMakeCards = (conversation: Conversation) => !conversation.vaultFile && !isHiddenFromAI(conversation);
+
+  /** Flashcards or quiz questions about the selected passage, from the selection menu. */
+  function handleMakeCardsFromSelection(style: FlashcardStyle) {
+    const draft = selectionDraft ? joinSelectedLines(selectionDraft) : null;
+    if (!draft) return;
+    const conversation = state.conversations[draft.conversationId];
+    if (!conversation || !canMakeCards(conversation)) return;
+    setMakeCards({ docId: draft.conversationId, passage: draft.quote, afterBlockId: draft.sourceBlockId ?? undefined, style, autoStart: true });
+    closeSelectionDraft();
   }
 
   /**
@@ -6057,10 +6117,10 @@ function WorkspaceAppContent({
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap} onToggleBoard={handleToggleBoard}
         flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
-        onMakeFlashcards={!conversation.vaultFile && !isHiddenFromAI(conversation) ? (id) => setMakeCardsFor(id) : undefined}
+        onMakeFlashcards={!conversation.vaultFile && !isHiddenFromAI(conversation) ? (id) => setMakeCards({ docId: id }) : undefined}
         onCheckClaims={(conversation.document || conversation.kind === "note") && !conversation.vaultFile && !isHiddenFromAI(conversation)
           ? (id) => { ratchet.load(id); setClaimsView({ id, focus: null }); } : undefined}
-        onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id) })}
+        onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id), docId: id })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
         onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} fileManager={fileManagerName()}
@@ -6977,6 +7037,7 @@ function WorkspaceAppContent({
               onAsk={() => openMobileSelectionPrompt()}
               onQuestion={selectionDraft.sourceBlockId && !selectionIsDiagram ? handleQuestionSelection : undefined}
               onVisualize={selectionDraft.sourceBlockId && !selectionIsDiagram ? handleVisualizeSelection : undefined}
+              onQuiz={selectionConversation && canMakeCards(selectionConversation) && !selectionIsDiagram ? () => handleMakeCardsFromSelection("quiz") : undefined}
               onSideDocument={() => handleCreateSelectionSideDocument()}
               onMarginNote={() => handleCreateSelectionNote()}
               onLink={() => { setSelectionLinkError(null); setSelectionIntent("link"); setSelectionActionsExpanded(true); }}
@@ -7054,7 +7115,9 @@ function WorkspaceAppContent({
                 aiActions={selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "question" as const, label: "Question", ariaLabel: "Question this: the AI asks you one question about the passage, in the margin",
                   hint: "The AI asks you one question about this passage, in the margin", disabled: selectionPending, onSelect: handleQuestionSelection },
                   { icon: "visualize" as const, label: "Visualize", ariaLabel: "Visualize: the AI draws this passage as a diagram you step through",
-                  hint: "A diagram of this passage, in stages, under its paragraph", disabled: selectionPending, onSelect: handleVisualizeSelection }] : []}
+                  hint: "A diagram of this passage, in stages, under its paragraph", disabled: selectionPending, onSelect: handleVisualizeSelection },
+                  ...(selectionConversation && canMakeCards(selectionConversation) ? [{ icon: "cards" as const, label: "Quiz", ariaLabel: "Quiz: the AI writes quiz questions about this passage for you to pick from",
+                  hint: "Multiple-choice questions about this passage, for you to pick from", disabled: selectionPending, onSelect: () => handleMakeCardsFromSelection("quiz") }] : [])] : []}
                 ask={{ icon: "ai", label: "Ask AI", ariaLabel: selectionIsDiagram ? "Ask AI to change this diagram" : "Ask AI about this passage", pressed: selectionIntent === "branch",
                   onSelect: () => setSelectionIntent((intent) => intent === "branch" ? "actions" : "branch") }}
               /></>}
@@ -7092,6 +7155,10 @@ function WorkspaceAppContent({
                   </> : <>
                     <button type="button" disabled={selectionPending} onClick={handleExplainSelection}>Explain</button>
                     <button type="button" disabled={selectionPending} onClick={() => handleCreateBranch(REWRITE_SELECTION_PROMPT)}>Rewrite</button>
+                    {selectionConversation && canMakeCards(selectionConversation) ? <>
+                      <button type="button" disabled={selectionPending} onClick={() => handleMakeCardsFromSelection("cards")}>Flashcards</button>
+                      <button type="button" disabled={selectionPending} onClick={() => handleMakeCardsFromSelection("quiz")}>Quiz questions</button>
+                    </> : null}
                   </>}
                 </div>
                 {selectionDraft.sourceBlockId ? <div className="document-ai-options">
@@ -7299,14 +7366,23 @@ function WorkspaceAppContent({
         handleNavigateDocumentConnector({ conversationId: claim.documentId, blockId: anchor?.state === "ok" ? anchor.blockId : claim.anchor.blockId });
       }}
       onClose={() => setClaimsView(null)}/> : null}
-    {makeCardsFor && state.conversations[makeCardsFor] ? <MakeCardsDialog title={state.conversations[makeCardsFor].title}
-      onGenerate={(focus, signal) => handleSuggestFlashcards(makeCardsFor, focus, signal)}
-      onAdd={(drafts) => handleAddFlashcards(makeCardsFor, drafts)}
-      onClose={() => setMakeCardsFor(null)}/> : null}
+    {makeCards && (!makeCards.docId || state.conversations[makeCards.docId]) ? <MakeCardsDialog
+      title={makeCards.docId ? state.conversations[makeCards.docId].title : undefined}
+      decks={makeCards.docId ? undefined : flashcardDecks}
+      passage={makeCards.passage} initialStyle={makeCards.style} autoStart={makeCards.autoStart}
+      onGenerate={(request, signal) => handleSuggestFlashcards(makeCards, request, signal)}
+      onAdd={(drafts, request) => handleAddFlashcards(makeCards, drafts, request)}
+      onClose={() => { setMakeCards(null); newDeckRef.current = null; }}/> : null}
     {flashcardReview ? <FlashcardReview flashcards={flashcards} title={flashcardReview.title} docIds={flashcardReview.docIds}
       onClose={() => setFlashcardReview(null)}
       onImportAnki={handleImportAnki}
       cardEditing={flashcardEditing}
+      onMakeMore={(() => {
+        // One document's review adds to that document; all cards lets the person pick a deck or a new topic.
+        const doc = flashcardReview.docId ? state.conversations[flashcardReview.docId] : undefined;
+        if (flashcardReview.docId && (!doc || doc.vaultFile || isHiddenFromAI(doc))) return undefined;
+        return (onAdded: (cardIds: string[]) => void) => setMakeCards({ docId: flashcardReview.docId ?? null, onAdded });
+      })()}
       onExportAnki={() => handleExportAnki(flashcardReview.docIds, flashcardReview.docIds ? flashcardReview.title : "Margin Chat cards")}
       onOpenDocument={(docId) => {
         if (!currentStateRef.current.conversations[docId]) return;

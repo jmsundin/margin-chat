@@ -1,3 +1,4 @@
+import { quizAsSides } from "./flashcardQuiz";
 import { unzipSync, zipSync } from "fflate";
 import { decompress as zstdDecompress } from "fzstd";
 import type { Database, SqlJsStatic } from "sql.js";
@@ -375,7 +376,9 @@ export async function buildAnkiPackage(cards: ReadonlyArray<ExportCard>, media: 
     }
     for (const entry of cards) {
       if (entry.card.kind !== "basic" || pairedBasics.has(entry.card.id)) continue;
-      pending.set(`basic\u0000${entry.card.id}`, { key: entry.card.id, mid: basicId, fields: [toHtml(entry.card.front), toHtml(entry.card.back)], did: deckFor(entry.card.docTitle), cards: [{ ord: 0, entry }] });
+      // Anki has no multiple choice: a quiz goes as its question with lettered choices, and the right one on the back.
+      const sides = quizAsSides(entry.card.front, entry.card.back) ?? entry.card;
+      pending.set(`basic\u0000${entry.card.id}`, { key: entry.card.id, mid: basicId, fields: [toHtml(sides.front), toHtml(sides.back)], did: deckFor(entry.card.docTitle), cards: [{ ord: 0, entry }] });
     }
 
     const insertNote = db.prepare("insert into notes values (?, ?, ?, ?, -1, '', ?, ?, ?, 0, '')");

@@ -1,4 +1,4 @@
-.make-cards-backdrop { align-items: flex-start; background: rgba(0, 0, 0, .35); display: flex; inset: 0; justify-content: center; padding: 8vh 16px 16px; position: fixed; z-index: 85; }
+.make-cards-backdrop { align-items: flex-start; background: rgba(0, 0, 0, .35); display: flex; inset: 0; justify-content: center; padding: 8vh 16px 16px; position: fixed; z-index: 95; }
 .make-cards {
   background: var(--panel-strong, var(--bg)); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow);
   color: var(--ink); display: flex; flex-direction: column; gap: 12px; max-height: 84vh; max-width: 640px; padding: 16px 18px; width: 100%;
@@ -33,3 +33,21 @@
 .make-cards-foot { align-items: center; display: flex; gap: 8px; justify-content: space-between; }
 .make-cards-foot > button:first-child { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: .8rem; }
 @media (max-width: 640px) { .make-cards-backdrop { padding-top: 16px; } .make-cards-ask { flex-direction: column; } }
+.make-cards-passage {
+  border-left: 3px solid var(--line-strong); color: var(--muted); font-family: var(--paper-serif, Georgia, serif); font-size: .88rem;
+  line-height: 1.45; margin: 0; max-height: 7.5em; overflow: hidden; padding: 2px 0 2px 12px;
+}
+.make-cards-options { align-items: center; display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.make-cards-style { background: var(--button-surface); border-radius: 9px; display: inline-flex; gap: 2px; padding: 2px; }
+.make-cards-style button { background: transparent; border: 0; border-radius: 7px; color: var(--muted); cursor: pointer; font-size: .8rem; padding: 5px 12px; }
+.make-cards-style button[aria-checked="true"] { background: var(--panel-strong, var(--bg)); box-shadow: 0 0 0 1px var(--line-strong); color: var(--ink); }
+.make-cards-deck { align-items: center; color: var(--muted); display: inline-flex; font-size: .8rem; gap: 6px; min-width: 0; }
+.make-cards-deck select {
+  background: var(--button-surface); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink);
+  font: inherit; font-size: .84rem; max-width: 260px; padding: 5px 8px;
+}
+.make-cards-card .flashcard-quiz-preview { display: flex; flex-direction: column; gap: 6px; }
+.make-cards-card .flashcard-quiz-preview ol { display: flex; flex-direction: column; font-family: var(--paper-sans, system-ui, sans-serif); font-size: .84rem; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.make-cards-card .flashcard-quiz-preview li { border: 0; opacity: 1; }
+.make-cards-card .flashcard-quiz-preview li.is-answer { color: var(--sage); font-weight: 600; }
+.make-cards-card .flashcard-quiz-preview b { color: var(--muted); display: inline-block; font-weight: 600; width: 1.4em; }

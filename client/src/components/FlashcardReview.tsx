@@ -6,6 +6,7 @@ import { useVaultMedia } from "../lib/vaultMedia";
 import { newStudiedToday, type FlashcardsController, type ScheduledCard } from "../lib/useFlashcards";
 import { answerInSession, refreshSession, removeFromSession, renameInSession, startSession, type StudySession } from "../lib/flashcardSession";
 import type { FlashcardDraft } from "../lib/flashcardEdit";
+import { choiceLetter, quizParts, type QuizCard } from "../lib/flashcardQuiz";
 import FlashcardBrowser from "./FlashcardBrowser";
 import FlashcardEditor from "./FlashcardEditor";
 import "./FlashcardReview.css";
@@ -55,6 +56,55 @@ export function FlashcardFace({ markdown }: { markdown: string }) {
   );
 }
 
+/** A quiz's question and its choices with the right one marked, for lists of cards. */
+export function QuizPreview({ quiz }: { quiz: QuizCard }) {
+  return (
+    <span className="flashcard-quiz-preview">
+      <FlashcardFace markdown={quiz.question}/>
+      <ol>
+        {quiz.choices.map((choice, index) => (
+          <li key={index} className={index === quiz.answer ? "is-answer" : undefined}>
+            <b>{choiceLetter(index)}</b>{choice}{index === quiz.answer ? <span className="flashcard-sr"> (answer)</span> : null}
+          </li>
+        ))}
+      </ol>
+    </span>
+  );
+}
+
+/** A quiz's choices: pick one, then see which was right. */
+function QuizChoices({ quiz, picked, onPick }: { quiz: QuizCard; picked: number | null; onPick: (index: number) => void }) {
+  const answered = picked !== null;
+  return (
+    <div className="flashcard-choices" role="group" aria-label="Choices">
+      {quiz.choices.map((choice, index) => {
+        const state = !answered ? "" : index === quiz.answer ? " is-right" : index === picked ? " is-wrong" : " is-other";
+        return (
+          <button key={index} type="button" className={`flashcard-choice${state}`} disabled={answered} aria-pressed={picked === index}
+            onClick={() => onPick(index)}>
+            <span className="flashcard-choice-key" aria-hidden="true">{choiceLetter(index)}</span>
+            <FlashcardFace markdown={choice}/>
+            {answered && index === quiz.answer ? <span className="flashcard-choice-mark">Right answer</span>
+              : answered && index === picked ? <span className="flashcard-choice-mark">Your answer</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** How this sitting went: answers, how many were right, the longest run, and the cards missed. */
+interface SessionScore { answered: number; right: number; streak: number; best: number; missed: string[] }
+const EMPTY_SCORE: SessionScore = { answered: 0, right: 0, streak: 0, best: 0, missed: [] };
+
+function scoreAnswer(score: SessionScore, cardId: string, right: boolean): SessionScore {
+  const streak = right ? score.streak + 1 : 0;
+  return {
+    answered: score.answered + 1, right: score.right + (right ? 1 : 0), streak, best: Math.max(score.best, streak),
+    missed: right ? score.missed : [...score.missed.filter((id) => id !== cardId), cardId],
+  };
+}
+
 interface Props {
   flashcards: FlashcardsController;
   /** Study only these documents' cards; all cards when absent. */
@@ -71,6 +121,8 @@ interface Props {
     read: (cardId: string) => FlashcardDraft | null;
     save: (cardId: string, draft: FlashcardDraft) => { error: string } | { renamed: ReadonlyMap<string, string> };
   };
+  /** Ask the AI for more cards or questions; `onAdded` gets the ids of the cards the person kept. */
+  onMakeMore?: (onAdded: (cardIds: string[]) => void) => void;
 }
 
 function syntaxHelp() {
@@ -83,13 +135,14 @@ function syntaxHelp() {
         <dt><code>Front</code><br/><code>?</code><br/><code>Back</code></dt><dd>a longer card; the back runs to the next blank line (<code>??</code> for both ways)</dd>
         <dt><code>:::card</code><br/><code>Front</code><br/><code>?</code><br/><code>Back</code><br/><code>:::</code></dt><dd>a card with paragraphs, code or images; Edit on any card writes this for you</dd>
         <dt><code>{"The {{c1::heart}} pumps blood"}</code></dt><dd>fill in the blank</dd>
+        <dt><code>Question</code><br/><code>- [ ] Wrong</code><br/><code>- [x] Right</code><br/><code>?</code><br/><code>Why</code></dt><dd>multiple choice; the ticked choice is right and the lines after <code>?</code> explain it</dd>
         <dt><code>![[diagram.png]]</code></dt><dd>an image on either side</dd>
       </dl>
     </div>
   );
 }
 
-export default function FlashcardReview({ flashcards, docIds, title, onClose, onOpenDocument, onImportAnki, onExportAnki, cardEditing }: Props) {
+export default function FlashcardReview({ flashcards, docIds, title, onClose, onOpenDocument, onImportAnki, onExportAnki, cardEditing, onMakeMore }: Props) {
   const [transfer, setTransfer] = useState<{ busy: boolean; message: string; error?: boolean } | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const runTransfer = useCallback(async (work: (progress: (message: string) => void) => Promise<string>) => {
@@ -110,6 +163,12 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
   const [view, setView] = useState<"study" | "browse">("study");
   const [lastAnswer, setLastAnswer] = useState<{ reviewId: string; cardId: string; session: StudySession } | null>(null);
   const [doneCount, setDoneCount] = useState(0);
+  const [score, setScore] = useState<SessionScore>(EMPTY_SCORE);
+  const [lastScore, setLastScore] = useState<SessionScore | null>(null);
+  /** The choice picked on a quiz card, -1 for "I don't know". */
+  const [picked, setPicked] = useState<number | null>(null);
+  /** Cards just made by the AI, studied as soon as they are read from their document. */
+  const [madeIds, setMadeIds] = useState<string[] | null>(null);
   const shownAt = useRef(Date.now());
   const grading = useRef(false);
   const dialog = useRef<HTMLDivElement>(null);
@@ -147,10 +206,18 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
     if (next !== session) setSession(next);
   }, [has, session, tick]);
   const current: ScheduledCard | null = session?.current ? byId.get(session.current) ?? null : null;
+  const quiz = useMemo(() => (current && current.card.kind === "basic" ? quizParts(current.card.front) : null), [current]);
+
+  useEffect(() => {
+    if (!madeIds?.length || !madeIds.every((id) => byId.has(id))) return;
+    setSession(startSession(madeIds, Date.now(), has));
+    setMadeIds(null);
+    setView("study");
+  }, [byId, has, madeIds]);
 
   useEffect(() => {
     if (keepRevealed.current && keepRevealed.current === current?.card.id) { keepRevealed.current = null; return; }
-    shownAt.current = Date.now(); setRevealed(false); setEditMissing(false);
+    shownAt.current = Date.now(); setRevealed(false); setEditMissing(false); setPicked(null);
   }, [current?.card.id, session?.turn]);
 
   const startEditing = useCallback((cardId: string) => {
@@ -186,14 +253,24 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
     setSession(answerInSession(session, current.card.id, due, Date.now(), has));
     setLastAnswer({ reviewId: review.id, cardId: current.card.id, session: before });
     setDoneCount((count) => count + 1);
-  }, [answer, current, has, preview, revealed, session]);
+    setLastScore(score);
+    setScore((value) => scoreAnswer(value, current.card.id, rating >= 2));
+  }, [answer, current, has, preview, revealed, score, session]);
+
+  const pick = useCallback((index: number) => {
+    if (!quiz || revealed) return;
+    setPicked(index);
+    setRevealed(true);
+  }, [quiz, revealed]);
+  const quizRight = quiz !== null && picked === quiz.answer;
 
   const takeBack = useCallback(() => {
     if (!lastAnswer || !undo(lastAnswer.reviewId)) return;
     setSession(lastAnswer.session);
     setLastAnswer(null);
     setDoneCount((count) => Math.max(0, count - 1));
-  }, [lastAnswer, undo]);
+    if (lastScore) { setScore(lastScore); setLastScore(null); }
+  }, [lastAnswer, lastScore, undo]);
 
   const skipSuspend = useCallback(() => {
     if (!current || !session) return;
@@ -213,6 +290,14 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
       }
       if (event.metaKey || event.ctrlKey || view !== "study") return;
       if ((event.key === "e" || event.key === "E") && current && cardEditing) { event.preventDefault(); startEditing(current.card.id); return; }
+      if (quiz) {
+        // A quiz is answered by its choices (1-4 or A-D), then Enter or Space goes on.
+        if (!revealed) {
+          const index = /^[1-8]$/u.test(event.key) ? Number(event.key) - 1 : "abcdefgh".indexOf(event.key.toLowerCase());
+          if (event.key.length === 1 && index >= 0 && index < quiz.choices.length) { event.preventDefault(); pick(index); }
+        } else if (event.key === " " || event.key === "Enter") { event.preventDefault(); void grade(quizRight ? 3 : 1); }
+        return;
+      }
       if (!revealed && (event.key === " " || event.key === "Enter")) { event.preventDefault(); setRevealed(true); return; }
       if (revealed) {
         const choice = FLASHCARD_RATINGS.find((item) => item.key === event.key);
@@ -222,7 +307,7 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cardEditing, current, editing, grade, lastAnswer, onClose, revealed, startEditing, takeBack, view]);
+  }, [cardEditing, current, editing, grade, lastAnswer, onClose, pick, quiz, quizRight, revealed, startEditing, takeBack, view]);
 
   const remaining = session ? new Set([...session.order.filter((id) => byId.has(id)), ...session.later.map((entry) => entry.id)]).size : 0;
   const nextDue = useMemo(() => {
@@ -230,6 +315,10 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
     return future.length ? Math.min(...future) : null;
   }, [pool]);
   const waiting = !current && session?.later.length ? Math.min(...session.later.map((entry) => entry.due)) : null;
+  const progress = doneCount + remaining ? doneCount / (doneCount + remaining) : 0;
+  const makeMore = onMakeMore ? () => onMakeMore((ids) => { if (ids.length) setMadeIds(ids); }) : undefined;
+  const missedCards = score.missed.flatMap((id) => { const entry = byId.get(id); return entry ? [entry] : []; });
+  const kindLabel = !current ? null : quiz ? "Quiz" : current.card.kind === "cloze" ? "Fill in the blank" : current.card.kind === "reverse" ? "Reversed" : null;
 
   return (
     <div className="flashcard-review" role="dialog" aria-modal="true" aria-label={`Review: ${title}`} tabIndex={-1} ref={dialog}>
@@ -242,7 +331,14 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
           <button type="button" role="tab" aria-selected={view === "study"} aria-pressed={view === "study"} onClick={() => setView("study")}>Study</button>
           <button type="button" role="tab" aria-selected={view === "browse"} aria-pressed={view === "browse"} onClick={() => setView("browse")}>Browse</button>
         </div> : null}
-        {view === "study" && session && (current || remaining) ? <span className="flashcard-review-count" aria-live="polite">{doneCount} done · {remaining} left</span> : null}
+        {view === "study" && session && (current || remaining) ? <span className="flashcard-review-count" aria-live="polite">
+          {doneCount} done · {remaining} left
+          {score.answered ? <span className="flashcard-score" title="Answered right this sitting">{score.right}/{score.answered} right</span> : null}
+          {score.streak >= 2 ? <span className="flashcard-streak" title="Right answers in a row">{score.streak} in a row</span> : null}
+        </span> : null}
+        {makeMore ? <button type="button" className="flashcard-make-more" onClick={makeMore} title="Ask AI for more flashcards or quiz questions">
+          <span aria-hidden="true">✦</span> More questions
+        </button> : null}
         {onImportAnki || onExportAnki ? <div className="flashcard-transfer">
           {onImportAnki ? <>
             <input ref={fileInput} type="file" accept=".apkg,.colpkg" hidden onChange={(event) => {
@@ -258,6 +354,8 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
         <button type="button" className="flashcard-review-close" onClick={onClose} aria-label="Close review" title="Close (Esc)">×</button>
       </header>
 
+      {view === "study" && session && (current || doneCount) ? <div className="flashcard-progress" role="progressbar" aria-label="Progress"
+        aria-valuemin={0} aria-valuemax={doneCount + remaining} aria-valuenow={doneCount}><i style={{ width: `${Math.round(progress * 1000) / 10}%` }}/></div> : null}
       {transfer ? <p className={`flashcard-transfer-status${transfer.error ? " is-error" : ""}`} role="status">
         {transfer.message}
         {!transfer.busy ? <button type="button" onClick={() => setTransfer(null)} aria-label="Dismiss">×</button> : null}
@@ -271,28 +369,62 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
           : editing ? null
           : !loaded || !session ? <p className="flashcard-review-note">Loading cards…</p>
           : current ? (
-            <article className={`flashcard-card${revealed ? " is-revealed" : ""}`} aria-live="polite">
-              <FlashcardFace markdown={current.card.front}/>
-              {revealed ? <>
-                <hr className="flashcard-divider"/>
-                <FlashcardFace markdown={current.card.back}/>
-              </> : null}
+            <article className={`flashcard-card${revealed ? " is-revealed" : ""}${quiz ? " is-quiz" : ""}`} aria-live="polite">
+              <header className="flashcard-card-chips">
+                <button type="button" className="flashcard-chip is-deck" onClick={() => onOpenDocument(current.card.docId)} title="Open the document this card is written in">{current.card.docTitle || "Untitled"}</button>
+                {kindLabel ? <span className="flashcard-chip">{kindLabel}</span> : null}
+                {current.schedule.state === "new" ? <span className="flashcard-chip is-new">New</span> : null}
+              </header>
+              {quiz ? <>
+                <FlashcardFace markdown={quiz.question}/>
+                <QuizChoices quiz={quiz} picked={picked} onPick={pick}/>
+                {revealed ? <section className={`flashcard-feedback ${quizRight ? "is-right" : "is-wrong"}`} role="status">
+                  <h3>{quizRight ? "Correct" : picked === -1 ? `The answer is ${choiceLetter(quiz.answer)}` : `Not quite: the answer is ${choiceLetter(quiz.answer)}`}</h3>
+                  {current.card.back.trim() ? <div className="flashcard-explanation"><FlashcardFace markdown={current.card.back}/></div> : null}
+                </section> : null}
+              </> : <>
+                <FlashcardFace markdown={current.card.front}/>
+                {revealed ? <>
+                  <hr className="flashcard-divider"/>
+                  <FlashcardFace markdown={current.card.back}/>
+                </> : null}
+              </>}
               <footer className="flashcard-card-source">
-                <button type="button" onClick={() => onOpenDocument(current.card.docId)} title="Open the document this card is written in">{current.card.docTitle || "Untitled"}</button>
-                {current.schedule.state === "new" ? <span className="flashcard-badge">New</span> : null}
                 {cardEditing ? <button type="button" className="flashcard-edit-button" onClick={() => startEditing(current.card.id)} title="Edit this card (E)">Edit</button> : null}
               </footer>
             </article>
           ) : (
             <div className="flashcard-done">
               {pool.length ? <>
+                {score.answered ? <div className={`flashcard-verdict${score.right / score.answered >= 0.8 ? " is-strong" : ""}`}>
+                  <strong className="flashcard-verdict-big">{Math.round((score.right / score.answered) * 100)}%</strong>
+                  <div>
+                    <p>{score.right} of {score.answered} right</p>
+                    {score.best >= 2 ? <p>Best run: {score.best} in a row</p> : null}
+                  </div>
+                </div> : null}
                 <h2>{doneCount ? "That's everything for now." : "Nothing due right now."}</h2>
                 {waiting ? <p>{remaining} card{remaining === 1 ? "" : "s"} you're learning come back in {formatInterval(waiting - Date.now())}.</p>
                   : nextDue ? <p>Next card is due in {formatInterval(nextDue - Date.now())}.</p> : null}
+                {missedCards.length ? <div className="flashcard-missed">
+                  <h3>To go over</h3>
+                  <ul>
+                    {missedCards.slice(0, 8).map((entry) => {
+                      const missedQuiz = entry.card.kind === "basic" ? quizParts(entry.card.front) : null;
+                      return <li key={entry.card.id}><FlashcardFace markdown={missedQuiz ? missedQuiz.question : entry.card.front}/></li>;
+                    })}
+                  </ul>
+                  <button type="button" className="flashcard-primary" onClick={() => {
+                    setSession(startSession(missedCards.map((entry) => entry.card.id), Date.now(), has));
+                    setScore(EMPTY_SCORE); setLastScore(null);
+                  }}>Go over {missedCards.length === 1 ? "it" : `these ${missedCards.length}`} again</button>
+                </div> : null}
                 <button type="button" className="flashcard-secondary" onClick={() => setView("browse")}>See all cards</button>
+                {makeMore ? <button type="button" className="flashcard-secondary" onClick={makeMore}>Make more questions</button> : null}
                 {waiting ? <button type="button" className="flashcard-primary" onClick={() => setSession(startSession([...session.later].sort((a, b) => a.due - b.due).map((entry) => entry.id), Date.now(), has))}>Study them now</button> : null}
               </> : <>
                 <h2>No cards yet</h2>
+                {makeMore ? <button type="button" className="flashcard-primary flashcard-first-make" onClick={makeMore}><span aria-hidden="true">✦</span> Make cards or quiz questions with AI</button> : null}
                 {syntaxHelp()}
                 {onImportAnki ? <p className="flashcard-import-hint">Have Anki decks? <button type="button" onClick={chooseAnkiFile} disabled={transfer?.busy}>Import an .apkg file</button> with its review history.</p> : null}
               </>}
@@ -303,7 +435,13 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
       {editMissing ? <p className="flashcard-review-warning" role="alert">This card can't be edited here: its document isn't open on this device. Open the document to change it.</p> : null}
       {current && view === "study" && !editing ? (
         <div className="flashcard-review-actions">
-          {!revealed ? (
+          {quiz ? (
+            revealed ? <div className="flashcard-quiz-next">
+              <button type="button" className="flashcard-primary flashcard-show" onClick={() => void grade(quizRight ? 3 : 1)} autoFocus>
+                Next <kbd>Enter</kbd>
+              </button>
+            </div> : <p className="flashcard-quiz-hint">Pick an answer <kbd>1</kbd>–<kbd>{quiz.choices.length}</kbd></p>
+          ) : !revealed ? (
             <button type="button" className="flashcard-primary flashcard-show" onClick={() => setRevealed(true)} autoFocus>
               Show answer <kbd>Space</kbd>
             </button>
@@ -320,6 +458,8 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
           )}
           <div className="flashcard-minor">
             <button type="button" onClick={takeBack} disabled={!lastAnswer} title="Take back your last answer (Z)">Undo</button>
+            {quiz && !revealed ? <button type="button" onClick={() => pick(-1)}>I don't know</button> : null}
+            {quiz && revealed && quizRight ? <button type="button" onClick={() => void grade(2)} title="Count it as hard, so it comes back sooner">I guessed</button> : null}
             <button type="button" onClick={skipSuspend} title="Stop showing this card until you turn it back on">Suspend card</button>
           </div>
         </div>
