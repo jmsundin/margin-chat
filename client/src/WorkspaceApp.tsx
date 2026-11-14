@@ -1437,8 +1437,8 @@ function WorkspaceAppContent({
   const startTourFromRequest = useEffectEvent(startTour);
   useEffect(() => { if (tourRequest) startTourFromRequest(); }, [tourRequest]);
   useEffect(() => { if (isGraphView && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [isGraphView, onboarding.mapSeen]);
-  const starterTasksDone = useMemo(() => completedStarterTasks(state, { map: onboarding.mapSeen }),
-    [state.conversations, state.sessions, onboarding.mapSeen]);
+  const starterTasksDone = useMemo(() => completedStarterTasks(state, { map: onboarding.mapSeen, beside: notesBeside.length > 0 }),
+    [state.conversations, state.sessions, onboarding.mapSeen, notesBeside.length]);
   const tourSteps = isMobileViewport ? PHONE_TOUR : DESKTOP_TOUR;
   const starterTasksKey = [...starterTasksDone].sort().join(",");
   useEffect(() => {
@@ -6792,7 +6792,7 @@ function WorkspaceAppContent({
               <WorkspaceView mode="graph" active={isGraphView || showMapModal}
                 modal={showMapModal ? { label: "Map around this document", style: mapModalBounds ?? undefined, docked: true, narrow: sheetNarrowMap } : undefined}>
                 {isGraphView && newVault ? <ViewIntro id="map" className="is-map" title="What Map View shows">
-                  Every document is a dot. Side documents, margin notes and links you add become lines, so you can see how your ideas connect. Click a dot to open it.
+                  Every document is a dot. Notes and links you add become lines, so you can see how your ideas connect. Click a dot to open it.
                 </ViewIntro> : null}
                 <Suspense fallback={<div className="workspace-view-loading" role="status">Opening Map View…</div>}>
                   <KnowledgeGraphWorkspace
