@@ -1,3 +1,4 @@
+import { quizParts } from "./flashcardQuiz";
 import { parseFlashcardSources, type Flashcard, type FlashcardSource } from "./flashcards";
 
 /**
@@ -51,7 +52,7 @@ export function flashcardDraftProblem(draft: FlashcardDraft): string | null {
     return /\{\{c\d{1,3}::[\s\S]+?\}\}/u.test(draft.text) ? null : "Hide at least one part with {{c1::…}}.";
   }
   if (!clean(draft.front)) return "Write a front.";
-  if (!clean(draft.back)) return "Write a back.";
+  if (!clean(draft.back) && !quizParts(clean(draft.front))) return "Write a back.";
   return null;
 }
 
@@ -62,6 +63,8 @@ export function formatFlashcard(draft: FlashcardDraft): string | null {
     : (() => {
       const front = clean(draft.front), back = clean(draft.back);
       const mark = draft.both ? "??" : "?";
+      // A quiz with no explanation is its question and choices, then `?`.
+      if (!back) return [`${front}\n${mark}`, `:::card\n${front}\n:::`];
       return [`${front} ${draft.both ? ":::" : "::"} ${back}`, `${front}\n${mark}\n${back}`, `:::card\n${front}\n${mark}\n${back}\n:::`];
     })();
   for (const text of candidates) {

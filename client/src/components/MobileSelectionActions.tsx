@@ -21,6 +21,8 @@ type MobileSelectionActionsProps = {
   onQuestion?: () => void;
   /** Visualize: the AI draws the passage as a staged diagram under its paragraph. Left out outside documents. */
   onVisualize?: () => void;
+  /** Quiz questions about the passage, for the person to pick from. */
+  onQuiz?: () => void;
   /** Create a side document or margin note on the passage directly, without AI. */
   onSideDocument: () => void;
   onMarginNote: () => void;
@@ -41,7 +43,7 @@ type MobileSelectionActionsProps = {
  * everyday actions first, Ask AI near the end, and More for the rest. More also holds the
  * system's Cut / Paste / Select all, which the workspace hides on phones.
  */
-export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onQuestion, onVisualize, onSideDocument, onMarginNote, onLink, onFindRelated, onHighlight, highlighted = false, marginNoteLabel = "Margin note", quote, onClose, disabled = false }: MobileSelectionActionsProps) {
+export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, onAsk, onQuestion, onVisualize, onQuiz, onSideDocument, onMarginNote, onLink, onFindRelated, onHighlight, highlighted = false, marginNoteLabel = "Margin note", quote, onClose, disabled = false }: MobileSelectionActionsProps) {
   const viewport = useVisualViewport(true);
   const [selectionRect, setSelectionRect] = useState(rect);
   const [height, setHeight] = useState(64);
@@ -146,6 +148,7 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
       {item("find", "Find related", onFindRelated)}
       {onQuestion ? item("question", "Question this", onQuestion, { ai: true, disabled }) : null}
       {onVisualize ? item("visualize", "Visualize", onVisualize, { ai: true, disabled }) : null}
+      {onQuiz ? item("cards", "Quiz", onQuiz, { ai: true, disabled }) : null}
       {item("explain", "Explain", onExplain, { ai: true, disabled })}
       {onRewrite ? item("rewrite", "Rewrite", onRewrite, { ai: true, disabled }) : null}
       <button type="button" aria-label="Dismiss selection actions" onClick={onClose}>

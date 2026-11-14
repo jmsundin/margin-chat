@@ -218,3 +218,89 @@
 .flashcard-editor-document .live-document-after { margin-left: 0; padding-left: 2px; }
 .flashcard-editor-document .live-document-host .cm-line.cm-lp-quote { background-position: 2px 0; padding-left: 16px; }
 .flashcard-editor-document .live-document-host .cm-content { padding-bottom: 0; }
+
+/* Study as a game: a progress line, a card on a panel with chips, lettered choices that turn right or wrong, a score at the end. */
+.flashcard-sr { clip: rect(0 0 0 0); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+.flashcard-progress { background: var(--line); flex: none; height: 3px; }
+.flashcard-progress i { background: var(--sage); display: block; height: 100%; transition: width .3s ease; }
+@media (prefers-reduced-motion: reduce) { .flashcard-progress i { transition: none; } }
+.flashcard-review-count { align-items: center; display: inline-flex; gap: 8px; }
+.flashcard-score, .flashcard-streak { border: 1px solid var(--line-strong); border-radius: 99px; color: var(--ink); font-size: .72rem; padding: 1px 8px; }
+.flashcard-streak { border-color: var(--sage); color: var(--sage); }
+.flashcard-review .flashcard-make-more {
+  background: transparent; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); cursor: pointer;
+  font-size: .78rem; padding: 5px 10px; white-space: nowrap;
+}
+.flashcard-make-more span, .flashcard-first-make span { color: var(--sage); }
+.flashcard-review .flashcard-make-more:hover { border-color: var(--ink); }
+
+.flashcard-review .flashcard-card {
+  background: var(--panel, transparent); border: 1px solid var(--line-strong); border-radius: 16px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .06); padding: 22px 26px 18px;
+}
+.flashcard-card-chips { align-items: center; display: flex; flex-wrap: wrap; font-family: var(--paper-sans, system-ui, sans-serif); gap: 6px; margin-bottom: 14px; }
+.flashcard-review .flashcard-chip {
+  background: transparent; border: 1px solid var(--line-strong); border-radius: 99px; color: var(--muted); font-size: .7rem; line-height: 1.5;
+  max-width: 60%; overflow: hidden; padding: 2px 10px; text-overflow: ellipsis; white-space: nowrap;
+}
+.flashcard-review button.flashcard-chip { cursor: pointer; }
+.flashcard-review button.flashcard-chip:hover { color: var(--ink); }
+.flashcard-review .flashcard-chip.is-new { background: var(--sage-soft); border-color: transparent; color: var(--sage); }
+.flashcard-card .flashcard-card-source { margin-top: 18px; }
+.flashcard-card .flashcard-card-source:empty { display: none; }
+
+.flashcard-choices { display: flex; flex-direction: column; font-family: var(--paper-sans, system-ui, sans-serif); font-size: 1rem; gap: 8px; margin-top: 18px; }
+.flashcard-choice {
+  align-items: flex-start; background: var(--bg, transparent); border: 1px solid var(--line-strong); border-radius: 12px; color: var(--ink);
+  cursor: pointer; display: flex; gap: 12px; line-height: 1.45; padding: 11px 14px; text-align: left; transition: border-color .12s, background .12s;
+}
+.flashcard-choice:hover:not(:disabled) { border-color: var(--ink); }
+.flashcard-choice:disabled { cursor: default; }
+.flashcard-choice .flashcard-face { flex: 1; min-width: 0; }
+.flashcard-choice .flashcard-text p { margin: 0; }
+.flashcard-choice-key {
+  align-items: center; background: var(--button-surface); border-radius: 6px; color: var(--muted); display: inline-flex; flex: none;
+  font-size: .76rem; font-weight: 600; height: 1.6rem; justify-content: center; width: 1.6rem;
+}
+.flashcard-choice-mark { color: var(--muted); flex: none; font-size: .72rem; margin-top: 3px; }
+.flashcard-choice.is-right { background: var(--sage-soft); border-color: var(--sage); }
+.flashcard-choice.is-right .flashcard-choice-key { background: var(--sage); color: var(--bg, #fff); }
+.flashcard-choice.is-right .flashcard-choice-mark { color: var(--sage); }
+.flashcard-choice.is-wrong { background: var(--danger-soft, var(--accent-soft)); border-color: var(--danger, var(--accent)); }
+.flashcard-choice.is-wrong .flashcard-choice-key { background: var(--danger, var(--accent)); color: var(--bg, #fff); }
+.flashcard-choice.is-wrong .flashcard-choice-mark { color: var(--danger, var(--accent)); }
+.flashcard-choice.is-other { opacity: .55; }
+
+.flashcard-feedback {
+  animation: flashcard-reveal .18s ease-out; border-left: 3px solid var(--sage); display: flex; flex-direction: column; gap: 6px;
+  margin-top: 18px; padding: 2px 0 2px 14px;
+}
+.flashcard-feedback.is-wrong { border-left-color: var(--danger, var(--accent)); }
+.flashcard-feedback h3 { color: var(--sage); font-family: var(--paper-sans, system-ui, sans-serif); font-size: .9rem; margin: 0; }
+.flashcard-feedback.is-wrong h3 { color: var(--danger, var(--accent)); }
+.flashcard-explanation { font-size: 1.02rem; line-height: 1.55; }
+@media (prefers-reduced-motion: reduce) { .flashcard-feedback { animation: none; } }
+.flashcard-quiz-hint { color: var(--muted); font-size: .8rem; margin: 0; min-height: 46px; display: flex; align-items: center; }
+.flashcard-quiz-hint kbd { margin: 0 2px; }
+.flashcard-quiz-next { display: flex; justify-content: center; max-width: 680px; width: 100%; }
+
+.flashcard-verdict {
+  align-items: center; border: 1px solid var(--line-strong); border-radius: 16px; display: flex; gap: 18px; justify-content: center;
+  margin: 0 auto 22px; padding: 16px 22px; text-align: left; width: fit-content;
+}
+.flashcard-verdict.is-strong { border-color: var(--sage); }
+.flashcard-verdict-big { font-size: 2.6rem; font-variant-numeric: tabular-nums; font-weight: 700; line-height: 1; }
+.flashcard-verdict.is-strong .flashcard-verdict-big { color: var(--sage); }
+.flashcard-verdict p { color: var(--ink); font-size: .88rem; margin: 2px 0; }
+.flashcard-missed { border-top: 1px solid var(--line); margin: 18px 0 8px; padding-top: 14px; text-align: left; }
+.flashcard-missed h3 { color: var(--muted); font-size: .74rem; font-weight: 600; letter-spacing: .04em; margin: 0 0 8px; text-transform: uppercase; }
+.flashcard-missed ul { display: flex; flex-direction: column; gap: 6px; list-style: none; margin: 0 0 14px; padding: 0; }
+.flashcard-missed li { border-left: 3px solid var(--danger, var(--accent)); font-size: .9rem; padding: 2px 0 2px 10px; }
+.flashcard-missed li .flashcard-text p { margin: 0; }
+.flashcard-missed .flashcard-primary { width: 100%; }
+.flashcard-first-make { margin: 4px 0 18px; }
+@media (max-width: 640px), (pointer: coarse) {
+  .flashcard-review .flashcard-card { border-radius: 14px; padding: 16px 16px 14px; }
+  .flashcard-choice { min-height: 52px; }
+  .flashcard-score, .flashcard-streak { display: none; }
+}
