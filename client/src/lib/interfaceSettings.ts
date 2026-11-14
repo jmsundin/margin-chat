@@ -164,6 +164,7 @@ function stopInterfaceSettingsSync() {
 
 /** Calls `listener` when one of `names` changes in another tab or arrives from the account. */
 export function onSyncedSettingChange(names: readonly string[], listener: () => void): () => void {
+  if (typeof window === "undefined" || typeof window.addEventListener !== "function") return () => {};
   const handle = (event: StorageEvent) => { if (event.key === null || (isSynced(event.key) && names.includes(event.key))) listener(); };
   window.addEventListener("storage", handle);
   return () => window.removeEventListener("storage", handle);
