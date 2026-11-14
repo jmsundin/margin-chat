@@ -240,6 +240,101 @@ export interface DictationRecording {
   cancel(): void;
 }
 
+// Hands the microphone's raw samples to the page, about every 128 frames.
+const PCM_TAP_WORKLET = `registerProcessor("margin-chat-pcm-tap", class extends AudioWorkletProcessor {
+  process(inputs) { const channel = inputs[0] && inputs[0][0]; if (channel) this.port.postMessage(channel.slice(0)); return true; }
+});`;
+// Samples handed on together: about 40 ms.
+const PCM_CHUNK_MS = 40;
+
+/**
+ * Turns float samples at one rate into 16-bit PCM at another, a chunk at a time,
+ * carrying its position between chunks so nothing clicks at their edges.
+ */
+export function createPcmResampler(inputRate: number, outputRate: number) {
+  const step = inputRate / outputRate;
+  // Downsampling first averages neighbouring samples, a gentle low-pass against aliasing.
+  const smooth = step >= 1.5;
+  let lastInput = 0;
+  // Positions count from the previous chunk's last sample (0); this chunk's samples are 1..n.
+  let carry = 0;
+  let position = 1;
+  return (input: Float32Array): Int16Array => {
+    const count = input.length;
+    if (!count) return new Int16Array(0);
+    const filtered = new Float32Array(count);
+    for (let index = 0; index < count; index += 1) {
+      filtered[index] = smooth ? (input[index] + (index ? input[index - 1] : lastInput)) / 2 : input[index];
+    }
+    const at = (index: number) => (index === 0 ? carry : filtered[index - 1]);
+    const out: number[] = [];
+    while (position <= count) {
+      const whole = Math.floor(position);
+      const fraction = position - whole;
+      const value = fraction ? at(whole) + (at(whole + 1) - at(whole)) * fraction : at(whole);
+      const clamped = Math.max(-1, Math.min(1, value));
+      out.push(Math.round(clamped < 0 ? clamped * 32768 : clamped * 32767));
+      position += step;
+    }
+    position -= count;
+    carry = filtered[count - 1];
+    lastInput = input[count - 1];
+    return Int16Array.from(out);
+  };
+}
+
+/** Streams a microphone source as PCM at `rate`. Returns a function that stops it. */
+function tapPcm(context: AudioContext, source: MediaStreamAudioSourceNode, rate: number, onPcm: (pcm: Int16Array) => void): () => void {
+  const resample = createPcmResampler(context.sampleRate, rate);
+  const chunkSamples = Math.round((context.sampleRate * PCM_CHUNK_MS) / 1000);
+  let held: Float32Array[] = [];
+  let heldSize = 0;
+  let stopped = false;
+  const take = (samples: Float32Array) => {
+    if (stopped) return;
+    held.push(samples);
+    heldSize += samples.length;
+    if (heldSize < chunkSamples) return;
+    const joined = new Float32Array(heldSize);
+    let at = 0;
+    for (const part of held) { joined.set(part, at); at += part.length; }
+    held = [];
+    heldSize = 0;
+    onPcm(resample(joined));
+  };
+  let disconnect = () => {};
+  const useScriptProcessor = () => {
+    const processor = context.createScriptProcessor(2048, 1, 1);
+    processor.onaudioprocess = (event) => take(new Float32Array(event.inputBuffer.getChannelData(0)));
+    source.connect(processor);
+    processor.connect(context.destination);
+    disconnect = () => { processor.onaudioprocess = null; processor.disconnect(); };
+  };
+  if (typeof AudioWorkletNode !== "undefined" && context.audioWorklet) {
+    const url = URL.createObjectURL(new Blob([PCM_TAP_WORKLET], { type: "text/javascript" }));
+    void context.audioWorklet.addModule(url).then(() => {
+      if (stopped) return;
+      const node = new AudioWorkletNode(context, "margin-chat-pcm-tap", { numberOfInputs: 1, numberOfOutputs: 0 });
+      node.port.onmessage = (event: MessageEvent<Float32Array>) => take(event.data);
+      source.connect(node);
+      disconnect = () => { node.port.onmessage = null; node.disconnect(); };
+    }, () => { if (!stopped) useScriptProcessor(); }).finally(() => URL.revokeObjectURL(url));
+  } else if (typeof context.createScriptProcessor === "function") {
+    useScriptProcessor();
+  }
+  return () => {
+    // What's still held goes out, so the last words reach the transcription.
+    if (heldSize && !stopped) {
+      const joined = new Float32Array(heldSize);
+      let at = 0;
+      for (const part of held) { joined.set(part, at); at += part.length; }
+      onPcm(resample(joined));
+    }
+    stopped = true;
+    disconnect();
+  };
+}
+
 function pickRecordingType(): string | undefined {
   return RECORDING_TYPES.find((type) => MediaRecorder.isTypeSupported?.(type));
 }
@@ -253,6 +348,9 @@ export async function startDictationRecording(options: {
   onLevel?: (level: number) => void;
   onSegment?: (audio: Blob) => void;
   segmentMs?: number;
+  /** The microphone as 16-bit PCM at `pcmRate`, from the moment it opens, for streaming to live transcription. */
+  onPcm?: (pcm: Int16Array) => void;
+  pcmRate?: number;
 } = {}): Promise<DictationRecording> {
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
   const mimeType = pickRecordingType();
@@ -299,27 +397,34 @@ export async function startDictationRecording(options: {
 
   let audioContext: AudioContext | null = null;
   let frame = 0;
-  if (options.onLevel && typeof AudioContext !== "undefined") {
+  let stopPcm = () => {};
+  if ((options.onLevel || options.onPcm) && typeof AudioContext !== "undefined") {
     try {
       audioContext = new AudioContext();
-      const analyser = audioContext.createAnalyser();
-      analyser.fftSize = 512;
-      audioContext.createMediaStreamSource(stream).connect(analyser);
-      const samples = new Uint8Array(analyser.fftSize);
-      const measure = () => {
-        analyser.getByteTimeDomainData(samples);
-        let sum = 0;
-        for (const sample of samples) sum += ((sample - 128) / 128) ** 2;
-        options.onLevel?.(Math.min(1, Math.sqrt(sum / samples.length) * 4));
-        frame = requestAnimationFrame(measure);
-      };
-      measure();
+      void audioContext.resume?.().catch(() => undefined);
+      const source = audioContext.createMediaStreamSource(stream);
+      if (options.onLevel) {
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 512;
+        source.connect(analyser);
+        const samples = new Uint8Array(analyser.fftSize);
+        const measure = () => {
+          analyser.getByteTimeDomainData(samples);
+          let sum = 0;
+          for (const sample of samples) sum += ((sample - 128) / 128) ** 2;
+          options.onLevel?.(Math.min(1, Math.sqrt(sum / samples.length) * 4));
+          frame = requestAnimationFrame(measure);
+        };
+        measure();
+      }
+      if (options.onPcm) stopPcm = tapPcm(audioContext, source, options.pcmRate ?? 24_000, options.onPcm);
     } catch { audioContext = null; }
   }
 
   const release = () => {
     window.clearInterval(timer);
     cancelAnimationFrame(frame);
+    stopPcm();
     void audioContext?.close().catch(() => undefined);
     stream.getTracks().forEach((track) => track.stop());
   };
