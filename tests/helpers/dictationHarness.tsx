@@ -181,6 +181,61 @@ assert.equal(cmPreview.state.doc.toString(), "Start");
 cmPreview.destroy();
 checks.push("previews live words outside undo in both editors");
 
+// Editing while talking, like Claude Code: the person's edits stay theirs, their cursor stays put, and new words keep coming.
+const editParent = document.createElement("div");
+document.body.append(editParent);
+const cmEdit = new EditorView({ parent: editParent, state: EditorState.create({ doc: "Title\nBody", selection: { anchor: 10 }, extensions: [history()] }) });
+const cmText = () => cmEdit.state.doc.toString();
+const live = startDictationPreview(cmEdit.contentDOM)!;
+live.update("we should test");
+assert.equal(cmText(), "Title\nBody we should test");
+// Fix the title above the live words while still talking; the cursor stays in the title.
+cmEdit.dispatch({ changes: { from: 5, insert: "s" }, selection: { anchor: 6 } });
+live.update("we should test the new");
+assert.equal(cmText(), "Titles\nBody we should test the new");
+assert.equal(cmEdit.state.selection.main.head, 6, "the cursor stays where the person put it");
+// Correct a live word: it's theirs now, and only what's said next is added after it.
+const wordAt = cmText().indexOf("test");
+cmEdit.dispatch({ changes: { from: wordAt, to: wordAt + 4, insert: "try" }, selection: { anchor: wordAt + 3 } });
+live.update("we should test the new mic");
+assert.equal(cmText(), "Titles\nBody we should try the new mic");
+// The final text doesn't undo their correction either.
+live.commit("We should test the new mic today.");
+assert.equal(cmText(), "Titles\nBody we should try the new mic today.");
+cmEdit.destroy();
+
+// Typing right after the live words keeps what was typed, and the next words follow it.
+const area = document.createElement("textarea");
+document.body.append(area);
+area.value = "Plan:";
+area.focus();
+area.setSelectionRange(5, 5);
+const areaLive = startDictationPreview(area)!;
+areaLive.update("call the lab");
+assert.equal(area.value, "Plan: call the lab");
+Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(area, `${area.value} tomorrow,`);
+area.setSelectionRange(area.value.length, area.value.length);
+areaLive.update("call the lab and book it");
+assert.equal(area.value, "Plan: call the lab tomorrow, and book it");
+assert.ok(areaLive.commit("Call the lab and book it."));
+assert.equal(area.value, "Plan: call the lab tomorrow, and book it.");
+area.remove();
+
+// In the rich editor too: an edit above the live words doesn't stop them.
+const richEditParent = document.createElement("div");
+document.body.append(richEditParent);
+const richEdit = new Editor({ element: richEditParent, extensions: [StarterKit], content: "<p>Intro</p><p>Notes</p>" });
+richEdit.commands.setTextSelection(richEdit.state.doc.content.size - 1);
+const richLive = startDictationPreview(richEdit.view.dom as HTMLElement)!;
+richLive.update("first idea");
+richEdit.commands.insertContentAt(6, "duction");
+richLive.update("first idea and second");
+assert.equal(richEdit.getText(), "Introduction\n\nNotes first idea and second");
+richLive.commit("First idea and second.");
+assert.equal(richEdit.getText(), "Introduction\n\nNotes First idea and second.");
+richEdit.destroy();
+checks.push("edits while talking stay, and new words keep coming");
+
 // A React-controlled textarea sees the change, by shortcut, end to end.
 let latest = "";
 let pieceMs: number | undefined;
