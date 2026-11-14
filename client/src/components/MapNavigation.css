@@ -37,13 +37,21 @@
 /* Hovering or selecting a circle: circles and lines not linked to it fade back. */
 .conversation-graph-node.is-dot, .semantic-map .conversation-graph-node.is-dot { transition: opacity 140ms ease, border-color 150ms ease, box-shadow 150ms ease; }
 .conversation-graph-node.is-dot.is-relation-faded:not(:hover, :focus-within) { opacity: .22; }
-.conversation-graph-edges [data-relation-faded] { opacity: .1; transition: opacity 140ms ease; }
+.conversation-graph-stage .conversation-graph-edges g[data-relation-faded] { opacity: .1; transition: opacity 140ms ease; }
+/* Calm lines: lines away from the centred or picked document are thin and grey, without arrows,
+   until a circle is hovered or picked. Hovering a quiet line itself brings back its colour. */
+.conversation-graph-stage .conversation-graph-edges g[data-line-quiet] { opacity: .32; transition: opacity 140ms ease; }
+.conversation-graph-edges [data-line-quiet] :is(.graph-relation-edge-line, .graph-personal-connection-line, .conversation-graph-edge) {
+  stroke: var(--muted); stroke-width: 1px; }
+.conversation-graph-edges [data-line-quiet] .conversation-graph-edge-port { display: none; }
+.conversation-graph-stage .conversation-graph-edges g[data-line-quiet]:is(:hover, :focus-visible) { opacity: 1; }
+.conversation-graph-edges [data-line-quiet]:is(:hover, :focus-visible) .graph-relation-edge-line { stroke: var(--relation-color); stroke-width: 2px; }
 /* Link lens: lines under the circle show with their names; the rest fade. */
 .map-link-lens { position: absolute; z-index: 6; border: 1.5px dashed color-mix(in srgb, var(--accent) 70%, transparent); border-radius: 50%;
   background: color-mix(in srgb, var(--accent) 5%, transparent); pointer-events: none; }
 .conversation-graph-edges .graph-relation-edge.is-in-link-lens text { display: block; }
 .conversation-graph-edges .graph-relation-edge.is-in-link-lens .graph-relation-edge-line { stroke-width: 2.5px; }
-@media (prefers-reduced-motion: reduce) { .conversation-graph-node.is-dot, .semantic-map .conversation-graph-node.is-dot, .conversation-graph-edges [data-relation-faded] { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .conversation-graph-node.is-dot, .semantic-map .conversation-graph-node.is-dot, .conversation-graph-edges [data-relation-faded], .conversation-graph-edges [data-line-quiet] { transition: none; } }
 
 .graph-map-display-options { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .graph-map-display-options label { display: flex; align-items: center; gap: 8px; font-size: 13px; }

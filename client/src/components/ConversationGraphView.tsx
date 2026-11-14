@@ -147,6 +147,8 @@ const EMPTY_COUNTS = new Map<string, number>();
 const EMPTY_EDGES: ReturnType<typeof getGraphAnalysisEdges> = [];
 /** With more links than this touching the cards in view, only the focused document's lines are drawn; the rest become strands. */
 const BUSY_LINK_COUNT = 80;
+/** With nothing to centre on, lines go quiet once a map has more than this many. */
+const CALM_LINE_COUNT = 12;
 /** Canvas names regions and well-linked documents once cards are narrower than this on screen. */
 const LANDMARK_CARD_WIDTH = 64;
 /** Narrower than this on screen, a zoomed-out Canvas card hides its title. */
@@ -4178,8 +4180,10 @@ export default function ConversationGraphView({
     .filter((id): id is string => !!id && !!conversations[id] && dotNodes.has(id)) : []);
   const relationNeighbors = new Set([...relationFocusIds].flatMap(linkedIdsOf));
   const relationFaded = (id: string) => relationFocusIds.size > 0 && !relationFocusIds.has(id) && !relationNeighbors.has(id);
+  // Hovering a circle fades every other line back hard; a picked document alone keeps them as calm lines (below).
+  const hoveringLines = !!hoveredId && relationFocusIds.has(hoveredId) && hoveredId !== selectedConversationId;
   const lineFaded = (sourceId: string, targetId: string) => linkLens ? !touchesLens(sourceId, targetId)
-    : relationFocusIds.size > 0 && !relationFocusIds.has(sourceId) && !relationFocusIds.has(targetId);
+    : hoveringLines && !relationFocusIds.has(sourceId) && !relationFocusIds.has(targetId);
   let linkBundles: ReturnType<typeof bundleLinks> = [];
   if (busyLines) {
     const touchesFocus = (sourceId: string, targetId: string) => lineFocusIds.has(sourceId) || lineFocusIds.has(targetId) || touchesLens(sourceId, targetId);
@@ -4196,6 +4200,14 @@ export default function ConversationGraphView({
     drawnPersonalLinks = drawnPersonalLinks.filter(([sourceId, targetId]) => touchesFocus(sourceId, targetId));
     drawnRelationEdges = drawnRelationEdges.filter((edge) => touchesFocus(edge.sourceId, edge.targetId));
   }
+  // Calm lines: only the lines touching the picked document (or the one the map is centred on) keep
+  // their colour and arrow; the rest are drawn thin and grey, so a crowded neighbourhood reads as
+  // shapes, not a tangle. Picking another circle brings its lines forward; hovering one fades the rest.
+  const lineAnchorIds = new Set([selectedConversationId ?? (documentsOnly ? documentLayout?.centerNodeId : null)]
+    .filter((id): id is string => !!id && !!conversations[id]));
+  const calmLines = linesMode === "auto" && !busyLines && !linkLens && !hoveringLines
+    && (lineAnchorIds.size > 0 || drawnPersonalLinks.length + drawnRelationEdges.length > CALM_LINE_COUNT);
+  const lineQuiet = (sourceId: string, targetId: string) => calmLines && !lineAnchorIds.has(sourceId) && !lineAnchorIds.has(targetId);
   const mapOverlaysShown = !panelView && !showThemeOverview && viewportSize.width > 0;
   // Signposts on the screen's edge toward the selected document's links (and the document itself) when they are off screen.
   const signposts: Signpost[] = mapOverlaysShown && selectedConversationId && !zoomThrough ? edgeSignposts(
@@ -4395,8 +4407,8 @@ export default function ConversationGraphView({
                   {MAP_COLOR_BY_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                 </select>
               </label>
-              <label><input type="checkbox" checked={linesMode === "auto"} onChange={(event) => setLinesMode(event.target.checked ? "auto" : "all")} /> Busy maps: only the selected or hovered document's lines</label>
-              <small>Other lines are summed into strands between areas.</small>
+              <label><input type="checkbox" checked={linesMode === "auto"} onChange={(event) => setLinesMode(event.target.checked ? "auto" : "all")} /> Calm lines: only the picked document's lines in colour</label>
+              <small>Other lines stay thin and grey; on busy maps they are summed into strands between areas.</small>
               {showMinimap ? <label><input type="checkbox" checked={minimapEnabled} onChange={(event) => setMinimapEnabled(event.target.checked)} /> Minimap</label> : null}
               {linkLensAvailable ? <label title="Press L on the map to turn it on or off"><input type="checkbox" checked={linkLensEnabled} onChange={(event) => setLinkLensEnabled(event.target.checked)} /> Link lens: show only the lines under the mouse, with their names</label> : null}
             </div>}
@@ -4635,7 +4647,7 @@ export default function ConversationGraphView({
                 const y2 = target.y + target.height / 2;
                 const geometry = documentsOnly ? documentConnectionGeometry(placement, target, documentLayoutMode)
                   : curvedGraphConnection({ startX: x1, startY: y1, endX: x2, endY: y2 });
-                return [<g key={`personal-${placement.conversationId}-${targetId}`} className="graph-personal-connection" data-lens-dimmed={lensDimmed(sourceId) || lensDimmed(targetId) || undefined} data-relation-faded={lineFaded(sourceId, targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0} aria-label={`My connection: ${conversations[placement.conversationId].title} and ${conversations[targetId].title}`} onClick={() => setInspectedPersonalConnection([placement.conversationId, targetId])} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedPersonalConnection([placement.conversationId, targetId]); } }}>
+                return [<g key={`personal-${placement.conversationId}-${targetId}`} className="graph-personal-connection" data-lens-dimmed={lensDimmed(sourceId) || lensDimmed(targetId) || undefined} data-relation-faded={lineFaded(sourceId, targetId) || undefined} data-line-quiet={lineQuiet(sourceId, targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0} aria-label={`My connection: ${conversations[placement.conversationId].title} and ${conversations[targetId].title}`} onClick={() => setInspectedPersonalConnection([placement.conversationId, targetId])} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setInspectedPersonalConnection([placement.conversationId, targetId]); } }}>
                   <path className="graph-map-edge-hit" d={geometry.path} />
                   <path className="graph-personal-connection-line" d={geometry.path} />
                   <text x={geometry.labelX} y={geometry.labelY - 8}>My connection</text>
@@ -4655,12 +4667,13 @@ export default function ConversationGraphView({
                 const label = documentGraphEdgeLabel(edge);
                 const typeClass = edge.type ?? "mention";
                 const open = () => { setInspectedPersonalConnection(null); setInspectedRelationId(edge.id); };
-                return [<g key={edge.id} className={`graph-relation-edge is-${typeClass} is-${edge.kind}${edge.origin === "ai" ? " is-ai" : ""}${linkLens && touchesLens(edge.sourceId, edge.targetId) ? " is-in-link-lens" : ""}`} data-lens-dimmed={lensDimmed(edge.sourceId) || lensDimmed(edge.targetId) || undefined} data-relation-faded={lineFaded(edge.sourceId, edge.targetId) || undefined} data-graph-ui="true" role="button" tabIndex={0}
+                const quiet = lineQuiet(edge.sourceId, edge.targetId);
+                return [<g key={edge.id} className={`graph-relation-edge is-${typeClass} is-${edge.kind}${edge.origin === "ai" ? " is-ai" : ""}${linkLens && touchesLens(edge.sourceId, edge.targetId) ? " is-in-link-lens" : ""}`} data-lens-dimmed={lensDimmed(edge.sourceId) || lensDimmed(edge.targetId) || undefined} data-relation-faded={lineFaded(edge.sourceId, edge.targetId) || undefined} data-line-quiet={quiet || undefined} data-graph-ui="true" role="button" tabIndex={0}
                   aria-label={`${label}: ${conversations[edge.sourceId].title} ${edge.directed ? "to" : "and"} ${conversations[edge.targetId].title}`}
                   onClick={open} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } }}>
                   <path className="graph-map-edge-hit" d={geometry.path} />
-                  <path className="graph-relation-edge-line" d={geometry.path} style={edge.weight !== undefined ? { strokeWidth: 1 + edge.weight * 3 } : undefined}
-                    markerEnd={edge.directed ? `url(#graph-relation-arrow-${typeClass})` : undefined} />
+                  <path className="graph-relation-edge-line" d={geometry.path} style={edge.weight !== undefined && !quiet ? { strokeWidth: 1 + edge.weight * 3 } : undefined}
+                    markerEnd={edge.directed && !quiet ? `url(#graph-relation-arrow-${typeClass})` : undefined} />
                   <text x={geometry.labelX} y={geometry.labelY - 8}>{label}</text>
                 </g>];
               })}
@@ -4677,7 +4690,8 @@ export default function ConversationGraphView({
               {relatedEdges.map((edge) => <g key={`related-${edge.id}`} className="graph-map-related-edge"><path d={edge.path ?? buildConnectorPath(edge)} /><title>Possibly related: {conversations[edge.id].title}</title></g>)}
               {(showBranches ? renderedEdges : []).map((edge) => (
                 <g key={`${edge.parentConversationId}-${edge.childConversationId}`} data-lens-dimmed={lensDimmed(edge.parentConversationId) || lensDimmed(edge.childConversationId) || undefined}
-                  data-relation-faded={lineFaded(edge.parentConversationId, edge.childConversationId) || undefined}>
+                  data-relation-faded={lineFaded(edge.parentConversationId, edge.childConversationId) || undefined}
+                  data-line-quiet={(!edge.isSelectedPath && lineQuiet(edge.parentConversationId, edge.childConversationId)) || undefined}>
                   <path className="graph-map-edge-hit" data-graph-ui="true" d={edge.path ?? buildConnectorPath(edge)} role="button" tabIndex={0} aria-label={`Show branch source for ${conversations[edge.childConversationId]?.title}`} onClick={() => { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); }} onKeyDown={(event) => { if (event.key === "Enter") { const evidence = branchEvidence(conversations[edge.childConversationId]); if (evidence) openEvidence(evidence); } }} />
                   <path
                     className={
