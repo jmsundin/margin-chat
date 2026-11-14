@@ -5,7 +5,8 @@ import { installUpdateProtocol } from "./worker-update-protocol.mjs";
 const PUBLIC_FILES = ["/favicon.svg", "/icon.svg", "/manifest.webmanifest"];
 // Excalidraw's Chinese, Japanese and Korean handwriting font is ~200 files and 13 MB, half of every update's
 // download. Drawings fetch the few pieces they use from the network when they first show those characters.
-const ON_DEMAND = /^\/excalidraw\/fonts\/Xiaolai\//u;
+// Code block runtimes (SQLite, TypeScript and Java compilers, ~12 MB) load the first time a cell in that language runs.
+const ON_DEMAND = /^\/(?:excalidraw\/fonts\/Xiaolai|code-runner)\//u;
 
 export function renderOfflineServiceWorker({ version, files, html }) {
   return `// Generated with the exact HTML and asset list for this build.

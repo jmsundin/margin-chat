@@ -1,0 +1,270 @@
+import { useContext, useEffect, useId, useMemo, useRef, useState } from "react";
+import { EditorState, type Extension } from "@codemirror/state";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, placeholder as editorPlaceholder } from "@codemirror/view";
+import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
+import { bracketMatching, indentOnInput, syntaxHighlighting } from "@codemirror/language";
+import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { classHighlighter } from "@lezer/highlight";
+import { sql, SQLite } from "@codemirror/lang-sql";
+import { python } from "@codemirror/lang-python";
+import { javascript } from "@codemirror/lang-javascript";
+import { java } from "@codemirror/lang-java";
+import { html } from "@codemirror/lang-html";
+import { css } from "@codemirror/lang-css";
+import { CODE_LANGUAGE_LABELS, codeCellKind, previewDocument, previewPage, sqlSetup, type CodeLanguage } from "../lib/codeRunner/languages";
+import { CodeCellScopeContext } from "../lib/codeRunner/codeCellScope";
+import { runCode, type RunEvent, type RunResult } from "../lib/codeRunner/runner";
+import "./CodeCell.css";
+
+/**
+ * A code block in a document as a small editor: SQL, Python, JavaScript,
+ * TypeScript and Java run with ▶ Run (or ⌘/Ctrl+Enter) and show what they
+ * print; HTML and CSS show the page they make, updating as you type. Edits
+ * are saved back into the block's Markdown fence.
+ */
+
+const SAVE_DELAY_MS = 300;
+const PREVIEW_DELAY_MS = 200;
+
+function languageExtension(language: CodeLanguage): Extension {
+  switch (language) {
+    case "sql": return sql({ dialect: SQLite });
+    case "python": return python();
+    case "javascript": return javascript();
+    case "typescript": return javascript({ typescript: true });
+    case "java": return java();
+    case "html": return html();
+    case "css": return css();
+  }
+}
+
+type OutputLine = { kind: "stdout" | "stderr"; text: string } | { kind: "table"; columns: string[]; rows: unknown[][]; note: string };
+
+interface CodeCellProps {
+  language: CodeLanguage;
+  source: string;
+  /** This block's position among the code blocks of its piece of Markdown. */
+  index: number;
+  dark: boolean;
+}
+
+export default function CodeCell({ language, source, index, dark }: CodeCellProps) {
+  const scope = useContext(CodeCellScopeContext);
+  const editable = Boolean(scope?.save);
+  const kind = codeCellKind(language);
+  const host = useRef<HTMLDivElement>(null);
+  const view = useRef<EditorView | null>(null);
+  const [text, setText] = useState(source);
+  /** The fence text this cell last saw saved, which a save checks the block still holds. */
+  const saved = useRef(source);
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [conflict, setConflictState] = useState(false);
+  const conflictRef = useRef(false);
+  const setConflict = (value: boolean) => { conflictRef.current = value; setConflictState(value); };
+  const [output, setOutput] = useState<OutputLine[]>([]);
+  const [status, setStatus] = useState("");
+  const [result, setResult] = useState<RunResult | null>(null);
+  const [running, setRunning] = useState(false);
+  const abort = useRef<AbortController | null>(null);
+  const latest = useRef({ scope, index, language, text, run: () => undefined as void });
+  const labelId = useId();
+
+  /** The code as its fence keeps it: trailing blank lines aren't stored, so an Enter at the end is not a change. */
+  function stored(code: string) { return code.replace(/\n+$/u, ""); }
+
+  function flush() {
+    if (pending.current) { clearTimeout(pending.current); pending.current = null; }
+    const current = latest.current;
+    const next = stored(view.current?.state.doc.toString() ?? current.text);
+    if (!current.scope?.save || next === stored(saved.current) || conflictRef.current) return;
+    if (current.scope.save(current.index, saved.current, next)) saved.current = next;
+    else setConflict(true);
+  }
+
+  // The editor, made once; its text follows the block when it changes elsewhere.
+  useEffect(() => {
+    if (!host.current) return;
+    const editor = new EditorView({
+      parent: host.current,
+      state: EditorState.create({
+        doc: source,
+        extensions: [
+          lineNumbers(), highlightActiveLineGutter(), highlightActiveLine(), drawSelection(), history(), indentOnInput(), bracketMatching(), closeBrackets(),
+          syntaxHighlighting(classHighlighter), languageExtension(language),
+          EditorState.tabSize.of(language === "python" || language === "java" ? 4 : 2),
+          EditorState.readOnly.of(!editable), EditorView.editable.of(editable),
+          editorPlaceholder(kind === "preview" ? `Write ${CODE_LANGUAGE_LABELS[language]} here` : `Write ${CODE_LANGUAGE_LABELS[language]} here, then Run`),
+          EditorView.contentAttributes.of({ "aria-labelledby": labelId, spellcheck: "false", autocorrect: "off", autocapitalize: "off" }),
+          keymap.of([
+            { key: "Mod-Enter", run: () => { latest.current.run(); return true; } },
+            { key: "Shift-Enter", run: () => { if (kind !== "run") return false; latest.current.run(); return true; } },
+            { key: "Escape", run: (target) => { target.contentDOM.blur(); return true; } },
+            ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab,
+          ]),
+          EditorView.updateListener.of((update) => {
+            if (!update.docChanged) return;
+            const next = update.state.doc.toString();
+            setText(next);
+            latest.current.text = next;
+            if (!latest.current.scope?.save) return;
+            if (pending.current) clearTimeout(pending.current);
+            pending.current = setTimeout(flush, SAVE_DELAY_MS);
+          }),
+          EditorView.domEventHandlers({ blur: () => { flush(); } }),
+        ],
+      }),
+    });
+    view.current = editor;
+    return () => { flush(); editor.destroy(); view.current = null; };
+    // The editor is made once per cell; its text is updated below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A change made elsewhere (another device, the AI, undo in the document) replaces the editor's text when this cell has nothing unsaved.
+  useEffect(() => {
+    const editor = view.current;
+    if (!editor || stored(source) === stored(saved.current)) return;
+    const current = editor.state.doc.toString();
+    if (pending.current || conflictRef.current) { if (stored(current) === stored(source)) { saved.current = source; setConflict(false); } return; }
+    saved.current = source;
+    if (stored(current) !== stored(source)) editor.dispatch({ changes: { from: 0, to: current.length, insert: source } });
+  }, [source, conflict]);
+
+  // Saves on the way out of the page too, so a closed tab never drops the last keystrokes.
+  useEffect(() => {
+    const onHide = () => flush();
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => () => abort.current?.abort(), []);
+
+  async function run() {
+    if (kind !== "run" || language === "html" || language === "css") return;
+    if (running) { abort.current?.abort(); return; }
+    flush();
+    const code = view.current?.state.doc.toString() ?? text;
+    const controller = new AbortController();
+    abort.current = controller;
+    setRunning(true);
+    setOutput([]);
+    setResult(null);
+    setStatus("Starting…");
+    const cells = scope?.cells ?? [];
+    const setup = language === "sql" ? sqlSetup(cells, (scope?.offset ?? 0) + index) : [];
+    const lines: OutputLine[] = [];
+    let frame = 0;
+    const show = () => { frame = 0; setOutput([...lines]); };
+    const onEvent = (event: RunEvent) => {
+      if (event.type === "status") { setStatus(event.text); return; }
+      if (event.type === "table") lines.push({ kind: "table", columns: event.columns, rows: event.rows, note: event.note });
+      else {
+        const last = lines.at(-1);
+        // Keep output to a sane size: a loop printing a million lines would otherwise freeze the page.
+        if (lines.length > 2000) return;
+        if (last && last.kind === event.stream && "text" in last && last.text.length < 20000) last.text += `\n${event.text}`;
+        else lines.push({ kind: event.stream, text: event.text });
+      }
+      if (!frame) frame = requestAnimationFrame(show);
+    };
+    const outcome = await runCode(language, code, { setup, onEvent, signal: controller.signal });
+    if (frame) cancelAnimationFrame(frame);
+    setOutput([...lines]);
+    if (abort.current === controller) abort.current = null;
+    setRunning(false);
+    setStatus("");
+    setResult(outcome);
+  }
+  latest.current = { scope, index, language, text, run: () => { void run(); } };
+
+  const page = useMemo(() => {
+    if (kind !== "preview") return null;
+    const own = (scope?.offset ?? 0) + index;
+    const cells = [...(scope?.cells ?? [])];
+    // This cell's own text is what's in its editor, which may be ahead of what's saved.
+    cells[own] = { language, source: text };
+    for (let at = 0; at < own; at += 1) cells[at] ??= { language: "css", source: "" };
+    const found = previewPage(cells, own);
+    // CSS right under its HTML (with only CSS between) shows in that HTML's preview instead of a second copy.
+    const attached = language === "css" && found.htmlIndex !== null && cells.slice(found.htmlIndex + 1, own).every((cell) => cell.language === "css");
+    return { ...found, attached };
+  }, [kind, scope, index, text, language]);
+
+  const empty = !output.length && !result && !running;
+  return <div className={`code-cell is-${language}${dark ? " is-dark" : ""}`} data-code-cell={language}
+    onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()} onKeyDown={(event) => event.stopPropagation()}>
+    <div className="code-cell-head">
+      <span className="code-cell-language" id={labelId}>{CODE_LANGUAGE_LABELS[language]}</span>
+      {!editable && <span className="code-cell-note">Read only</span>}
+      <span className="code-cell-spacer" />
+      {kind === "run" && <>
+        {!empty && !running && <button type="button" className="code-cell-button is-quiet" onClick={() => { setOutput([]); setResult(null); }}>Clear</button>}
+        <button type="button" className={`code-cell-button${running ? " is-stop" : " is-run"}`} onClick={() => void run()} title={running ? "Stop" : "Run (⌘/Ctrl+Enter)"}>
+          {running ? "■ Stop" : "▶ Run"}
+        </button>
+      </>}
+    </div>
+    <div className="code-cell-editor" ref={host} />
+    {conflict && <div className="code-cell-conflict" role="alert">
+      This code changed somewhere else, so your edit here wasn't saved.
+      <button type="button" className="code-cell-button is-quiet" onClick={() => void navigator.clipboard?.writeText(view.current?.state.doc.toString() ?? text)}>Copy my version</button>
+      <button type="button" className="code-cell-button is-quiet" onClick={() => {
+        if (pending.current) { clearTimeout(pending.current); pending.current = null; }
+        const editor = view.current;
+        if (editor) editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: source } });
+        saved.current = source;
+        setConflict(false);
+      }}>Use the saved version</button>
+    </div>}
+    {kind === "run" && !empty && <div className="code-cell-output" aria-live="polite">
+      {running && status && <div className="code-cell-status">{status}</div>}
+      {output.map((line, at) => line.kind === "table"
+        ? <div className="code-cell-table" key={at}>
+            <div className="code-cell-table-scroll"><table>
+              <thead><tr>{line.columns.map((column, col) => <th key={col}>{column}</th>)}</tr></thead>
+              <tbody>{line.rows.map((row, r) => <tr key={r}>{row.map((value, col) => <td key={col} className={value === null ? "is-null" : undefined}>{value === null ? "NULL" : value instanceof Uint8Array ? `<${value.length} bytes>` : String(value)}</td>)}</tr>)}</tbody>
+            </table></div>
+            <div className="code-cell-table-note">{line.note}</div>
+          </div>
+        : <pre key={at} className={`code-cell-stream is-${line.kind}`}>{line.text}</pre>)}
+      {result?.error && <pre className="code-cell-error">{result.error}</pre>}
+      {result && !running && <div className="code-cell-result">
+        {result.stopped ? "Stopped." : result.ok ? `${output.length ? "Done" : "Done, nothing printed"} in ${formatMs(result.ms)}.` : `Failed after ${formatMs(result.ms)}.`}
+      </div>}
+    </div>}
+    {page && (page.attached
+      ? <div className="code-cell-hint">These styles show in the HTML preview above.</div>
+      : <CodePreview html={page.html} css={page.css} dark={dark} sample={page.htmlIndex === null} />)}
+  </div>;
+}
+
+function formatMs(ms: number) {
+  return ms < 1000 ? `${Math.max(1, Math.round(ms))} ms` : `${(ms / 1000).toFixed(1)} s`;
+}
+
+/** Reports the page's height so the frame grows with it; the frame has no origin, so the parent can't measure it. */
+const SIZE_SCRIPT = `<script>(function(){var last=0;function send(){var h=Math.ceil(document.documentElement.scrollHeight);if(h!==last){last=h;parent.postMessage({codePreviewHeight:h},"*");}}addEventListener("load",send);new ResizeObserver(send).observe(document.documentElement);setInterval(send,1000);})();<\/script>`;
+
+function CodePreview({ html, css, dark, sample }: { html: string; css: string[]; dark: boolean; sample: boolean }) {
+  const frame = useRef<HTMLIFrameElement>(null);
+  const [doc, setDoc] = useState(() => previewDocument(html, css, dark) + SIZE_SCRIPT);
+  const [height, setHeight] = useState(160);
+  useEffect(() => {
+    const timer = setTimeout(() => setDoc(previewDocument(html, css, dark) + SIZE_SCRIPT), PREVIEW_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [html, css, dark]);
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.source !== frame.current?.contentWindow) return;
+      const value = (event.data as { codePreviewHeight?: unknown })?.codePreviewHeight;
+      if (typeof value === "number" && Number.isFinite(value)) setHeight(Math.min(560, Math.max(60, value)));
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+  return <div className="code-cell-preview">
+    <div className="code-cell-preview-label">{sample ? "Preview on a sample page" : "Preview"}</div>
+    <iframe ref={frame} title="HTML preview" sandbox="allow-scripts" srcDoc={doc} style={{ height }} />
+  </div>;
+}

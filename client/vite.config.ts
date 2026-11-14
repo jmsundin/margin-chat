@@ -2,6 +2,7 @@ import { fileURLToPath } from "node:url";
 import { defineConfig, loadEnv, type ProxyOptions } from "vite";
 import react from "@vitejs/plugin-react";
 import { excalidrawAssetsPlugin } from "./build/excalidraw-assets.mjs";
+import { codeRunnerAssetsPlugin } from "./build/code-runner-assets.mjs";
 import { offlineAppShellPlugin } from "./build/offline-service-worker.mjs";
 import { appVersionFilePlugin, resolveAppCommit, resolveAppCommitTime } from "./build/app-version.mjs";
 import { desktopBundlePlugin } from "./build/desktop-bundle.mjs";
@@ -48,7 +49,7 @@ export default defineConfig(({ mode }) => {
 
   return {
     envDir: "..",
-    plugins: [react(), excalidrawAssetsPlugin(), appVersionFilePlugin({ commit, committedAt }), bootSnapshotPlugin(), offlineAppShellPlugin(), desktopBundlePlugin({ commit, committedAt })],
+    plugins: [react(), excalidrawAssetsPlugin(), codeRunnerAssetsPlugin(), appVersionFilePlugin({ commit, committedAt }), bootSnapshotPlugin(), offlineAppShellPlugin(), desktopBundlePlugin({ commit, committedAt })],
     define: {
       "process.env.IS_PREACT": "false",
       "import.meta.env.VITE_APP_COMMIT": JSON.stringify(commit),

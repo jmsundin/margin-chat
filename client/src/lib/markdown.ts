@@ -6,6 +6,7 @@ import {
   type Tokens,
 } from "marked";
 import hljs from "highlight.js/lib/core";
+import { runnableLanguage } from "./codeRunner/languages";
 import bash from "highlight.js/lib/languages/bash";
 import css from "highlight.js/lib/languages/css";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -119,9 +120,12 @@ const renderer: RendererObject = {
     const languageAttribute = language
       ? ` data-language="${escapeAttribute(language)}"`
       : "";
+    // Code a document can run (SQL, Python, JS, TS, Java, HTML, CSS) is marked for MarkdownMessage to turn into a code cell.
+    const runnable = runnableLanguage(token.lang);
+    const runnableAttribute = runnable ? ` data-runnable="${runnable}"` : "";
 
     return [
-      `<pre class="message-code-block"${languageAttribute}>`,
+      `<pre class="message-code-block"${languageAttribute}${runnableAttribute}>`,
       `<code class="hljs${languageClass}">${highlighted}</code>`,
       "</pre>",
     ].join("");
@@ -303,7 +307,7 @@ const obsidianMarkdown = new Marked({
 
 function sanitizeMarkdown(rendered: string) {
   return DOMPurify.sanitize(rendered, {
-    ADD_ATTR: ["data-callout", "data-language", "data-note-target", "rel", "target"],
+    ADD_ATTR: ["data-callout", "data-language", "data-runnable", "data-note-target", "rel", "target"],
   });
 }
 

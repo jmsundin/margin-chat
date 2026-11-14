@@ -1,6 +1,10 @@
 import {
+  lazy,
+  Suspense,
+  useContext,
   useEffect,
   useId,
+  useMemo,
   useLayoutEffect,
   useRef,
   useState,
@@ -20,10 +24,17 @@ import {
   type MessageDecoration,
 } from "../lib/messageDecorations";
 import type { ConversationNote, MessageAnchorLink, SelectionDraft } from "../types";
+import { findRunnableFences } from "../lib/codeRunner/languages";
+import { CodeCellScopeContext, type CodeCellScope } from "../lib/codeRunner/codeCellScope";
+
+const CodeCell = lazy(() => import("./CodeCell"));
+const RUNNABLE_BLOCK = /<pre class="message-code-block"[^>]*\sdata-runnable="[a-z]+"[^>]*>[\s\S]*?<\/pre>/gu;
 
 interface MarkdownMessageProps {
   anchors: MessageAnchorLink[];
   className?: string;
+  /** Show SQL, Python, JS, TS, Java, HTML and CSS code blocks as runnable cells (documents). */
+  codeCells?: boolean;
   content: string;
   conversationId: string;
   enableMermaidRendering: boolean;
@@ -272,6 +283,7 @@ function applyDecorations(
 export default function MarkdownMessage({
   anchors,
   className,
+  codeCells = false,
   content,
   conversationId,
   enableMermaidRendering,
@@ -310,7 +322,22 @@ export default function MarkdownMessage({
     x: 0,
     y: 0,
   });
-  const renderedHtml = obsidian ? renderObsidianMarkdownToHtml(content) : renderMarkdownToHtml(content);
+  const fullHtml = obsidian ? renderObsidianMarkdownToHtml(content) : renderMarkdownToHtml(content);
+  // Runnable code blocks become slots that code cells fill. The page around them is
+  // drawn from this "skeleton", so typing in a cell (which changes the Markdown)
+  // doesn't redraw the page and take the cell's focus away.
+  const fences = useMemo(() => codeCells ? findRunnableFences(content) : [], [codeCells, content]);
+  const renderedHtml = useMemo(() => {
+    if (!fences.length) return fullHtml;
+    const blocks = fullHtml.match(RUNNABLE_BLOCK) ?? [];
+    // Fences inside lists or quotes can read differently; then leave every block as plain code.
+    if (blocks.length !== fences.length) return fullHtml;
+    let index = 0;
+    return fullHtml.replace(RUNNABLE_BLOCK, () => `<div class="code-cell-slot" data-code-cell-slot="${index++}"></div>`);
+  }, [fences, fullHtml]);
+  const [cellSlots, setCellSlots] = useState<HTMLElement[]>([]);
+  const outerScope = useContext(CodeCellScopeContext);
+  const cellScope = useMemo<CodeCellScope>(() => outerScope ?? { cells: fences.map(({ language, source }) => ({ language, source })), offset: 0 }, [outerScope, fences]);
   const decorations = buildMessageDecorations(anchors, notes, pendingSelection);
   const decorationsKey = getMessageDecorationKey(decorations);
 
@@ -536,6 +563,8 @@ export default function MarkdownMessage({
     }
 
     root.innerHTML = renderedHtml;
+    const slots = [...root.querySelectorAll<HTMLElement>("[data-code-cell-slot]")];
+    setCellSlots((current) => current.length === slots.length && current.every((slot, index) => slot === slots[index]) ? current : slots);
     root
       .querySelectorAll<HTMLElement>("h1, h2, h3")
       .forEach((heading, headingIndex) => {
@@ -872,6 +901,19 @@ export default function MarkdownMessage({
         onKeyDown={handleMarkdownKeyDown}
       />
       {viewerOverlay}
+      {cellSlots.map((slot, index) => {
+        const fence = fences[index];
+        if (!fence || !slot.isConnected) return null;
+        return createPortal(
+          <CodeCellScopeContext.Provider value={cellScope}>
+            <Suspense fallback={<pre className="message-code-block code-cell-loading">{fence.source}</pre>}>
+              <CodeCell dark={theme === "dark"} index={index} language={fence.language} source={fence.source} />
+            </Suspense>
+          </CodeCellScopeContext.Provider>,
+          slot,
+          `code-cell-${index}`,
+        );
+      })}
     </>
   );
 }
