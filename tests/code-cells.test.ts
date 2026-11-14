@@ -6,7 +6,7 @@ import { findRunnableFences, javaProgram, previewDocument, previewPage, replaceF
 import { JAVASCRIPT_WORKER, SQL_WORKER } from "../client/src/lib/codeRunner/workers";
 
 // The Markdown renderer sanitizes with DOMPurify, which needs a window when it loads.
-Object.defineProperty(globalThis, "window", { configurable: true, value: new Window({ url: "http://fixture.test" }) });
+Object.defineProperty(globalThis, "window", { configurable: true, writable: true, value: new Window({ url: "http://fixture.test" }) });
 // When another test loaded DOMPurify first without a window, give its shared instance one.
 const { default: DOMPurify } = await import("dompurify");
 if (typeof DOMPurify.sanitize !== "function") Object.assign(DOMPurify, DOMPurify(globalThis.window as never));
