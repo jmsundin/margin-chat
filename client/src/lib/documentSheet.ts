@@ -16,7 +16,6 @@ export const SHEET_MARGIN_MIN_WIDTH = 1000;
 export const SHEET_PEEK = 84;
 /** A docked map narrower than this drops its toolbars and shows only the map. */
 export const SHEET_NARROW_MAP = 430;
-const SNAP = 70;
 /** The document pane never gets narrower than this while the split is open. */
 export const SHEET_MIN_DOCUMENT = 360;
 /** Dragging the divider this close to the right edge puts the document away. */
@@ -47,21 +46,21 @@ function getMaxDockedMap(width: number) {
 }
 
 /**
- * Where a dragged divider settles. With a mouse it stays where it is let go unless a stop is near; at the
- * far right edge the document is put away, and near the left edge the page covers the map again. On a
- * phone it always lands on a stop, carried on by a flick (`velocity`, pixels per frame).
+ * Where a dragged divider settles. With a mouse it stays exactly where it is let go: it never snaps to a
+ * stop, because the split opens on one and a short drag would spring straight back. At the far right edge
+ * the document is put away, and near the left edge the page covers the map again. On a phone it always
+ * lands on a stop, carried on by a flick (`velocity`, pixels per frame).
  */
 export function settleDocumentSheet(edge: DocumentSheetEdge, size: number, width: number, height: number, velocity = 0): DocumentSheet {
-  const stops = getDocumentSheetStops(edge, width, height);
   if (edge === "top") {
+    const stops = getDocumentSheetStops(edge, width, height);
     const goal = size + velocity * 12;
     const nearest = [0, ...stops].reduce((best, stop) => Math.abs(stop - goal) < Math.abs(best - goal) ? stop : best, 0);
     return nearest === 0 ? PAGE_SHEET : { mode: "docked", size: nearest };
   }
   if (size > width - PUT_AWAY) return { mode: "map", size: 0 };
   if (size < 60) return PAGE_SHEET;
-  const nearest = stops.reduce((best, stop) => Math.abs(stop - size) < Math.abs(best - size) ? stop : best, stops[0]);
-  return { mode: "docked", size: Math.min(getMaxDockedMap(width), Math.abs(nearest - size) < SNAP ? nearest : Math.round(size)) };
+  return { mode: "docked", size: Math.min(getMaxDockedMap(width), Math.round(size)) };
 }
 
 /** A remembered size still has to fit the window it comes back to. */
