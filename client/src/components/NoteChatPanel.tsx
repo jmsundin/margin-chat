@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { Message } from "../types";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
@@ -19,6 +19,8 @@ export interface NoteChatPanelProps {
   onClose: () => void;
   /** Where an unsent question is kept on this device, so a reload doesn't lose it. */
   draftKey?: string;
+  /** How the AI works in this note (Tell the AI, how it joins in), under the title. */
+  settings?: ReactNode;
 }
 
 function Answer({ content }: { content: string }) {
@@ -38,10 +40,10 @@ function TryNext({ items, onPick, label = TRY_NEXT_HEADING }: { items: string[];
 }
 
 /**
- * Ask about this note: a quiet panel at the right of the page. Answers use the whole note, quote
+ * Ask: a quiet panel at the right of the page. Answers use the whole note, quote
  * the passages they lean on, and end with a short "Try next" list; picking one puts it in the box.
  */
-export default function NoteChatPanel({ open, title, messages, pending, onAsk, onStop, onClose, draftKey }: NoteChatPanelProps) {
+export default function NoteChatPanel({ open, title, messages, pending, onAsk, onStop, onClose, draftKey, settings }: NoteChatPanelProps) {
   const [draft, setDraftText] = useState(() => draftKey ? loadTextDraft(draftKey) : "");
   const setDraft = (text: string) => {
     setDraftText(text);
@@ -94,11 +96,12 @@ export default function NoteChatPanel({ open, title, messages, pending, onAsk, o
   return createPortal(<aside className="note-chat" role="complementary" aria-labelledby={titleId}>
     <header className="note-chat-head">
       <div>
-        <h2 id={titleId}>Ask about this note</h2>
+        <h2 id={titleId}>Ask</h2>
         <p className="note-chat-subtitle">{title}</p>
       </div>
-      <button type="button" className="note-chat-close" aria-label="Close Ask about this note" onClick={onClose}>×</button>
+      <button type="button" className="note-chat-close" aria-label="Close Ask" onClick={onClose}>×</button>
     </header>
+    {settings ? <div className="note-chat-settings">{settings}</div> : null}
     <div ref={logRef} className="note-chat-log" aria-live="polite">
       {turns.length ? turns.map((message) => message.role === "user"
         ? <p key={message.id} className="note-chat-question">{message.content}</p>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { getDocumentBlockAuthorship, type DocumentBlock, type Message } from "@margin-chat/workspace-contracts";
 import { apiFetch } from "./apiTransport";
 
@@ -223,18 +223,23 @@ const ONLY_MINE_KEY = "margin-chat:authorship-only-mine";
 const readStored = (key: string) => { try { return window.localStorage.getItem(key); } catch { return null; } };
 const writeStored = (key: string, value: string) => { try { window.localStorage.setItem(key, value); } catch { /* the choice lasts this visit */ } };
 
+const authorshipListeners = new Set<() => void>();
+function subscribeAuthorshipView(listener: () => void) { authorshipListeners.add(listener); return () => { authorshipListeners.delete(listener); }; }
+function readAuthorshipChoice() { return `${readStored(MODE_KEY) ?? ""}|${readStored(ONLY_MINE_KEY) ?? ""}`; }
+
+export function readAuthorshipMode(): AuthorshipMode {
+  const stored = readStored(MODE_KEY);
+  return stored === "mine" || stored === "blame" ? stored : "off";
+}
+export function readAuthorshipOnlyMine() { return readStored(ONLY_MINE_KEY) === "1"; }
+/** Shared by every page and the document menu, so a change in one shows in all. */
+export function saveAuthorshipMode(next: AuthorshipMode) { writeStored(MODE_KEY, next); authorshipListeners.forEach((listener) => listener()); }
+export function saveAuthorshipOnlyMine(next: boolean) { writeStored(ONLY_MINE_KEY, next ? "1" : "0"); authorshipListeners.forEach((listener) => listener()); }
+
 /** Off, Mine or Blame, remembered on this device for every document. */
 export function useAuthorshipMode() {
-  const [mode, setMode] = useState<AuthorshipMode>(() => {
-    const stored = readStored(MODE_KEY);
-    return stored === "mine" || stored === "blame" ? stored : "off";
-  });
-  const [onlyMine, setOnlyMine] = useState(() => readStored(ONLY_MINE_KEY) === "1");
-  return {
-    mode, onlyMine,
-    setMode(next: AuthorshipMode) { setMode(next); writeStored(MODE_KEY, next); },
-    setOnlyMine(next: boolean) { setOnlyMine(next); writeStored(ONLY_MINE_KEY, next ? "1" : "0"); },
-  };
+  useSyncExternalStore(subscribeAuthorshipView, readAuthorshipChoice, () => "");
+  return { mode: readAuthorshipMode(), onlyMine: readAuthorshipOnlyMine(), setMode: saveAuthorshipMode, setOnlyMine: saveAuthorshipOnlyMine };
 }
 
 const REFRESH_AFTER_EDIT_MS = 4000;

@@ -1772,9 +1772,10 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       const focus = props.onHistory(event.shiftKey ? "redo" : "undo");
       if (focus) { pendingHistoryFocus.current = focus; setHistoryRevision((revision) => revision + 1); setAnnouncement(event.shiftKey ? "Edit redone." : "Edit undone."); }
     }}>
-    <div className={`live-document-modes${props.compactModes ? " is-compact" : ""}`} role="toolbar" aria-label="Document view">
+    {/* The quiet page keeps Live Preview, Source and Reading in the document's ⋯ menu (and ⌘E), so its row shows only when it holds something. */}
+    {props.compactModes && !props.toolbarStart && !languagePair ? null : <div className={`live-document-modes${props.compactModes ? " is-compact" : ""}`} role="toolbar" aria-label="Document view">
       {props.toolbarStart}
-      {props.compactModes ? <div className="live-document-view-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setViewMenuOpen(false); }}>
+      {props.compactModes ? !languagePair ? null : <div className="live-document-view-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setViewMenuOpen(false); }}>
         <button type="button" className="live-document-view-trigger" aria-haspopup="menu" aria-expanded={viewMenuOpen}
           title="How this page shows its Markdown (⌘E switches to Reading)"
           onMouseDown={(event) => event.preventDefault()} onClick={() => setViewMenuOpen((open) => !open)}>
@@ -1799,7 +1800,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
         {learning ? <button type="button" aria-pressed={Boolean(languagePair)} title="Language learning: tap, click or select text to see what it means"
           onMouseDown={(event) => event.preventDefault()} onClick={() => setLanguageLearning(!languagePair)}>Language</button> : null}
       </>}
-    </div>
+    </div>}
     {languagePair && learning ? <LanguageLearningBar pair={languagePair} onChange={(pair) => { rememberLanguagePair(pair); learning.onChange(pair); }} /> : null}
     {lookup && languagePair && learning ? <LanguageLookupPopup target={lookup} pair={languagePair} learning={learning} onClose={closeLookup}
       containerWidth={rootRef.current?.clientWidth ?? 360} /> : null}

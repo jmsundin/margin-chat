@@ -168,10 +168,10 @@ async function testMobileSelectionActions() {
   const sourceBlocks = structuredClone(latest.conversations.source.document!.blocks);
   const { current, from } = await selectSourcePassage();
   const actionBar = element('[data-testid="branch-composer"]');
-  for (const label of ["Copy", "Highlight", "Note", "Link", "Ask AI", "More"]) assert(button(label, actionBar), `The selection bar offers ${label}.`);
+  for (const label of ["Copy", "Note", "Link", "Ask AI", "More"]) assert(button(label, actionBar), `The selection bar offers ${label}.`);
   await click(button("More", actionBar));
   const more = actionBar.querySelector('[role="group"][aria-label="More selection actions"]'); assert(more, "Missing More actions");
-  for (const label of ["Cut", "Paste", "Select all", "Explain", "Rewrite"]) assert(button(label, more), `More offers ${label} in place of the system menu.`);
+  for (const label of ["Cut", "Paste", "Select all", "Highlight", "Explain", "Rewrite"]) assert(button(label, more), `More offers ${label} in place of the system menu.`);
   await click(button("More", actionBar));
   const longPress = new browser.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
   current.view.dom.dispatchEvent(longPress);
@@ -304,6 +304,7 @@ async function testMobileSelectionActions() {
   checks.push("Ask uses a compact normal typing field, retains context through model selection, and generates only on send");
 
   await selectSourcePassage();
+  await click(button("More", element('[data-testid="branch-composer"]')));
   await click(element('[aria-label="Highlight selected text"]'));
   assert.equal(latest.conversations.source.document!.blocks.find((block) => block.id === "source-block")!.content,
     "Alpha ==selected passage== omega.", "Highlight marks the passage in the document's Markdown.");
