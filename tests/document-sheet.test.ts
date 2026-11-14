@@ -16,11 +16,13 @@ describe("the document as a sheet on the map", () => {
     expect(getDefaultDocumentSheet("top", 390, 700)).toEqual({ mode: "docked", size: 322 });
   });
 
-  test("a dragged divider snaps to a near stop, stays put between stops, never floats the document, then puts it away", () => {
+  test("a dragged divider stays where it is let go, never floats the document, then puts it away", () => {
     expect(settleDocumentSheet("left", 20, 1280, 800)).toEqual({ mode: "page", size: 0 });
-    expect(settleDocumentSheet("left", 330, 1280, 800)).toEqual({ mode: "docked", size: 300 });
+    expect(settleDocumentSheet("left", 330, 1280, 800)).toEqual({ mode: "docked", size: 330 });
     expect(settleDocumentSheet("left", 470, 1280, 800)).toEqual({ mode: "docked", size: 470 });
-    expect(settleDocumentSheet("left", 610, 1280, 800)).toEqual({ mode: "docked", size: 640 });
+    // The split opens at half; a short drag from there must not spring back to it.
+    expect(settleDocumentSheet("left", 610, 1280, 800)).toEqual({ mode: "docked", size: 610 });
+    expect(settleDocumentSheet("left", 680.4, 1280, 800)).toEqual({ mode: "docked", size: 680 });
     expect(settleDocumentSheet("left", 900, 1280, 800)).toEqual({ mode: "docked", size: 900 });
     // The document keeps at least 360px to read in.
     expect(settleDocumentSheet("left", 1060, 1280, 800)).toEqual({ mode: "docked", size: 920 });
