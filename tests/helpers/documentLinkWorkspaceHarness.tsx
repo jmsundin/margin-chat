@@ -141,7 +141,8 @@ async function selectSourcePassage() {
 async function selectPassage() {
   await selectSourcePassage();
   const toolbar = element('[role="toolbar"][aria-label="Selected text actions"]');
-  for (const label of ["Note", "Side doc", "Link", "Ask AI"]) assert(button(label, toolbar), `The selection toolbar offers ${label}.`);
+  for (const label of ["Note", "Link", "Ask AI"]) assert(button(label, toolbar), `The selection toolbar offers ${label}.`);
+  assert(![...toolbar.querySelectorAll("button")].some((item: any) => item.textContent?.trim().startsWith("Side doc")), "Notes and side documents are one thing: the toolbar offers only Note.");
   assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Selecting text shows the toolbar, not a prompt.");
   await click(element('[aria-label="Ask AI about this passage"]'));
   assert(element('[aria-label="Branch prompt"]'), "Ask AI opens the prompt under the toolbar.");
@@ -167,7 +168,7 @@ async function testMobileSelectionActions() {
   const sourceBlocks = structuredClone(latest.conversations.source.document!.blocks);
   const { current, from } = await selectSourcePassage();
   const actionBar = element('[data-testid="branch-composer"]');
-  for (const label of ["Copy", "Highlight", "Note", "Side doc", "Link", "Ask AI", "More"]) assert(button(label, actionBar), `The selection bar offers ${label}.`);
+  for (const label of ["Copy", "Highlight", "Note", "Link", "Ask AI", "More"]) assert(button(label, actionBar), `The selection bar offers ${label}.`);
   await click(button("More", actionBar));
   const more = actionBar.querySelector('[role="group"][aria-label="More selection actions"]'); assert(more, "Missing More actions");
   for (const label of ["Cut", "Paste", "Select all", "Explain", "Rewrite"]) assert(button(label, more), `More offers ${label} in place of the system menu.`);

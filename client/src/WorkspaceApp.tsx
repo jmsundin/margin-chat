@@ -17,7 +17,8 @@ import { applySelectionFormat, hasSelectionFormat, type SelectionFormat } from "
 import { copySelection, hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
-import { canMoveToMargin, createMarginDocument, isCompactDocument, marginNoteToSideDocument, sideDocumentToMarginNote, isHiddenFromAI } from "@margin-chat/workspace-contracts";
+import { canMoveToMargin, createMarginDocument, isCompactDocument as isMarginNoteDocument, sideDocumentToMarginNote, isHiddenFromAI } from "@margin-chat/workspace-contracts";
+import { getNoteSnap as getNoteSnapFor, loadNotesBeside, saveNotesBeside } from "./lib/notesBeside";
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
 import "./document-workspace.css";
@@ -795,6 +796,14 @@ function WorkspaceAppContent({
   const localDirectoryStatus = vault.localDirectoryStatus;
   const [mainViewMode, setMainViewMode] = useState<MainViewMode>("chat");
   const [closedMarginNotes, setClosedMarginNotes] = useState<Record<string, boolean>>({});
+  // Notes opened beside the page. A note is one kind of document wherever it shows: in its page's margin,
+  // or opened beside the page like any other document. Opening it beside changes how it shows, never its data.
+  const [notesBeside, setNotesBeside] = useState<string[]>(() => loadNotesBeside());
+  const notesBesideSet = useMemo(() => new Set(notesBeside), [notesBeside]);
+  const [noteSnapHint, setNoteSnapHint] = useState<{ id: string; snap: "page" | "margin" } | null>(null);
+  useEffect(() => { saveNotesBeside(notesBeside); }, [notesBeside]);
+  /** A note that sits in its page's margin now, so not one opened beside the page. */
+  const isCompactDocument = (conversation: Conversation | undefined) => isMarginNoteDocument(conversation) && !notesBesideSet.has(conversation!.id);
   // One document filling the window; everything else stays mounted underneath so restoring is exact.
   const [maximizedDocumentId, setMaximizedDocumentId] = useState<string | null>(null);
   const [marginResizePreviews, setMarginResizePreviews] = useState<Record<string, MarginDocumentSize | undefined>>({});
@@ -1036,6 +1045,8 @@ function WorkspaceAppContent({
   const panelResizeStateRef = useRef<{
     conversationId: string;
     originWidth: number;
+    /** The width the pointer asks for, before it is held between the smallest and largest pane. */
+    requestedWidth?: number;
     previousWidthOverride: number | undefined;
     latestWidth: number;
     startClientX: number;
@@ -1273,6 +1284,30 @@ function WorkspaceAppContent({
       if (before.rail) setState((current) => current.railOpen ? current : { ...current, railOpen: true });
     }
   }, [maximizedDocumentId]);
+  /** Where a note opened beside its page would go if the drag ended here: the whole page, back to the margin, or nowhere. */
+  function getNoteSnap(conversationId: string, requestedWidth: number, pointerX: number, leftEdge: boolean) {
+    if (!notesBesideSet.has(conversationId)) return null;
+    const box = canvasRef.current?.getBoundingClientRect();
+    return getNoteSnapFor({ requestedWidth, pointerX, leftEdge, roomLeft: box?.left ?? 0, roomWidth: box?.width || window.innerWidth });
+  }
+  const showNoteSnapHint = useEffectEvent((conversationId: string, requestedWidth: number, pointerX: number, leftEdge: boolean) => {
+    const snap = getNoteSnap(conversationId, requestedWidth, pointerX, leftEdge);
+    setNoteSnapHint((current) => current?.id === conversationId && current.snap === snap ? current : snap ? { id: conversationId, snap } : null);
+  });
+  const snapResizedNote = useEffectEvent((conversationId: string, requestedWidth: number, pointerX: number, leftEdge: boolean) => {
+    const snap = getNoteSnap(conversationId, requestedWidth, pointerX, leftEdge);
+    if (snap === "page") {
+      setMaximizedDocumentId(conversationId);
+      if (state.activeConversationId !== conversationId) handleFocusVisibleDocument(conversationId);
+    } else if (snap === "margin") handlePutNoteBack(conversationId);
+    return snap !== null;
+  });
+  /** Leaves a note's full page for the page it belongs to, with the note beside it again. */
+  function handleLeaveNotePage(conversationId: string) {
+    setMaximizedDocumentId(null);
+    const parentId = state.conversations[conversationId]?.parentId;
+    if (parentId) handleFocusVisibleDocument(parentId);
+  }
   const toggleMaximizedDocument = useEffectEvent((id: string) => {
     setMaximizedDocumentId((current) => current === id ? null : id);
     if (state.activeConversationId !== id) handleFocusVisibleDocument(id);
@@ -1859,7 +1894,12 @@ function WorkspaceAppContent({
       const completed = event instanceof PointerEvent && event.type === "pointerup";
       if (completed) handleChatPanelResizePointerMove(event);
       panelResizeStateRef.current = null;
-      if (completed && resizeState.latestWidth !== resizeState.originWidth) {
+      setNoteSnapHint(null);
+      // A note opened beside its page, dragged far enough, becomes the whole page or goes back to the margin.
+      const snapped = completed && snapResizedNote(resizeState.conversationId, resizeState.requestedWidth ?? resizeState.latestWidth,
+        event.clientX, resizeState.direction === -1);
+      if (snapped) restorePanelWidthOverride(resizeState);
+      else if (completed && resizeState.latestWidth !== resizeState.originWidth) {
         setState((current) => setDocumentWidth(current, resizeState.conversationId, resizeState.latestWidth));
       }
       if (!completed) pendingPanelResizeScroll.current = resizeState.startScrollLeft;
@@ -1886,6 +1926,8 @@ function WorkspaceAppContent({
         maxWidth: resizeState.maxWidth,
       });
       resizeState.latestWidth = next.width;
+      resizeState.requestedWidth = resizeState.originWidth + (event.clientX - resizeState.startClientX) * resizeState.direction;
+      showNoteSnapHint(resizeState.conversationId, resizeState.requestedWidth, event.clientX, resizeState.direction === -1);
       // In a horizontal flow, compensate scrolling when moving the left edge
       // so the document's opposite edge stays in place where the canvas allows.
       pendingPanelResizeScroll.current = resizeState.startScrollLeft
@@ -4193,23 +4235,28 @@ function WorkspaceAppContent({
   }
 
   /**
-   * A margin note that outgrew the margin becomes a side document: the same document, id and text,
-   * minus its margin-note flag. Its passage link carries over, and it opens right after its host, ready to write in.
+   * Opens a note beside its page, like any other document: the same note, id and text, shown wider.
+   * Nothing about the note changes; putting it away shows it in the margin again, level with its passage.
    */
-  function handleMoveMarginNoteToSideDocument(conversationId: string) {
+  function handleOpenNoteBeside(conversationId: string) {
     const conversation = state.conversations[conversationId];
-    if (!conversation?.document?.marginNote) return;
-    setState((current) => {
-      const target = current.conversations[conversationId];
-      if (!target?.document?.marginNote) return current;
-      const next = focusDocument({ ...current, conversations: { ...current.conversations,
-        [conversationId]: marginNoteToSideDocument(target) } }, conversationId);
-      return placeDocumentAfterParent(next, conversationId);
-    });
-    // The menu click focused the host pane first; the new pane should still scroll into view.
+    if (!isMarginNoteDocument(conversation)) return;
+    setNotesBeside((current) => current.includes(conversationId) ? current : [...current, conversationId]);
+    setState((current) => current.conversations[conversationId]
+      ? placeDocumentAfterParent(focusDocument(current, conversationId), conversationId) : current);
+    // Clicking the note focused its page first; the opened note should still scroll into view.
     suppressNextChatAutoCenterRef.current = false;
     setDocumentFocusSequence((sequence) => sequence + 1);
-    focusNewDocumentEditor(conversationId);
+  }
+
+  /** Puts a note opened beside its page back in the page's margin, and goes back to the page. */
+  function handlePutNoteBack(conversationId: string) {
+    if (!notesBesideSet.has(conversationId)) return false;
+    setNotesBeside((current) => current.filter((id) => id !== conversationId));
+    const parentId = state.conversations[conversationId]?.parentId;
+    if (parentId) setClosedMarginNotes((current) => ({ ...current, [parentId]: false }));
+    if (parentId && state.activeConversationId === conversationId) handleFocusVisibleDocument(parentId);
+    return true;
   }
 
   /** A side document goes back into its host's margin: the same document, beside its passage again. */
@@ -4866,6 +4913,7 @@ function WorkspaceAppContent({
   }
 
   function handleCloseDocument(conversationId: string) {
+    if (handlePutNoteBack(conversationId)) return;
     if (closeLinkGuest(conversationId)) return;
     if (selectionDraft?.conversationId === conversationId) setSelectionDraft(null);
     setState((current) => closeDocument(current.documentDock ? {
@@ -5945,7 +5993,6 @@ function WorkspaceAppContent({
         onClose={!hasDocumentTab(conversation.id) ? handleCloseDocument : quietTabsHidden() ? handleCloseTab : undefined} onRestore={handleSelectConversation} onRename={handleRenameThread}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onAskAboutNote={conversation.document || conversation.kind === "note" ? (id) => setNoteChatFor(id) : undefined}
-        onMoveToSideDocument={conversation.document?.marginNote ? handleMoveMarginNoteToSideDocument : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap} onToggleBoard={handleToggleBoard}
         flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
@@ -5970,7 +6017,7 @@ function WorkspaceAppContent({
     // On phones the breadcrumb bar lists notes and children (and reopens closed notes), so the header skips them.
     const noteCount = isMobileViewport ? 0 : getMarginDocuments(conversation).length;
     const claimCount = view === "chat" ? ratchet.documents[conversation.id]?.claims.length ?? 0 : 0;
-    if (!(view === "chat" && noteCount) && !conversation.document?.marginNote && !claimCount) return null;
+    if (!(view === "chat" && noteCount) && !claimCount) return null;
     return <>
       {claimCount ? <button type="button" className="document-claims-toggle" aria-pressed={!hiddenClaims[conversation.id]}
         aria-label={`${hiddenClaims[conversation.id] ? "Show" : "Hide"} checked claims for ${conversation.title}`}
@@ -5984,10 +6031,6 @@ function WorkspaceAppContent({
         onClick={() => setClosedMarginNotes((current) => ({ ...current, [conversation.id]: !current[conversation.id] }))}>
         Notes <span>{noteCount}</span>
       </button> : null}
-      {conversation.document?.marginNote ? <button type="button" className="document-presentation-toggle"
-        aria-label={`Move margin note ${conversation.title} to a side document`}
-        title="Move to side document"
-        onClick={() => handleMoveMarginNoteToSideDocument(conversation.id)}>↗</button> : null}
     </>;
   }
 
@@ -6049,7 +6092,7 @@ function WorkspaceAppContent({
       parentBreadcrumbs={embedded ? undefined : view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock)
         // Clicking into one of its margin notes keeps the line, so the page doesn't jump.
         : view === "chat" && quietHeader && !showSpaceStart && !isCompactDocument(conversation)
-          && (conversation.id === activeConversation.id || (activeConversation.parentId === conversation.id && Boolean(activeConversation.document?.marginNote)))
+          && (conversation.id === activeConversation.id || (activeConversation.parentId === conversation.id && isCompactDocument(activeConversation)))
           ? <div className="document-page-path">{renderDocumentBreadcrumbs()}</div> : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
@@ -6208,6 +6251,8 @@ function WorkspaceAppContent({
   function renderMarginFamily(note: Conversation, view: "chat" | "graph", fitContent = false) {
     return <div className="margin-document-family">
       <MarginDocumentFrame data-document-id={note.id} size={note.document?.marginNote?.size} fitContent={fitContent}
+        onOpen={view === "chat" ? () => handleOpenNoteBeside(note.id) : undefined}
+        openLabel={`Open beside the page: ${note.title || "Untitled note"}`}
         onResize={(size) => handleResizeMarginDocument(note.id, size)}
         onResizePreview={(size) => setMarginResizePreviews((current) => ({ ...current, [note.id]: size ?? undefined }))}
         onPointerDownCapture={() => handleFocusVisibleDocument(note.id)}
@@ -6312,6 +6357,15 @@ function WorkspaceAppContent({
           ...(minimizedNodes ? { "--minimized-child-nodes-width": `${nodesWidth}px` } : {}) } as CSSProperties}
       >
         {renderConversationChatPanel(conversation)}
+        {noteSnapHint?.id === conversation.id ? <div className={`note-snap-hint is-${noteSnapHint.snap}`} role="status">
+          {noteSnapHint.snap === "page" ? "Let go to open the note as the whole page" : "Let go to put the note back in the margin"}
+        </div> : null}
+        {maximizedDocument?.id === conversation.id && notesBesideSet.has(conversation.id) && conversation.parentId && state.conversations[conversation.parentId]
+          ? <button type="button" className="note-page-strip" onClick={() => handleLeaveNotePage(conversation.id)}
+            aria-label={`Back to ${state.conversations[conversation.parentId].title || "Untitled document"}`}
+            title={`Back to ${state.conversations[conversation.parentId].title || "Untitled document"} (Esc)`}>
+            <span>{state.conversations[conversation.parentId].title || "Untitled document"}</span>
+          </button> : null}
         {minimizedNodes ? <MinimizedChildNodes nodes={minimizedNodes.nodes} compact={minimizedNodes.compact}
           onOpen={(id) => handleOpenDocumentReference(conversation.id, id)} /> : null}
         {(["left", "right"] as const).map((edge) => <div
@@ -6929,7 +6983,6 @@ function WorkspaceAppContent({
                   ...(selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "highlight" as const, label: "Highlight", ariaLabel: selectionHighlighted ? "Remove highlight" : "Highlight selected text",
                     pressed: selectionHighlighted, onSelect: handleToggleSelectionHighlight }] : []),
                   { icon: "note", label: "Note", ariaLabel: selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note", onSelect: () => handleCreateSelectionNote() },
-                  { icon: "side", label: "Side doc", ariaLabel: "Create a side document from this passage", onSelect: () => handleCreateSelectionSideDocument() },
                   { icon: "link", label: "Link", ariaLabel: "Link selected text to an existing document or block", pressed: selectionIntent === "link",
                     onSelect: () => { setSelectionLinkError(null); setSelectionIntent((intent) => intent === "link" ? "actions" : "link"); } },
                 ]}

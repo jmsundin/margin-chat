@@ -22,3 +22,18 @@
 .margin-document-frame.is-resizing > .margin-document-resize { color: var(--accent); }
 .margin-document-frame > .margin-document-resize:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .margin-document-resize-instructions { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* The note's dot opens the note beside its page. It sits where a pen would start, top left of the words. */
+.margin-document-frame > .margin-document-open {
+  position: absolute; z-index: 5; top: 11px; left: 30px; width: 23px; height: 23px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+}
+.margin-document-frame > .margin-document-open::after {
+  content: ""; position: absolute; top: 8px; left: 8px; width: 7px; height: 7px; border-radius: 50%;
+  background: var(--quiet-note-dot, var(--sage, #6f8f7a)); transition: transform .15s ease;
+}
+.margin-document-frame > .margin-document-open:hover { background: color-mix(in srgb, var(--quiet-note-dot, var(--sage, #6f8f7a)) 16%, transparent); }
+.margin-document-frame > .margin-document-open:hover::after { transform: scale(1.45); }
+.margin-document-frame > .margin-document-open:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+/* Touch screens drop the editor's 40px gutter, so the dot moves in with the words. */
+@media (pointer: coarse), (max-width: 700px) { .margin-document-frame > .margin-document-open { left: -2px; } }

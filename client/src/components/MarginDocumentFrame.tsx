@@ -20,9 +20,13 @@ type Props = Omit<HTMLAttributes<HTMLDivElement>, "onResize"> & {
   onResizePreview?: (size: MarginDocumentSize | null) => void;
   /** Grow with the note's content, up to its saved height (in a document's margin). */
   fitContent?: boolean;
+  /** Opens the note beside its page. The note's dot is the button, so the note itself needs no other control. */
+  onOpen?: () => void;
+  /** What the dot says to screen readers and on hover. */
+  openLabel?: string;
 };
 
-export default function MarginDocumentFrame({ size, label = "margin note", onResize, onResizePreview, fitContent = false, className = "", style, children, ...props }: Props) {
+export default function MarginDocumentFrame({ size, label = "margin note", onResize, onResizePreview, fitContent = false, onOpen, openLabel, className = "", style, children, ...props }: Props) {
   const instructionsId = useId();
   const [preview, setPreview] = useState<MarginDocumentSize | null>(null);
   const renderedSize = preview ?? getMarginDocumentSize(size);
@@ -74,6 +78,8 @@ export default function MarginDocumentFrame({ size, label = "margin note", onRes
   return <div {...props} className={`margin-document margin-document-frame${preview ? " is-resizing" : ""}${fitContent ? " is-fit-content" : ""}${className ? ` ${className}` : ""}`}
     style={{ ...style, width: renderedSize.width, ...(fitContent && !preview ? { height: "auto", maxHeight: renderedSize.height } : { height: renderedSize.height, maxHeight: "none" }) }}>
     {children}
+    {onOpen ? <button type="button" className="margin-document-open" aria-label={openLabel ?? `Open ${label} beside the page`}
+      title="Open beside the page" onClick={onOpen} /> : null}
     <button type="button" className="margin-document-resize" aria-label={`Resize ${label}`} aria-describedby={instructionsId}
       title="Drag to resize. Use arrow keys for width and height, Shift for larger steps. Double-click to reset."
       onPointerDown={(event) => {

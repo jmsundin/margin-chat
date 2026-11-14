@@ -52,7 +52,7 @@
 }
 
 /* ---- Margin notes as ink in the margin ----
-   A note is a dot and its words, with no card around it. Its buttons (↗, ⋮, ×, resize)
+   A note is a dot and its words, with no card around it. The dot opens it beside the page. Its buttons (⋮, ×, resize)
    show when you point at the note. The passage it's about gets a thin underline
    instead of a filled highlight. */
 :root { --quiet-ai-ink: #5d4bb0; --quiet-note-dot: var(--sage); }
@@ -72,6 +72,9 @@
 @media (pointer: coarse), (max-width: 700px) { .is-quiet-page .margin-document-frame::before { left: 6px; } }
 /* The empty "Write here" line after the AI's words doesn't count as the user's. */
 .is-quiet-page .margin-document-frame:has(.live-document-block[data-authorship="ai"]):not(:has(.live-document-block[data-authorship="user"]:not(.cm-lp-placeholder)))::before { background: var(--quiet-ai-ink); }
+/* When the dot is a button (it opens the note beside the page), the button draws it. */
+.is-quiet-page .margin-document-frame:has(> .margin-document-open)::before { display: none; }
+.is-quiet-page .margin-document-frame:has(.live-document-block[data-authorship="ai"]):not(:has(.live-document-block[data-authorship="user"]:not(.cm-lp-placeholder))) > .margin-document-open::after { background: var(--quiet-ai-ink); }
 /* The header floats over the note's top right, so the words start at the top. */
 .is-quiet-page .margin-document-frame .document-header {
   position: absolute; top: 0; right: 0; left: auto; padding: 4px 4px 0; background: transparent;
