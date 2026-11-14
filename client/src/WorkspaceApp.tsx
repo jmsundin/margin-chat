@@ -55,8 +55,8 @@ import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } f
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpacesPanel, type SpaceMenuActions } from "./components/Spaces";
 import DocumentTabs from "./components/DocumentTabs";
-import { DocumentCompass, DocumentKeepReading, DocumentMapButton, DocumentSheetCardBar, DocumentSheetPill, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
-import { PAGE_SHEET, SHEET_NARROW_MAP, fitDocumentSheet, getDefaultDocumentSheet, getDocumentSheetCardBox, getDocumentSheetEdge, getDocumentSheetMapBox, loadLastDocumentSheet, saveLastDocumentSheet, settleDocumentSheet, type DocumentSheet, type DocumentSheetEdge } from "./lib/documentSheet";
+import { DocumentCompass, DocumentKeepReading, DocumentMapButton, DocumentSheetPill, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
+import { PAGE_SHEET, SHEET_NARROW_MAP, fitDocumentSheet, getDefaultDocumentSheet, getDocumentSheetEdge, getDocumentSheetMapBox, loadLastDocumentSheet, saveLastDocumentSheet, settleDocumentSheet, type DocumentSheet, type DocumentSheetEdge } from "./lib/documentSheet";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
 import { QUIET_SIDEBAR_KEY, readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
@@ -822,7 +822,6 @@ function WorkspaceAppContent({
   // half, everything but a card) and Document view never switches away to reach it.
   const [sheet, setSheet] = useState<DocumentSheet>(PAGE_SHEET);
   const [sheetDragging, setSheetDragging] = useState(false);
-  const [sheetCardMoved, setSheetCardMoved] = useState<{ left: number; top: number } | null>(null);
   // The document area's box inside the canvas section, which the map and the sheet's handle are placed in.
   const [sheetArea, setSheetArea] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const sheetRestRef = useRef<DocumentSheet>(PAGE_SHEET);
@@ -1997,7 +1996,6 @@ function WorkspaceAppContent({
   const mapModalBounds: CSSProperties | null = sheetMapBox && sheetArea
     ? { top: sheetArea.top + sheetMapBox.top, left: sheetArea.left + sheetMapBox.left, width: sheetMapBox.width, height: sheetMapBox.height } : null;
   const sheetDocked = showMapModal && shownSheet.mode === "docked";
-  const sheetCardBox = showMapModal && shownSheet.mode === "card" && sheetArea ? getDocumentSheetCardBox(sheetArea.width, sheetArea.height, sheetCardMoved) : null;
   const sheetNarrowMap = sheetDocked && sheetEdge === "left" && shownSheet.size < SHEET_NARROW_MAP;
 
   useEffect(() => {
@@ -2034,10 +2032,10 @@ function WorkspaceAppContent({
     if (!first) setGraphFocusRequest({ conversationId: activeConversation.id, requestId: ++graphFocusRequestCounterRef.current, keepViewMode: true });
   }, [showMapModal, activeConversation.id]);
 
-  // Escape brings a card, or a sheet that was put away, back as the page. Docked, the map is part of the
-  // page and Escape belongs to the document.
+  // Escape brings a sheet that was put away back as the page. In the split the map is part of the page
+  // and Escape belongs to the document.
   useEffect(() => {
-    if (!showMapModal || (shownSheet.mode !== "card" && shownSheet.mode !== "map")) return;
+    if (!showMapModal || shownSheet.mode !== "map") return;
     function closeWithEscape(event: KeyboardEvent) {
       if (event.key !== "Escape" || event.defaultPrevented || event.isComposing) return;
       const target = event.target instanceof Element ? event.target : null;
@@ -5157,7 +5155,6 @@ function WorkspaceAppContent({
     sheetRestRef.current = next;
     setSheet(next);
     saveLastDocumentSheet(next);
-    if (next.mode === "card" && from.mode !== "card") setSheetCardMoved(null);
     if (next.mode === "page") return;
     const requestId = ++graphFocusRequestCounterRef.current;
     const conversationId = activeConversation.id;
@@ -5208,31 +5205,11 @@ function WorkspaceAppContent({
     handle.addEventListener("pointercancel", end);
   }
 
-  /** Move the card around the map by its bar. */
-  function handleMoveSheetCard(event: ReactPointerEvent<HTMLDivElement>) {
-    if (!sheetCardBox || !sheetArea || (event.target instanceof Element && event.target.closest("button"))) return;
-    event.preventDefault();
-    const handle = event.currentTarget;
-    handle.setPointerCapture(event.pointerId);
-    const offsetX = event.clientX - sheetCardBox.left;
-    const offsetY = event.clientY - sheetCardBox.top;
-    const move = (moveEvent: PointerEvent) => setSheetCardMoved({ left: moveEvent.clientX - offsetX, top: moveEvent.clientY - offsetY });
-    const end = () => {
-      handle.removeEventListener("pointermove", move);
-      handle.removeEventListener("pointerup", end);
-      handle.removeEventListener("pointercancel", end);
-    };
-    handle.addEventListener("pointermove", move);
-    handle.addEventListener("pointerup", end);
-    handle.addEventListener("pointercancel", end);
-  }
-
-  /** From a card or put away, the sheet goes back where it was last docked, or to the page. */
+  /** Put away, the document comes back beside the map at the width the split was last left at. */
   function handleExpandSheet() {
     const width = sheetArea?.width ?? window.innerWidth;
     const height = sheetArea?.height ?? window.innerHeight;
-    const last = loadLastDocumentSheet();
-    restSheet(sheet.mode === "map" && last ? fitDocumentSheet(last, sheetEdge, width, height) : PAGE_SHEET);
+    restSheet(fitDocumentSheet(loadLastDocumentSheet() ?? getDefaultDocumentSheet(sheetEdge, width, height), sheetEdge, width, height));
   }
 
   /** Scrolling panes, pinned panes and the margin notes shown beside them. */
@@ -6739,14 +6716,15 @@ function WorkspaceAppContent({
                 />
               </WorkspaceView>
               {/* The sheet's edge: always there on a computer, so the page itself can be dragged aside to show the map. */}
-              {mainViewMode === "chat" && sheetArea && !showSpaceStart && shownSheet.mode !== "card" && shownSheet.mode !== "map" && (sheetEdge === "left" ? !isMobileViewport || sheetDocked : sheetDocked)
+              {mainViewMode === "chat" && sheetArea && !showSpaceStart && shownSheet.mode !== "map" && (sheetEdge === "left" ? !isMobileViewport || sheetDocked : sheetDocked)
                 ? <div className={`document-sheet-handle is-${sheetEdge}${sheetDragging ? " is-dragging" : ""}${sheetDocked ? "" : " is-page"}`} role="separator"
                   aria-orientation={sheetEdge === "top" ? "horizontal" : "vertical"} aria-label="Drag to show more or less of the map"
-                  title={sheetDocked ? "Drag to show more or less of the map" : "Drag to show the map"}
+                  title={sheetDocked ? (sheetEdge === "left" ? "Drag to resize the map and document (double-click to split evenly)" : "Drag to show more or less of the map") : "Drag to show the map"}
                   style={sheetEdge === "top"
                     ? { top: sheetArea.top + (sheetDocked ? shownSheet.size : 0), left: sheetArea.left, width: sheetArea.width }
                     : { left: sheetArea.left + (sheetDocked ? shownSheet.size : 0), top: sheetArea.top, height: sheetArea.height }}
-                  onPointerDown={handleDragSheet} /> : null}
+                  onPointerDown={handleDragSheet}
+                  onDoubleClick={sheetDocked && sheetEdge === "left" ? () => restSheet(getDefaultDocumentSheet(sheetEdge, sheetArea.width, sheetArea.height)) : undefined} /> : null}
               {showMapModal && shownSheet.mode === "map" && sheetArea ? <DocumentSheetPill title={activeConversation.title || "Untitled document"}
                 style={{ top: sheetArea.top + sheetArea.height - 66, left: sheetArea.left + sheetArea.width / 2 }} onRestore={handleExpandSheet} /> : null}
               <WorkspaceView mode="graph" active={isGraphView || showMapModal}
@@ -6805,8 +6783,8 @@ function WorkspaceAppContent({
                     onCreateChildConversation={handleAddGraphChildChat}
                     onSelectBesideDocument={showMapModal ? (conversationId) => {
                       handleSelectConversation(conversationId, { nextViewMode: "chat" });
-                      // Put away, a dot lays its document down on the map as a card.
-                      if (shownSheet.mode === "map") restSheet({ mode: "card", size: 0 });
+                      // Put away, a dot opens its document beside the map again.
+                      if (shownSheet.mode === "map") handleExpandSheet();
                     } : undefined}
                     onOpenConversation={(conversationId) => {
                       handleSelectConversation(conversationId, {
@@ -6910,9 +6888,7 @@ function WorkspaceAppContent({
                   {isMobileViewport && mobileHeaderOpen ? <div className="document-header-backdrop" aria-hidden="true" onClick={() => setMobileHeaderOpen(false)} /> : null}
                   <div className={`document-workspace-with-search${showMapModal ? ` is-sheet-${shownSheet.mode} is-sheet-edge-${sheetEdge}` : ""}${sheetDragging ? " is-sheet-dragging" : ""}`} ref={documentAreaRef}
                     style={sheetDocked ? (sheetEdge === "top" ? { paddingTop: shownSheet.size + 20 } : { paddingLeft: shownSheet.size })
-                      : sheetCardBox ? { "--sheet-card-left": `${sheetCardBox.left}px`, "--sheet-card-top": `${sheetCardBox.top}px`, "--sheet-card-width": `${sheetCardBox.width}px`, "--sheet-card-height": `${sheetCardBox.height}px` } as CSSProperties : undefined}>
-                  {sheetCardBox ? <DocumentSheetCardBar title={activeConversation.title || "Untitled document"} onPointerDown={handleMoveSheetCard}
-                    onExpand={handleExpandSheet} onPutAway={() => restSheet({ mode: "map", size: 0 })} /> : null}
+                      : undefined}>
                   {navigationStyle === "outline" && documentNeighbors && !isMobileViewport ? <DocumentTopicOutline neighbors={documentNeighbors}
                     onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
                   {searchPanel ? <SearchResultsPanel initialQuery={searchPanel.query} initialScope={searchPanel.scope} provider={vaultSearchProvider}

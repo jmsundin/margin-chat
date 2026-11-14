@@ -1,4 +1,4 @@
-import type { CSSProperties, PointerEvent as ReactPointerEvent, ReactElement } from "react";
+import type { CSSProperties, ReactElement } from "react";
 import type { Conversation } from "../types";
 import { getDocumentKind } from "../lib/documentBreadcrumbs";
 import { DOCUMENT_NAVIGATION_STYLES, type DocumentNavigationStyle, type DocumentNeighbors } from "../lib/documentNeighbors";
@@ -84,22 +84,6 @@ export function DocumentMapButton({ open, onToggle }: { open: boolean; onToggle:
   return <button type="button" className="document-map-button" aria-pressed={open} aria-label={label} title={label} onClick={onToggle}>
     <Icon path={MAP_ICON} />
   </button>;
-}
-
-/** The bar on a document that sits on the map as a card: drag it to move the card, open it as the page, or put it away. */
-export function DocumentSheetCardBar({ title, onPointerDown, onExpand, onPutAway }: {
-  title: string; onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void; onExpand: () => void; onPutAway: () => void;
-}) {
-  return <div className="document-sheet-card-bar" onPointerDown={onPointerDown} onDoubleClick={(event) => { if (!(event.target instanceof Element && event.target.closest("button"))) onExpand(); }}>
-    <span className="document-sheet-card-grip" aria-hidden="true" />
-    <span className="document-sheet-card-title">{title}</span>
-    <button type="button" className="document-local-graph-action" aria-label="Open as the page" title="Open as the page (Esc)" onClick={onExpand}>
-      <Icon path="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />
-    </button>
-    <button type="button" className="document-local-graph-action" aria-label="Put the document away" title="Put the document away and keep the map" onClick={onPutAway}>
-      <Icon path="M6 6l12 12M18 6 6 18" />
-    </button>
-  </div>;
 }
 
 /** Put away, the document waits as a pill at the foot of the map. */
