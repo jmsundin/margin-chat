@@ -164,7 +164,8 @@ try {
     assert.equal(container.querySelector(".conversation-graph-viewport") ?? initialMap, initialMap, "Returning to Map retains its canvas instance.");
     assert.equal(isVisible(initialMap), mapShown, `Map visibility after ${step}`);
     assert.equal(isVisible(initialDocument), step !== "Tile View");
-    if (mapShown) assert.equal(stage.style.transform, retainedTransform, "Returning to Map preserves its camera position and zoom.");
+    // Coming back from Tiles keeps the camera; reopening the map frames the open document again.
+    if (step === "Document View") assert.equal(stage.style.transform, retainedTransform, "Returning from Tiles preserves the map's camera position and zoom.");
     for (const wrapper of container.querySelectorAll("[data-workspace-view]")) {
       assert.equal(wrapper.hasAttribute("inert"), wrapper.hasAttribute("hidden"), "Only visible views can receive input.");
     }
