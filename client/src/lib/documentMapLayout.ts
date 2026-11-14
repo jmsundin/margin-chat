@@ -7,7 +7,7 @@ const GAP = 36;
 const MIN_INITIAL_SCALE = 0.5;
 const MAX_INITIAL_SCALE = 0.9;
 
-export type DocumentLayoutMode = "auto" | "tree-right" | "tree-down" | "connections";
+export type DocumentLayoutMode = "auto" | "tree-right" | "tree-down" | "connections" | "family";
 type DocumentConnection = { sourceId: string; targetId: string };
 
 function nodeBounds(nodes: ConversationGraphNodePlacement[]) {
@@ -140,7 +140,110 @@ function packedTreeNodes(nodes: ConversationGraphNodePlacement[], graph: ReturnT
   return nodes.map((node) => byId.get(node.conversationId)!);
 }
 
+/**
+ * Around a focused note: the notes one link away on a close inner ring, and each note two links away just
+ * outside the inner note it hangs from, so every branch reads as one tight cluster. A branch with more
+ * notes gets a wider slice of the circle. Notes close in meaning but unlinked go on a last ring.
+ */
+function radialNodes(nodes: ConversationGraphNodePlacement[], neighbors: Map<string, string[]>, centerId: string, outerRingIds: readonly string[]) {
+  const outer = new Set(outerRingIds);
+  const present = new Set(nodes.map((node) => node.conversationId));
+  const first = (neighbors.get(centerId) ?? []).filter((id) => !outer.has(id));
+  const seen = new Set([centerId, ...first]);
+  const kids = new Map(first.map((id) => [id, [] as string[]]));
+  let frontier = first;
+  // Farther notes join the branch they were reached from.
+  const branchOf = new Map(first.map((id) => [id, id]));
+  while (frontier.length) {
+    const next: string[] = [];
+    for (const id of frontier) for (const neighbor of neighbors.get(id) ?? []) {
+      if (seen.has(neighbor) || outer.has(neighbor)) continue;
+      seen.add(neighbor); next.push(neighbor);
+      const branch = branchOf.get(id)!;
+      branchOf.set(neighbor, branch);
+      kids.get(branch)!.push(neighbor);
+    }
+    frontier = next;
+  }
+  const loose = nodes.map((node) => node.conversationId).filter((id) => !seen.has(id) && !outer.has(id));
+  const meaning = outerRingIds.filter((id) => id !== centerId && present.has(id));
+  const positions = new Map([[centerId, { x: -CARD.width / 2, y: -CARD.height / 2 }]]);
+  const place = (id: string, angle: number, radius: number) =>
+    positions.set(id, { x: Math.cos(angle) * radius * 1.25 - CARD.width / 2, y: Math.sin(angle) * radius * 0.82 - CARD.height / 2 });
+  // Cards are wider than tall, so the rings are ellipses; spacing is measured along the ring.
+  const step = CARD.height + 18;
+  const innerCount = first.length + (loose.length ? 1 : 0);
+  const inner = Math.max(CARD.width * 0.95, innerCount * step / (2 * Math.PI));
+  const farCount = [...kids.values()].reduce((sum, list) => sum + list.length, 0) + loose.length;
+  const far = Math.max(inner + CARD.height + 30, farCount * step / (2 * Math.PI));
+  const weights = first.map((id) => Math.max(1, kids.get(id)!.length));
+  const looseWeight = loose.length ? Math.max(1, loose.length) : 0;
+  const total = weights.reduce((sum, weight) => sum + weight, 0) + looseWeight || 1;
+  let angle = -Math.PI / 2;
+  first.forEach((id, index) => {
+    const span = weights[index] / total * Math.PI * 2;
+    place(id, angle + span / 2, inner);
+    const list = kids.get(id)!;
+    list.forEach((child, at) => place(child, angle + span * (at + 0.5) / list.length, far));
+    angle += span;
+  });
+  if (loose.length) {
+    const span = looseWeight / total * Math.PI * 2;
+    loose.forEach((id, at) => place(id, angle + span * (at + 0.5) / loose.length, far));
+  }
+  // Rings are measured along their length, so two cards can still touch where a ring bends. Walk each card
+  // outward along its own ray, nearest first, until it clears every card already settled.
+  const settled: { x: number; y: number }[] = [];
+  const clear = 10;
+  const touches = (a: { x: number; y: number }) => settled.some((b) => Math.abs(a.x - b.x) < CARD.width + clear && Math.abs(a.y - b.y) < CARD.height + clear);
+  for (const id of [...positions.keys()]) {
+    const at = positions.get(id)!;
+    const cx = at.x + CARD.width / 2, cy = at.y + CARD.height / 2;
+    const length = Math.hypot(cx, cy);
+    const dx = length ? cx / length : 0, dy = length ? cy / length : -1;
+    for (let tries = 0; tries < 600 && touches(at); tries++) { at.x += dx * 8; at.y += dy * 8; }
+    settled.push(at);
+  }
+  // Notes close in meaning but unlinked go on a round ring outside every linked note.
+  const linkedReach = Math.max(0, ...settled.map((at) => Math.hypot(at.x + CARD.width / 2, at.y + CARD.height / 2)));
+  const meaningRadius = Math.max(linkedReach + CARD.height + 40, meaning.length * (CARD.width + 20) / (2 * Math.PI));
+  meaning.forEach((id, index) => {
+    const angle = -Math.PI / 2 + index / meaning.length * Math.PI * 2;
+    const at = { x: Math.cos(angle) * meaningRadius - CARD.width / 2, y: Math.sin(angle) * meaningRadius - CARD.height / 2 };
+    for (let tries = 0; tries < 600 && touches(at); tries++) { at.x += Math.cos(angle) * 8; at.y += Math.sin(angle) * 8; }
+    positions.set(id, at); settled.push(at);
+  });
+  return { nodes: nodes.map((node) => ({ ...node, ...(positions.get(node.conversationId) ?? { x: 0, y: 0 }) })), centerNodeId: centerId };
+}
+
+/**
+ * A note's family as a sideways tree: its parent on the left, the notes beside it stacked in the middle
+ * (this one among them), and the notes inside it stacked on the right. Titles read left to right.
+ */
+function familyNodes(nodes: ConversationGraphNodePlacement[], family: DocumentFamily) {
+  const present = new Set(nodes.map((node) => node.conversationId));
+  const column = CARD.width + 90;
+  const row = CARD.height + 14;
+  const positions = new Map<string, { x: number; y: number }>();
+  const stack = (ids: string[], x: number, middle: number) => ids.forEach((id, index) => positions.set(id, { x, y: middle + (index - (ids.length - 1) / 2) * row - CARD.height / 2 }));
+  const peers = family.siblingIds.filter((id) => present.has(id));
+  if (!peers.includes(family.centerId)) peers.unshift(family.centerId);
+  const hasParent = Boolean(family.parentId && present.has(family.parentId));
+  const peerX = hasParent ? column : 0;
+  stack(peers, peerX, 0);
+  if (hasParent) stack([family.parentId!], 0, 0);
+  const centerY = positions.get(family.centerId)!.y + CARD.height / 2;
+  stack(family.childIds.filter((id) => present.has(id)), peerX + column, centerY);
+  let extra = 0;
+  for (const node of nodes) if (!positions.has(node.conversationId)) positions.set(node.conversationId, { x: peerX + column * 2, y: (extra++) * row });
+  return nodes.map((node) => ({ ...node, ...positions.get(node.conversationId)! }));
+}
+
+/** Who is in a note's family, in reading order. */
+export interface DocumentFamily { centerId: string; parentId: string | null; siblingIds: string[]; childIds: string[] }
+
 function connectedNodes(nodes: ConversationGraphNodePlacement[], neighbors: Map<string, string[]>, centerNodeId?: string, outerRingIds: readonly string[] = []) {
+  if (centerNodeId && nodes.some((node) => node.conversationId === centerNodeId)) return radialNodes(nodes, neighbors, centerNodeId, outerRingIds);
   const hub = nodes.find((node) => node.conversationId === centerNodeId)
     ?? nodes.reduce((best, node) => neighbors.get(node.conversationId)!.length > neighbors.get(best.conversationId)!.length ? node : best);
   const levels: string[][] = [[hub.conversationId]];
@@ -188,7 +291,7 @@ function connectedNodes(nodes: ConversationGraphNodePlacement[], neighbors: Map<
 
 /** A temporary document view: saved positions are input, never mutated. */
 export function layoutDocumentMap(nodes: ConversationGraphNodePlacement[], canvas: { width: number; height: number },
-  options: { mode?: DocumentLayoutMode; connections?: DocumentConnection[]; centerNodeId?: string; outerRingIds?: readonly string[] } = {}) {
+  options: { mode?: DocumentLayoutMode; connections?: DocumentConnection[]; centerNodeId?: string; outerRingIds?: readonly string[]; family?: DocumentFamily } = {}) {
   const width = Math.max(1, canvas.width);
   const height = Math.max(1, canvas.height);
   const padding = Math.min(24, width / 10, height / 10);
@@ -201,7 +304,8 @@ export function layoutDocumentMap(nodes: ConversationGraphNodePlacement[], canva
   const mode = options.mode ?? "auto";
   if (mode !== "auto") {
     const graph = connectionGraph(authored, options.connections ?? []);
-    const layout = mode === "connections" ? connectedNodes(authored, graph.neighbors, options.centerNodeId, options.outerRingIds)
+    const layout = mode === "family" && options.family ? { nodes: familyNodes(authored, options.family), centerNodeId: null }
+      : mode === "connections" || mode === "family" ? connectedNodes(authored, graph.neighbors, options.centerNodeId, options.outerRingIds)
       : { nodes: packedTreeNodes(authored, graph, mode === "tree-down", availableWidth, availableHeight), centerNodeId: null };
     const extent = nodeBounds(layout.nodes);
     const fitWidth = layout.centerNodeId ? Math.max(Math.abs(extent.x), Math.abs(extent.x + extent.width)) * 2 : extent.width;

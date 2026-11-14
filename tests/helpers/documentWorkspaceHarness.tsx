@@ -568,23 +568,19 @@ try {
   const dockPane = (id: string) => element(`[data-dock-document-id="${id}"]`);
   await menuAction(siblingId, "Minimize document");
   assert.equal(pane(nestedId).querySelector(".document-children-menu"), null, "Leaf documents omit an empty Children menu.");
-  // The Children menu opens on demand; reading it opens the list, and choosing a child closes it.
+  // A document's children are listed under "Inside this note" at the end of the focused document.
   async function childItems(root: Element) {
-    const trigger = root.querySelector<HTMLButtonElement>(".document-children-trigger");
-    assert(trigger, "Missing Children menu");
-    if (trigger.getAttribute("aria-expanded") !== "true") await click(trigger);
-    return [...root.querySelectorAll<HTMLButtonElement>(".document-children-list .document-child-item")];
+    await act(async () => root.dispatchEvent(new browser.PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" })));
+    await settle();
+    return [...root.querySelectorAll<HTMLButtonElement>(".document-keep-reading .document-inside-chip")];
   }
   async function childTitles(root: Element) {
-    const titles = (await childItems(root)).map((node) => node.querySelector(".document-child-title")?.textContent);
-    await click(root.querySelector(".document-children-trigger"));
-    return titles;
+    return (await childItems(root)).map((node) => node.textContent);
   }
   assert.deepEqual(await childTitles(pane(sideId)), ["Nested research"], "An unpinned child owns its direct children, not its siblings.");
   assert.equal(container.querySelector(".document-sibling-tabs"), null, "Siblings are reached through the breadcrumb bar and compass, not a row of tabs above the header.");
   assert.deepEqual(await childTitles(pane(mainId)), ["Side research", "Sibling research"]);
   const childTabs = await childItems(pane(mainId));
-  assert(childTabs[1].textContent.includes("Minimized"));
   await click(childTabs[1]);
   assert.equal(latest.activeConversationId, siblingId);
   assert(panes().includes(siblingId));
@@ -593,8 +589,8 @@ try {
   assert.equal(pane(sideId).querySelector('.document-origin button'), null, "The parent is reached through the breadcrumb bar or compass rather than a link in the header.");
   await focusPane(sideId);
   assert.equal(latest.activeConversationId, sideId);
-  await click(element('.document-compass [aria-label="Previous: Sibling research"]'));
-  assert.equal(latest.activeConversationId, siblingId, "The compass switches to the neighbouring side document.");
+  await click([...pane(sideId).querySelectorAll(".document-keep-reading-card.is-sibling")].find((card) => card.textContent?.includes("Sibling research")));
+  assert.equal(latest.activeConversationId, siblingId, "Keep reading switches to the neighbouring side document.");
   assert.equal(focusedCrumbLabel(), "Sibling research");
   // Side documents share their source's level, so the source is listed in the same breadcrumb level.
   await openFromBreadcrumbs(mainId);
@@ -602,7 +598,7 @@ try {
   await menuAction(mainId, "Pin document");
   assert(dockPane(mainId).querySelector('.document-dock-pane-header .document-menu-trigger'));
   assert.equal(dockPane(mainId).querySelector('.document-body .document-menu-trigger'), null);
-  assert.equal((await childTitles(dockPane(mainId))).length, 2, "Pinned parents retain the same Children menu.");
+  assert.equal((await childTitles(dockPane(mainId))).length, 2, "Pinned parents keep listing their children.");
   await click((await childItems(dockPane(mainId)))[0]);
   assert(dockPane(mainId), "Child navigation leaves the parent pinned.");
   await click(sidebar("Unrelated project"));
@@ -611,7 +607,7 @@ try {
   assert.equal(latest.activeConversationId, siblingId);
   assert(panes().includes(siblingId));
   await menuAction(mainId, "Unpin document");
-  assert(pane(mainId).querySelector(".document-children-menu"), "Unpinning retains child navigation.");
+  assert.equal((await childTitles(pane(mainId))).length, 2, "Unpinning retains child navigation.");
   await focusPane(nestedId);
   assert.equal(latest.activeConversationId, nestedId);
   checks.push("all document headers expose direct children in saved order, restore minimized children and navigate back to named parents");
@@ -994,7 +990,7 @@ try {
   assert(!getDocumentWorkspace(latest.conversations, mainId).minimizedIds.includes(sideId));
   assert.deepEqual(latest.conversations[sideId], savedSide);
   assert(sidebar(savedSide.title));
-  await click((await childItems(pane(mainId))).find((button) => button.querySelector('.document-child-title')?.textContent === savedSide.title));
+  await click((await childItems(pane(mainId))).find((button) => button.textContent === savedSide.title));
   assert(panes().includes(sideId));
   checks.push('header minimize keeps the document minimized, close hides it without deleting, and Children reopens the saved document');
 

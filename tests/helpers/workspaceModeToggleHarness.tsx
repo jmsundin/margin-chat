@@ -34,38 +34,40 @@ async function key(target: any, key: string) {
 try {
   await act(async () => root.render(createElement(Host)));
   assert.equal(group().getAttribute("aria-label"), "Workspace view");
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-label")), ["Document View", "Tile View", "Map View"]);
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["true", "false", "false"]);
-  assert.deepEqual(options().map((option) => option.tabIndex), [0, -1, -1], "Only the active view is in the tab order.");
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-label")), ["Document View", "Tile View"], "The map is not a view of its own.");
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["true", "false"]);
+  assert.deepEqual(options().map((option) => option.tabIndex), [0, -1], "Only the active view is in the tab order.");
   assert.equal(container.querySelectorAll('[role="menu"], [aria-haspopup]').length, 0, "No dropdown remains.");
-  checks.push("three icon radios show every view with the active one checked");
+  checks.push("two icon radios show Document and Tile with the active one checked");
 
-  assert.deepEqual(options().map((option) => option.getAttribute("title")), ["Document View (Ctrl+Shift+D)", "Tile View (Ctrl+Shift+L)", "Map View (Ctrl+G)"]);
-  assert.equal(options()[2].getAttribute("aria-keyshortcuts"), "Meta+G Control+G");
+  assert.deepEqual(options().map((option) => option.getAttribute("title")), ["Document View (Ctrl+Shift+D)", "Tile View (Ctrl+Shift+L)"]);
+  assert.equal(options()[1].getAttribute("aria-keyshortcuts"), "Meta+Shift+L Control+Shift+L");
   checks.push("tooltips and aria-keyshortcuts name each view's shortcut");
 
-  await click(options()[2]);
-  assert.deepEqual(selected, ["graph"]);
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "false", "true"]);
   await click(options()[1]);
-  assert.deepEqual(selected, ["graph", "tiles"]);
+  assert.deepEqual(selected, ["tiles"]);
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "true"]);
+  await click(options()[0]);
+  assert.deepEqual(selected, ["tiles", "chat"]);
   checks.push("one click switches to any view");
 
-  await act(async () => options()[1].focus());
+  await act(async () => options()[0].focus());
+  await key(options()[0], "ArrowRight");
+  assert.equal(selected.at(-1), "tiles");
+  assert.equal(browser.document.activeElement, options()[1]);
   await key(options()[1], "ArrowRight");
-  assert.equal(selected.at(-1), "graph");
-  assert.equal(browser.document.activeElement, options()[2]);
-  await key(options()[2], "ArrowRight");
   assert.equal(selected.at(-1), "chat", "Arrow navigation wraps.");
   assert.equal(browser.document.activeElement, options()[0]);
   await key(options()[0], "End");
-  assert.equal(selected.at(-1), "graph");
-  await key(options()[2], "Home");
+  assert.equal(selected.at(-1), "tiles");
+  await key(options()[1], "Home");
   assert.equal(selected.at(-1), "chat");
   checks.push("arrow, Home and End keys move between views like a radio group");
 
   await act(async () => changeMode("tiles"));
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "true", "false"]);
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "true"]);
+  await act(async () => changeMode("graph"));
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["true", "false"], "A map request still reads as the document.");
   checks.push("outside view changes update the checked icon");
   console.log(JSON.stringify({ checks }));
 } finally {

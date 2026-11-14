@@ -64,7 +64,7 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
           <span className="app-settings-label">Main view</span>
           <p className="app-settings-description">Pick whether the main workspace opens in focused chat panels, a thread gallery, or the full graph canvas.</p>
         </div>
-        <OptionGroup label="Main view" onChange={onSetMainViewMode} options={[["chat", "Chat"], ["tiles", "Tiles"], ["graph", "Graph"]]} value={mainViewMode} />
+        <OptionGroup label="Main view" onChange={onSetMainViewMode} options={[["chat", "Chat"], ["tiles", "Tiles"]]} value={mainViewMode} />
       </div> : null}
 
       <div className="app-settings-section app-settings-switch-section">

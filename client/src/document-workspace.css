@@ -254,3 +254,10 @@
 }
 .panel-slot > .note-page-strip:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, var(--panel-bg, transparent)); }
 .panel-slot > .note-page-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* A roadmap's document, or a step in one, says so in its header; clicking shows the roadmap on the map beside it. */
+.document-panel .document-roadmap-chip { flex-shrink: 1; min-width: 0; max-width: 240px; padding: 4px 9px; border: 1px solid color-mix(in srgb, #9b8cff 55%, var(--line)); border-radius: 999px;
+  background: color-mix(in srgb, #9b8cff 12%, transparent); color: var(--ink); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.document-panel .document-roadmap-chip span { font-weight: 600; }
+.document-panel .document-roadmap-chip:hover { background: color-mix(in srgb, #9b8cff 22%, transparent); }
+.document-panel .document-roadmap-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

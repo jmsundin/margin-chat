@@ -167,6 +167,32 @@ const CAMERA_COMMIT_MS = 64;
 /** How long the camera must rest before a long move goes into Back. */
 const CAMERA_SETTLE_MS = 700;
 
+export type MapScopeChoice = "note" | "around" | "topic" | "all";
+const MAP_SCOPES: { id: MapScopeChoice; label: string; title: string }[] = [
+  { id: "note", label: "Note", title: "This note: its parent, the notes beside it and the notes inside it" },
+  { id: "around", label: "Around", title: "Notes one and two links away, grouped close around this note" },
+  { id: "topic", label: "Topic", title: "This note's topic on the whole map" },
+  { id: "all", label: "All", title: "Everything" },
+];
+
+/** How much of the map to show, from this note out to everything. */
+function MapScopeSwitch({ value, onChange }: { value: MapScopeChoice; onChange: (value: MapScopeChoice) => void }) {
+  return <div className="graph-map-scope-switch" role="group" aria-label="How much of the map">
+    {MAP_SCOPES.map((item) => <button key={item.id} type="button" aria-pressed={value === item.id} title={item.title} onClick={() => onChange(item.id)}>{item.label}</button>)}
+  </div>;
+}
+
+/** A note's family: its parent, the notes beside it (the parent's other notes) and the notes inside it. */
+function familyIds(conversations: Record<string, Conversation>, id: string) {
+  const ids = new Set<string>([id]);
+  const conversation = conversations[id];
+  if (!conversation) return ids;
+  const parent = conversation.parentId ? conversations[conversation.parentId] : undefined;
+  if (parent) { ids.add(parent.id); for (const sibling of parent.childIds) if (conversations[sibling]) ids.add(sibling); }
+  for (const child of conversation.childIds) if (conversations[child]) ids.add(child);
+  return ids;
+}
+
 function readStoredJson<T>(key: string | false | undefined, parse: (value: unknown) => T, fallback: T): T {
   if (!key) return fallback;
   try { const raw = localStorage.getItem(key); return raw ? parse(JSON.parse(raw)) : fallback; } catch { return fallback; }
@@ -300,6 +326,10 @@ export function getCanvasNodeFootprint(placement: ConversationGraphNodePlacement
 export interface ConversationGraphViewProps {
   toolbarLeading?: ReactNode;
   toolbarTrailing?: ReactNode;
+  /** More actions for the map's ⋯ menu (explore, history, add). */
+  menuItems?: ReactNode;
+  /** Asks the map to show this much of itself, e.g. everything when a roadmap is turned on so all its steps are in view. */
+  scopeRequest?: { choice: MapScopeChoice; requestId: number } | null;
   /** Offers other places to look for a map search; `matchedIds` are the documents it found, best first. */
   renderSearchFallback?: (query: string, close: () => void, matchedIds: string[]) => ReactNode;
   /** Enter in the map search. Returning true means it was handled; otherwise the first match opens. */
@@ -1194,6 +1224,8 @@ function GraphGroupRegion({
 export default function ConversationGraphView({
   toolbarLeading,
   toolbarTrailing,
+  menuItems,
+  scopeRequest,
   renderSearchFallback,
   onSearchSubmit,
   searchRequest,
@@ -1498,21 +1530,30 @@ export default function ConversationGraphView({
   const topicEmbeddings = useTopicEmbeddings({ userId: jev?.userId ?? "", enabled: !!jev?.enabled, active: isVisible && (findsTopics || isLandscapeMode || isCanvasMode || scope.kind === "focus") });
   const [showMeaningRing, setShowMeaningRing] = useState(true);
   const linkScopedIds = useMemo(() => {
-    const ids = scope.kind === "focus"
+    const ids = scope.kind === "focus" && navigation.state.documentLayoutMode === "family" ? familyIds(conversations, scope.conversationId)
+      : scope.kind === "focus"
       ? getGraphNeighborhoodIds(Object.keys(conversations), allDocumentConnections, scope.conversationId, scope.depth)
       : getGraphScopeConversationIds({ scope, conversations, groups, threads: categorizedThreads, concepts });
     if (showRelated && scope.kind === "focus" && scope.conversationId === activeConversationId) {
       for (const item of relatedItems) if (conversations[item.id]) ids.add(item.id);
     }
     return ids;
-  }, [scope, conversations, groups, categorizedThreads, concepts, showRelated, relatedItems, activeConversationId, allDocumentConnections]);
+  }, [scope, conversations, groups, categorizedThreads, concepts, showRelated, relatedItems, activeConversationId, allDocumentConnections, navigation.state.documentLayoutMode]);
   // Focus draws a last ring of documents close in meaning but not linked: what you might have forgotten to connect.
-  const meaningRing = useMemo(() => scope.kind === "focus" && showMeaningRing
+  const meaningRing = useMemo(() => scope.kind === "focus" && showMeaningRing && navigation.state.documentLayoutMode !== "family"
     ? focusMeaningRing(scope.conversationId, topicEmbeddings.neighbours.get(scope.conversationId), linkScopedIds, conversations)
-    : EMPTY_MEANING_RING, [scope, showMeaningRing, topicEmbeddings.neighbours, topicEmbeddings.revision, linkScopedIds, conversations]);
+    : EMPTY_MEANING_RING, [scope, showMeaningRing, topicEmbeddings.neighbours, topicEmbeddings.revision, linkScopedIds, conversations, navigation.state.documentLayoutMode]);
   const scopedIds = useMemo(() => meaningRing.length ? new Set([...linkScopedIds, ...meaningRing.map((item) => item.id)]) : linkScopedIds,
     [linkScopedIds, meaningRing]);
   const meaningRingIds = useMemo(() => meaningRing.map((item) => item.id), [meaningRing]);
+  const documentFamily = useMemo(() => {
+    if (scope.kind !== "focus" || navigation.state.documentLayoutMode !== "family") return undefined;
+    const center = conversations[scope.conversationId];
+    if (!center) return undefined;
+    const parent = center.parentId ? conversations[center.parentId] : undefined;
+    return { centerId: center.id, parentId: parent?.id ?? null, siblingIds: parent ? parent.childIds.filter((id) => conversations[id]) : [center.id],
+      childIds: center.childIds.filter((id) => conversations[id]) };
+  }, [scope, navigation.state.documentLayoutMode, conversations]);
   const canExpandNeighborhood = useMemo(() => scope.kind === "focus" && getGraphNeighborhoodIds(Object.keys(conversations), allDocumentConnections,
     scope.conversationId, scope.depth + 1).size > scopedIds.size, [scope, conversations, allDocumentConnections, scopedIds]);
   const scopedConversations = useMemo(() => Object.fromEntries(Object.entries(conversations).filter(([id]) => scopedIds.has(id))), [conversations, scopedIds]);
@@ -1780,8 +1821,8 @@ export default function ConversationGraphView({
   const documentLayout = useMemo(() => forceLayout ? { ...forceLayout, arranged: true, centerNodeId: null }
     : documentsOnly ? layoutDocumentMap(unfocusedScene.nodes,
     viewportSize.width && viewportSize.height ? viewportSize : { width: 1000, height: 700 },
-    { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }) : null,
-  [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId, meaningRingIds]);
+    { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds, family: documentFamily }) : null,
+  [forceLayout, documentsOnly, unfocusedScene.nodes, viewportSize, documentLayoutMode, documentConnections, focusedNodeId, meaningRingIds, documentFamily]);
   const documentFootprint = useMemo(() => getDocumentNodeFootprint(viewport.scale), [viewport.scale]);
   const mapDocumentIds = useMemo(() => canvasMuse ? unfocusedScene.nodes.map((node) => node.conversationId) : EMPTY_IDS,
     [canvasMuse, unfocusedScene.nodes]);
@@ -2624,7 +2665,7 @@ export default function ConversationGraphView({
     }
     if (forceLayout) { applyViewport(calculateFitViewport({ ...scene, groups: [] }, viewportElement)); fitAsOverviewRef.current = false; return; }
     if (documentsOnly) {
-      applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds }).viewport);
+      applyViewport(layoutDocumentMap(unfocusedScene.nodes, canvas, { mode: documentLayoutMode, connections: documentConnections, centerNodeId: focusedNodeId ?? undefined, outerRingIds: meaningRingIds, family: documentFamily }).viewport);
       fitAsOverviewRef.current = false;
       return;
     }
@@ -3792,6 +3833,36 @@ export default function ConversationGraphView({
     navigation.update({ relationKinds: kinds.includes(kind) ? kinds.filter((value) => value !== kind) : [...kinds, kind] });
   }
 
+  const [topicPicked, setTopicPicked] = useState(false);
+  const [topicReveal, setTopicReveal] = useState<string | null>(null);
+  const scopeChoice: MapScopeChoice = scope.kind === "focus" ? documentLayoutMode === "family" ? "note" : "around"
+    : topicPicked ? "topic" : "all";
+  function chooseScope(next: MapScopeChoice) {
+    const center = selectedConversationId && conversations[selectedConversationId] ? selectedConversationId
+      : scope.kind === "focus" ? scope.conversationId : activeConversationId;
+    if (next === "note") { focusConnections(center, 1, "family"); return; }
+    if (next === "around") { focusConnections(center, 2, "connections"); return; }
+    setTopicPicked(next === "topic");
+    if (scope.kind === "focus" || !isCanvasMode) chooseViewMode("canvas");
+    if (next === "topic") { navigation.update({ selectedConversationId: center }); setTopicReveal(center); }
+    // A lit roadmap frames its own steps once the wider map is drawn; otherwise fit everything.
+    else if (spotlight) framedSpotlightRef.current = null;
+    else setFitAfterArrange(true);
+  }
+  useEffect(() => { if (scopeRequest) chooseScope(scopeRequest.choice); }, [scopeRequest?.requestId]);
+  // Topic: the map at a distance where this note's topic box and its neighbours read together.
+  useEffect(() => {
+    if (!topicReveal || scope.kind === "focus") return;
+    const handle = window.setTimeout(() => {
+      const viewportElement = viewportRef.current;
+      const placement = scene.nodes.find((node) => node.conversationId === topicReveal);
+      setTopicReveal(null);
+      if (!viewportElement || !placement) { fitGraph(); return; }
+      applyViewport(centerNodeInCanvas(placement, viewportElement.getBoundingClientRect(), 0.55));
+    }, 120);
+    return () => window.clearTimeout(handle);
+  }, [topicReveal, scope.kind, scene.nodes]);
+
   function focusConnections(conversationId: string, depth = 1, mode: DocumentLayoutMode = "connections") {
     if (!conversations[conversationId]) return;
     interactions.cancel();
@@ -4351,8 +4422,7 @@ export default function ConversationGraphView({
     <section ref={sectionRef} className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
       <div className={`graph-map-navigation${toolbarLeading ? " has-workspace-controls" : ""}`} role="toolbar" aria-label="Map exploration">
         {toolbarLeading}
-        <span className={`graph-map-scope${focusedNodeId || scope.kind === "all" && !focusedTerritory ? " is-overview" : ""}`} aria-live="polite">{focusedTerritory ? `${focusedTerritory.label} · ${focusedTerritory.nodes.length} sources` : `${scopeLabel} · ${scopedIds.size} of ${Object.keys(conversations).length} sources`}</span>
-        <div className="graph-map-search" ref={searchRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
+        <div className={`graph-map-search${searchOpen || query ? " is-open" : ""}`} ref={searchRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
           <input type="search" ref={searchInputRef} aria-label="Search this map" placeholder={searchPlaceholder} value={query}
             onFocus={() => setSearchOpen(true)} onChange={(event) => { navigation.update({ query: event.target.value }); setSearchOpen(true); }}
             onKeyDown={(event) => {
@@ -4372,13 +4442,14 @@ export default function ConversationGraphView({
             <button type="button" onClick={openExplorer}>View all results · {sourceItems.length}</button>
           </div> : null}
         </div>
-        <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={chooseViewMode} />
-        {isCanvasMode && !panelView ? <MapGroupingMenu value={canvasGrouping} onChange={chooseCanvasGrouping} /> : null}
-        <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
-          onClick={() => setLensOpen(!lensOpen)}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
+        <MapScopeSwitch value={scopeChoice} onChange={chooseScope} />
+        <span className="graph-map-scope-count" title={scopeLabel}>{scopedIds.size} note{scopedIds.size === 1 ? "" : "s"}</span>
+        {/* Read out where the map is; the switch and the count show it on screen. */}
+        <span className="graph-map-scope public-map-visually-hidden" aria-live="polite">{focusedTerritory ? `${focusedTerritory.label} · ${focusedTerritory.nodes.length} sources` : `${scopeLabel} · ${scopedIds.size} of ${Object.keys(conversations).length} sources`}</span>
+        <span className="graph-map-bar-spacer" />
         {toolbarTrailing}
         <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
-          <summary aria-label="Map view options" title="Map view options"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 7h16M4 17h16" /><circle cx="9" cy="7" r="2" /><circle cx="15" cy="17" r="2" /></svg>{secondaryViewLabel ? <span className="graph-map-view-options-active">{secondaryViewLabel}</span> : null}
+          <summary aria-label="Map options" title="Map options: grouping, filter, explore, history, add, layout"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>{secondaryViewLabel ? <span className="graph-map-view-options-active">{secondaryViewLabel}</span> : null}
             {clusterStatus ? <span className="graph-map-view-options-status" role="status" title={clusterStatus}><span className="public-map-visually-hidden">{clusterStatus}</span></span> : null}</summary>
           <div>
             <div className="graph-map-menu-travel" role="group" aria-label="Move around the map">
@@ -4386,12 +4457,35 @@ export default function ConversationGraphView({
               <button type="button" aria-label="Forward in map" title="Forward in map" disabled={!navigation.canGoForward} onClick={() => restoreHistory("forward")}><span aria-hidden="true">→</span></button>
               {isCanvasMode ? null : <button type="button" className="graph-map-all-groups" aria-label="Zoom out to all groups" onClick={() => { closeViewOptions(); showAllGroups(); }}>All groups</button>}
             </div>
-            {/* Phones keep only search and a few icons in the bar; the views and Filter move in here. */}
-            <div className="graph-map-menu-compact" role="group" aria-label="Map views">
-              <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }} />
-              {isCanvasMode && !panelView ? <MapGroupingButtons value={canvasGrouping} onChange={(next) => { closeViewOptions(); chooseCanvasGrouping(next); }} /> : null}
+            {/* The bar keeps search, the scope and Roadmaps; grouping, Filter and everything else live here. */}
+            <div className="graph-map-menu-main" role="group" aria-label="Map views">
+              {isCanvasMode && !panelView ? <><span className="graph-map-menu-label">Group by</span>
+                <MapGroupingButtons value={canvasGrouping} onChange={(next) => { closeViewOptions(); chooseCanvasGrouping(next); }} /></> : null}
               <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
                 onClick={() => { closeViewOptions(); setLensOpen(!lensOpen); }}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
+              {menuItems}
+              {showTidyUp ? <button type="button" aria-pressed={isMultiSelectActive} onClick={() => { closeViewOptions(); toggleMultiSelect(); }}>
+                {isMultiSelectActive ? "Stop selecting cards" : "Select several cards"}</button> : null}
+              {showTidyUp && !showCanvasGroupBoxes ? <button type="button" disabled={isAutoArranging || !scene.nodes.length}
+                onClick={() => { closeViewOptions(); autoArrangeGraph(); }}>{isAutoArranging ? "Arranging…" : "Tidy up: auto-arrange cards"}</button> : null}
+              {scope.kind === "focus" && topicEmbeddings.neighbours.has(scope.conversationId) && documentLayoutMode !== "family" ? <button type="button" aria-pressed={showMeaningRing}
+                onClick={() => { closeViewOptions(); setShowMeaningRing(!showMeaningRing); }}>{showMeaningRing ? "Hide notes similar in meaning" : "Show notes similar in meaning"}</button> : null}
+              {selectedConversation && !focusedNodeId && !panelView ? <button type="button" onClick={() => { closeViewOptions(); focusConnections(selectedConversation.id); }}>Focus connections</button> : null}
+              {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="group" aria-label="Focused connections">
+                <button type="button" disabled={!canExpandNeighborhood} onClick={() => { closeViewOptions(); focusConnections(scope.conversationId, scope.depth + 1, documentLayoutMode); }}>Show more connections</button>
+                <button type="button" onClick={() => { closeViewOptions(); showDocuments(); }}>All documents</button>
+              </div> : null}
+              {showLayoutPicker ? <><span className="graph-map-menu-label">Layout</span><div className="graph-map-layout-options" role="group" aria-label="Layout">
+                {([
+                  ["auto", "Auto layout"],
+                  ["tree-right", "Tree: left to right"],
+                  ["tree-down", "Tree: top down"],
+                  ["connections", focusedNodeId ? "Around focused node" : "Most connections"],
+                ] as const).filter(([mode]) => !isLineageMode || mode === "tree-right" || mode === "tree-down").map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentLayoutMode === mode}
+                  onClick={() => { closeViewOptions(); chooseDocumentLayout(mode); }}>{label}</button>)}
+              </div></> : null}
+              <span className="graph-map-menu-label">View</span>
+              <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }} />
             </div>
             <button type="button" ref={explorerTriggerRef} aria-label="Explore map collections and sources" onClick={() => { closeViewOptions(); openExplorer(); }}>Explore groups and sources</button>
             {modeSettings}
@@ -4434,14 +4528,7 @@ export default function ConversationGraphView({
           <span>{spotlightScores ? `${describeSpotlight(spotlightScores.values())}${spotlightNear?.size ? ` · ${spotlightNear.size} linked` : ""}` : "None of these documents are on this map"}</span></div>
         {onClearSpotlight ? <button type="button" onClick={onClearSpotlight}>Clear</button> : null}
       </div> : null}
-      {scope.kind === "focus" && !panelView ? <div className="graph-map-neighborhood" role="region" aria-label="Focused connections">
-        <div><strong>Around {conversations[scope.conversationId]?.title ?? "this document"}</strong>
-          <span>{unfocusedScene.nodes.length} document{unfocusedScene.nodes.length === 1 ? "" : "s"} · {scope.depth} {scope.depth === 1 ? "step" : "steps"} away{meaningRing.length ? ` · ${meaningRing.length} close in meaning` : ""}</span></div>
-        {topicEmbeddings.neighbours.has(scope.conversationId) ? <button type="button" aria-pressed={showMeaningRing} onClick={() => setShowMeaningRing(!showMeaningRing)}
-          title="An outer ring of documents close in meaning that are not linked">{showMeaningRing ? "Hide similar in meaning" : "Show similar in meaning"}</button> : null}
-        <button type="button" disabled={!canExpandNeighborhood} onClick={() => focusConnections(scope.conversationId, scope.depth + 1, documentLayoutMode)}>Show more connections</button>
-        <button type="button" onClick={showDocuments}>All documents</button>
-      </div> : null}
+
       {explorerContainer ? createPortal(explorationContent, explorerContainer) : explorerOpen ?
         <div ref={explorerRef} className="graph-map-explorer-popover" data-graph-ui="true" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setExplorerOpen(false); } }}>
           <button type="button" className="graph-map-explorer-close" onClick={() => setExplorerOpen(false)}>Close explorer</button>
@@ -4843,67 +4930,8 @@ export default function ConversationGraphView({
             role="group"
             aria-label="Graph navigation"
           >
-            {showTidyUp ? <button
-              aria-label={
-                isMultiSelectActive
-                  ? "Exit multi-select and clear selection"
-                  : "Select multiple chats"
-              }
-              aria-pressed={isMultiSelectActive}
-              className="conversation-graph-multi-select-toggle"
-              data-graph-ui="true"
-              onClick={toggleMultiSelect}
-              title={
-                isMultiSelectActive
-                  ? "Drag across cards to select them, then drag any selected card to move them together"
-                  : "Select and move several cards at once"
-              }
-              type="button"
-            >
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <path d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" />
-                <path d="m9 9 7 3-3 1-1 3z" />
-              </svg>
-              <span>
-                {multiSelectedConversationIds.size
-                  ? `${multiSelectedConversationIds.size} selected`
-                  : "Select"}
-              </span>
-            </button> : null}
-            {showTidyUp && !showCanvasGroupBoxes ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Tidy up</summary><div>
-            <button
-              aria-label="Auto-arrange graph with ELK"
-              className="conversation-graph-auto-arrange"
-              disabled={isAutoArranging || !scene.nodes.length}
-              onClick={autoArrangeGraph}
-              title="Auto-arrange graph with ELK"
-              type="button"
-            >
-              <svg aria-hidden="true" viewBox="0 0 24 24">
-                <circle cx="6" cy="7" r="2.2" />
-                <circle cx="18" cy="6" r="2.2" />
-                <circle cx="12" cy="18" r="2.2" />
-                <path d="m8 7 7.8-.8M7.2 8.8l3.7 6.9m5.7-7.8-3.5 7.8" />
-              </svg>
-              <span>{isAutoArranging ? "Arranging…" : "Auto-arrange"}</span>
-            </button>
-            <small className="graph-map-layout-context">Auto-arrange moves your cards. Undo puts them back.</small>
-            </div></DismissibleDetails> : null}
             {showTidyUp && !showCanvasGroupBoxes && tidyUndo ? <button type="button" className="graph-map-tidy-undo" onClick={undoTidyUp}>Undo tidy up</button> : null}
-            {showLayoutPicker ? <DismissibleDetails className="graph-map-layout-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}><summary>Layout</summary><div>
-              {([
-                ["auto", "Auto layout"],
-                ["tree-right", "Tree: left to right"],
-                ["tree-down", "Tree: top down"],
-                ["connections", focusedNodeId ? "Around focused node" : "Most connections"],
-              ] as const).filter(([mode]) => !isLineageMode || mode === "tree-right" || mode === "tree-down").map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentLayoutMode === mode}
-                onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); chooseDocumentLayout(mode); }}>{label}</button>)}
-              {documentLayout?.centerNodeId ? <small className="graph-map-layout-context">Centered on {conversations[documentLayout.centerNodeId]?.title}</small> : null}
-            </div></DismissibleDetails> : null}
-            {selectedConversation && !focusedNodeId ? <button type="button" onClick={() => focusConnections(selectedConversation.id)}>Focus connections</button> : null}
-            {selectedConversation ? <button type="button" onClick={revealSelectedConversation}>Center</button> : null}
-            {selectedConversation && !panelView ? <button type="button" title={`Show only documents within a few links of ${selectedConversation.title}`}
-              onClick={() => filterToNeighbors(selectedConversation.id)}>Neighbors</button> : null}
+            {/* Only zoom lives here; the scope switch at the top does what Center, Neighbors and Layout did. */}
             <button
               aria-label="Zoom out"
               onClick={() => zoomByStep("out")}

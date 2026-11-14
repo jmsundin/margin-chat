@@ -170,19 +170,9 @@
 .semantic-map .graph-map-layout-options > div button { width: 100%; text-align: left; justify-content: flex-start; }
 .semantic-map .graph-map-layout-options > div button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .graph-map-layout-context { padding: 8px 6px 2px; color: var(--muted); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
-.graph-map-neighborhood { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel-bg); }
-.graph-map-neighborhood > div { display: flex; align-items: baseline; gap: 10px; flex: 1; min-width: 0; }
-.graph-map-neighborhood strong { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.graph-map-neighborhood span { color: var(--muted); font-size: 11px; white-space: nowrap; }
-.graph-map-neighborhood button { flex: 0 0 auto; border: 1px solid var(--line); border-radius: 7px; padding: 6px 9px; color: var(--ink); background: var(--button-surface); font: inherit; font-size: 12px; cursor: pointer; }
-.graph-map-neighborhood button:disabled { opacity: .45; cursor: default; }
 .semantic-map[data-focused-node-id] .conversation-graph-edge:not(.is-selected-path),
 .semantic-map[data-focused-node-id] .graph-personal-connection,
 .semantic-map[data-focused-node-id] .graph-relation-edge { opacity: .8; }
-@media (max-width: 700px) {
-  .graph-map-neighborhood { flex-wrap: wrap; }
-  .graph-map-neighborhood > div { flex-basis: 100%; }
-}
 .graph-map-filters { margin: 0; padding: 8px 4px 2px; border: 0; border-top: 1px solid var(--line); }
 .graph-map-filters > legend { float: left; width: 100%; padding: 0 0 4px; color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
 .graph-map-filters > .graph-map-context-controls { position: static; clear: both; display: flex; flex-direction: column; align-items: stretch; gap: 6px; font-size: 13px; pointer-events: auto; }
@@ -414,3 +404,32 @@
 @media (max-width: 760px) {
   .semantic-map .graph-map-navigation > .graph-map-grouping { display: none; }
 }
+
+/* Slim bar: search (an icon until used), Note / Around / Topic / All, the note count, Roadmaps and ⋯. */
+.graph-map-scope-switch { display: inline-flex; flex: 0 0 auto; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-bg); }
+.semantic-map .graph-map-scope-switch button { min-height: 28px; padding: 3px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 550; cursor: pointer; }
+.semantic-map .graph-map-scope-switch button:hover { color: var(--ink); background: var(--button-surface); }
+.semantic-map .graph-map-scope-switch button[aria-pressed="true"] { background: var(--ink); color: var(--panel-bg); }
+.graph-map-scope-count { flex: 0 0 auto; font-size: 12px; color: var(--muted); white-space: nowrap; }
+.graph-map-bar-spacer { flex: 1 1 auto; min-width: 0; }
+.semantic-map .graph-map-navigation .graph-map-search { flex: 0 0 auto; width: 36px; min-width: 36px; max-width: 36px; transition: max-width 160ms ease, width 160ms ease; }
+.semantic-map .graph-map-navigation .graph-map-search input { padding-left: 30px; cursor: pointer; background: var(--panel-bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23888' stroke-width='2' stroke-linecap='round'%3E%3Ccircle cx='11' cy='11' r='6'/%3E%3Cpath d='m20 20-4.2-4.2'/%3E%3C/svg%3E") no-repeat 9px center / 16px; }
+.semantic-map .graph-map-navigation .graph-map-search:not(.is-open):not(:focus-within) input::placeholder { color: transparent; }
+.semantic-map .graph-map-navigation .graph-map-search:is(.is-open, :focus-within) { width: clamp(180px, 26vw, 320px); max-width: 320px; }
+.semantic-map .graph-map-navigation .graph-map-search:is(.is-open, :focus-within) input { cursor: text; }
+
+/* The ⋯ menu leads with grouping, Filter, Add and Tidy up on every screen size. */
+.semantic-map .graph-map-view-options .graph-map-menu-main { display: flex; flex-direction: column; gap: 2px; padding-bottom: 6px; margin-bottom: 2px; border-bottom: 1px solid var(--line); }
+.graph-map-menu-label { padding: 6px 8px 2px; font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+.semantic-map .graph-map-view-options .graph-map-menu-main .graph-view-mode-tabs { display: flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; }
+.semantic-map .graph-map-view-options .graph-map-menu-main .graph-view-mode-tabs button { flex: 1 1 0%; min-height: 32px; text-align: center; border-radius: 7px; }
+.semantic-map .graph-map-view-options > div { width: min(300px, calc(100vw - 16px)); }
+
+@media (max-width: 760px) {
+  .graph-map-scope-count { display: none; }
+  .semantic-map .graph-map-scope-switch button { padding: 3px 7px; }
+  .semantic-map .graph-map-navigation .graph-map-search:is(.is-open, :focus-within) { position: absolute; left: 8px; right: 8px; width: auto; max-width: none; z-index: 12; }
+}
+.semantic-map .graph-map-menu-main :is(.graph-map-neighborhood, .graph-map-layout-options) { position: static; display: flex; flex-direction: column; gap: 2px; }
+.semantic-map .graph-map-menu-main .graph-map-layout-options button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
+.semantic-map .graph-map-menu-main .graph-map-neighborhood button:disabled { opacity: .45; cursor: default; }

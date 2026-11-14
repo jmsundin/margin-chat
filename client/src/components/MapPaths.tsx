@@ -18,7 +18,7 @@ export interface MapPathActions {
   onChange(pathId: string, change: RoadmapChange): string | null;
   /** Explain a step with AI, or Dive deeper (the step becomes a path of its own); returns why it couldn't start, or null. */
   onStepAI(pathId: string, docId: string, action: "explain" | "deeper"): string | null;
-  /** Keep or discard the path AI drafted; returns why it couldn't, or null. */
+  /** Keep or discard the path AI drafted; returns why it couldn't, or null. Drafts are kept on their own, so this is for older callers. */
   onDraftDecision(pathId: string, messageId: string, proposalId: string, action: "approve" | "dismiss"): string | null;
   onStopDraft(pathId: string): void;
   /** Documents AI is writing in now. */
@@ -47,8 +47,8 @@ export function MapPathsMenu({ paths, activeId, onPick, onNew, onDraft }: {
   const close = (element: HTMLElement) => { element.closest("details")?.removeAttribute("open"); setDrafting(false); setError(null); };
   const link = roadmapDraftLink(goal);
   return <DismissibleDetails className="map-paths-menu" onToggle={(event) => { if (!event.currentTarget.open) { setDrafting(false); setError(null); } }}>
-    <summary aria-label={active ? `Path: ${active.name}` : "Paths"} title="Paths: learning roadmaps drawn over your map" className={active ? "is-on" : undefined}>
-      <PathIcon /><span>{active ? active.name : "Paths"}</span>
+    <summary aria-label={active ? `Roadmap: ${active.name}` : "Roadmaps"} title="Roadmaps: learning paths drawn over your map" className={active ? "is-on" : undefined}>
+      <PathIcon /><span>{active ? active.name : "Roadmaps"}</span>
     </summary>
     <div role="menu">
       {drafting ? <form className="map-paths-draft" onSubmit={(event) => {
@@ -61,15 +61,15 @@ export function MapPathsMenu({ paths, activeId, onPick, onNew, onDraft }: {
         <input id="map-paths-goal" autoFocus value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="Lower my ApoB, or https://roadmap.sh/…" />
         <small>{link ? "AI reads the page and builds a path from it, reusing notes you have." : "AI builds a path from your notes, and adds notes for what's missing."}</small>
         {error ? <p role="alert">{error}</p> : null}
-        <div><button type="submit" disabled={!goal.trim()}>Draft path</button><button type="button" onClick={() => { setDrafting(false); setError(null); }}>Back</button></div>
+        <div><button type="submit" disabled={!goal.trim()}>Draft roadmap</button><button type="button" onClick={() => { setDrafting(false); setError(null); }}>Back</button></div>
       </form> : <>
         {paths.length ? paths.map((path) => <button key={path.id} type="button" role="menuitemradio" aria-checked={path.id === activeId}
           onClick={(event) => { close(event.currentTarget); onPick(path.id === activeId ? null : path.id); }}>
           <PathIcon /><span>{path.name}</span><em>{path.finished}/{path.total}</em>
-        </button>) : <p className="map-paths-empty">A path is a roadmap through your notes: steps in order, with what each needs first.</p>}
+        </button>) : <p className="map-paths-empty">A roadmap is a path through your notes: steps in order, with what each needs first.</p>}
         <hr />
-        <button type="button" role="menuitem" onClick={(event) => { close(event.currentTarget); onNew(); }}>+ New path: click notes in order</button>
-        <button type="button" role="menuitem" onClick={() => setDrafting(true)}>✦ Draft a path with AI…</button>
+        <button type="button" role="menuitem" onClick={(event) => { close(event.currentTarget); onNew(); }}>+ New roadmap: click notes in order</button>
+        <button type="button" role="menuitem" onClick={() => setDrafting(true)}>✦ Draft a roadmap with AI…</button>
       </>}
     </div>
   </DismissibleDetails>;
@@ -116,6 +116,25 @@ export function MapPathLayer({ context, path, currentDocId }: { context: MapOver
       if (!box) return null;
       return <span key={step.docId} className={`map-path-badge is-${step.status}${step.docId === currentDocId ? " is-current" : ""}${step.docId === path.nextUpDocId ? " is-next" : ""}`}
         style={dots.has(step.docId) ? { left: box.x - 6, top: box.y - 6 } : { left: box.x, top: box.y }}>{step.status === "done" ? "✓" : step.number}</span>;
+    })}
+  </div>;
+}
+
+/** With no roadmap on, each roadmap wears a small flag at its first step: its name and progress. Click to turn it on. */
+export function MapRoadmapFlags({ context, starts, onPick }: { context: MapOverlayContext; starts: (MapPathSummary & { docId: string })[]; onPick(id: string): void }) {
+  const used = new Set<string>();
+  return <div className="map-roadmap-flags" data-graph-ui="true">
+    {starts.map((start) => {
+      const box = context.dotBox?.(start.docId) ?? context.nodeBox(start.docId);
+      if (!box || box.x + box.width < 0 || box.y < 0 || box.x > context.size.width || box.y > context.size.height) return null;
+      // Two roadmaps starting at the same note stack their flags.
+      let offset = 0;
+      while (used.has(`${start.docId}:${offset}`)) offset += 1;
+      used.add(`${start.docId}:${offset}`);
+      return <button key={start.id} type="button" className="map-roadmap-flag" title={`Turn on the roadmap “${start.name}”`}
+        style={{ left: box.x + Math.min(box.width / 2, 10), top: box.y - 26 - offset * 24 }} onClick={() => onPick(start.id)}>
+        <PathIcon /><span>{start.name}</span><em>{start.finished}/{start.total}</em>
+      </button>;
     })}
   </div>;
 }
@@ -187,10 +206,9 @@ export function MapPathBar({ path, trail, conversations, currentDocId, layout, a
 
   return <div className="map-path-dock" data-graph-ui="true">
     {drafting || draft ? <div className="map-path-draft" role="status" aria-live="polite">
-      {draft ? <>
-        <span>✦ AI drafted {draftSize(draft.proposal)} for “{path.name}”.</span>
-        <button type="button" onClick={() => run(actions.onDraftDecision(path.id, draft.messageId, draft.proposal.id, "dismiss"))}>Discard</button>
-        <button type="button" className="is-primary" onClick={() => run(actions.onDraftDecision(path.id, draft.messageId, draft.proposal.id, "approve"))}>Keep</button>
+      {draft && !drafting ? <>
+        <span className="map-path-spinner" aria-hidden="true" />
+        <span>Adding {draftSize(draft.proposal)} to “{path.name}”…</span>
       </> : <>
         <span className="map-path-spinner" aria-hidden="true" />
         <span>{progress?.label || (progress?.roadmapDraft ? `Drafting: ${progress.roadmapDraft.stages.reduce((sum, stage) => sum + stage.steps.length, 0)} steps so far…` : "AI is drafting this path…")}</span>
@@ -214,7 +232,7 @@ export function MapPathBar({ path, trail, conversations, currentDocId, layout, a
         <button type="button" onClick={() => onOpenStep(step.docId)}>Open</button>
         <button type="button" disabled={writing} onClick={() => run(actions.onStepAI(path.id, step.docId, "explain"))}>{writing ? "AI is writing…" : "✦ Explain"}</button>
         {stepIsPath ? <button type="button" onClick={() => onGoIn(step.docId)}>Go into its path ›</button>
-          : <button type="button" onClick={() => { const reason = actions.onStepAI(path.id, step.docId, "deeper"); run(reason ?? "AI is breaking this step into a path of its own. Keep it in the step's note, then Go into its path."); }}>↘ Dive deeper</button>}
+          : <button type="button" onClick={() => { const reason = actions.onStepAI(path.id, step.docId, "deeper"); run(reason ?? "AI is breaking this step into a path of its own. When it's done, Go into its path."); }}>↘ Dive deeper</button>}
       </div>
     </section> : null}
     {message ? <p className="map-path-message" role="status">{message}<button type="button" aria-label="Dismiss" onClick={() => onMessage(null)}>×</button></p> : null}

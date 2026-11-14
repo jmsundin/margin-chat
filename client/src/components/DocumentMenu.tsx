@@ -35,8 +35,10 @@ export interface DocumentMenuProps {
    * line. Only settable here, never by an app.
    */
   onSetAgentEdit?: (id: string, policy: "locked" | "open" | null) => void;
-  /** Draw this document as a roadmap of stages and steps, or as a plain document again. */
-  onToggleRoadmap?: (id: string) => void;
+  /** AI drafts a roadmap that builds on this document; it appears on the map beside it. */
+  onMakeRoadmap?: (id: string) => void;
+  /** Show the map around this document (a roadmap's own document turns the roadmap on). */
+  onShowOnMap?: (id: string) => void;
   /** Show the document as one full-page canvas (frontmatter type "board"). */
   onToggleBoard?: (id: string) => void;
   /** Cards written in this document and its notes; the menu offers a review when there are any. */
@@ -69,7 +71,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -265,7 +267,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
           onClick={() => action(onMoveToMargin)}>Move to margin</button> : null}
       </div> : null}
-      {onToggleHiddenFromAI || onToggleRoadmap || onToggleBoard || onSetAgentEdit || onMakeFlashcards || onCheckClaims ? <div role="group" className="document-menu-section">
+      {onToggleHiddenFromAI || onMakeRoadmap || onShowOnMap || onToggleBoard || onSetAgentEdit || onMakeFlashcards || onCheckClaims ? <div role="group" className="document-menu-section">
         {onCheckClaims ? <button type="button" role="menuitem" title="Find the claims this document makes and check each against your other notes."
           onClick={() => action(onCheckClaims)}>Check claims…</button> : null}
         {onMakeFlashcards ? <button type="button" role="menuitem" title="The AI suggests flashcards from this document; you choose which to add."
@@ -276,12 +278,10 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <span>Review cards</span>
           <span className="document-menu-group-name">{flashcardCount}</span>
         </button> : null}
-        {onToggleRoadmap ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.nodeType === "roadmap"}
-          title="Lay out steps from your documents in stages, and track what you've learned."
-          onClick={() => action(onToggleRoadmap)}>
-          <span>Roadmap</span>
-          <span className="document-menu-check" aria-hidden="true">{conversation.nodeType === "roadmap" ? "✓" : ""}</span>
-        </button> : null}
+        {onShowOnMap ? <button type="button" role="menuitem" title="Show the map around this document, beside it (⌘G)."
+          onClick={() => action(onShowOnMap)}>Show on map</button> : null}
+        {onMakeRoadmap ? <button type="button" role="menuitem" title="AI drafts a roadmap that builds on this document. It appears on the map, and you edit it there."
+          onClick={() => action(onMakeRoadmap)}>✦ Make a roadmap from this…</button> : null}
         {onToggleBoard ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.nodeType === "board"}
           title="Show this document as one full-page canvas. Its first drawing becomes the board; its text stays below."
           onClick={() => action(onToggleBoard)}>

@@ -212,7 +212,7 @@ export function addExampleVault(state: AppState, now = new Date().toISOString())
   return next;
 }
 
-const WELCOME = "This trial comes with an example vault: a few weeks of research notes on why we age, with margin notes, side documents and AI answers. Open [[Why we age]] or **Map View** to look around, and change anything you like. It all stays in this browser.";
+const WELCOME = "This trial comes with an example vault: a few weeks of research notes on why we age, with margin notes, side documents and AI answers. Open [[Why we age]] and its map (the map button at the top right) to look around, and change anything you like. It all stays in this browser.";
 
 /** Points "Start here" at the example documents, right under its first paragraph. */
 function welcomeLine(state: AppState, at: string): AppState {

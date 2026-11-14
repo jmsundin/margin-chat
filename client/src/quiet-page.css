@@ -44,6 +44,10 @@
   .is-quiet-page .document-panel > .document-header .document-header-actions { opacity: 0; transition: opacity .15s ease; }
   .is-quiet-page .document-panel:is(:hover, :focus-within) > .document-header .document-header-actions,
   .is-quiet-page .document-panel > .document-header .document-header-actions:has([aria-expanded="true"]) { opacity: 1; }
+  /* A roadmap chip stays in view, so roadmaps can be found without pointing; the rest still wait. */
+  .is-quiet-page .document-panel > .document-header .document-header-actions:has(.document-roadmap-chip) { opacity: 1; }
+  .is-quiet-page .document-panel > .document-header .document-header-actions:has(.document-roadmap-chip) > :not(.document-roadmap-chip) { opacity: 0; transition: opacity .15s ease; }
+  .is-quiet-page .document-panel:is(:hover, :focus-within) > .document-header .document-header-actions > :not(.document-roadmap-chip) { opacity: 1; }
 
   /* Authorship and Live Preview / Source / Reading show only when you point at their row. ⌘E still switches views. */
   .is-quiet-page .live-document-modes { opacity: 0; }

@@ -348,16 +348,13 @@ try {
   assert.equal(browser.document.querySelector(".document-link-picker"), null);
   assert.deepEqual(ancestry(latest), originalAncestry);
   checks.push("real rich selection creates a durable block link and source highlight without creating or reparenting documents");
+  // Children are listed under "Inside this note" at the end of the focused document.
   async function childEntriesOf(title: string) {
-    const trigger = element(`.document-children-trigger[aria-label^="Children of ${title} ("]`);
-    if (trigger.getAttribute("aria-expanded") !== "true") await click(trigger);
-    const entries = [...element(`[aria-label="Child documents of ${title}"]`).querySelectorAll(".document-child-item")] as HTMLButtonElement[];
-    return entries;
+    assert.equal(latest.conversations[latest.activeConversationId]?.title, title, `${title} is the focused document`);
+    return [...browser.document.querySelectorAll(".document-keep-reading .document-inside-chip")] as HTMLButtonElement[];
   }
   async function childCount(title: string) {
-    const count = (await childEntriesOf(title)).length;
-    await click(element(`.document-children-trigger[aria-label^="Children of ${title} ("]`));
-    return count;
+    return (await childEntriesOf(title)).length;
   }
   const childEntries = await childEntriesOf("Source research");
   assert.equal(childEntries.length, 2, "The existing branch and linked document share the Children list.");

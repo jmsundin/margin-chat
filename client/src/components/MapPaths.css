@@ -120,8 +120,10 @@
 .map-path-message button { margin-left: auto; border: 0; background: none; width: 26px; height: 26px; border-radius: 7px; color: var(--muted); }
 
 /* ---- List ---- */
-.map-path-list { position: absolute; top: calc(var(--map-header-bottom, 48px) + 10px); bottom: 120px; left: 50%; transform: translateX(-50%); z-index: 7; width: min(440px, calc(100% - 24px));
-  overflow: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 12px 34px #0003; }
+/* List takes the map's place in its pane, rather than floating over the map. */
+.map-path-list { position: absolute; top: var(--map-header-bottom, 48px); bottom: 0; left: 0; right: 0; z-index: 7; overflow: auto; padding-bottom: 130px;
+  background: var(--bg, var(--panel-bg)); }
+.map-path-list > ol { max-width: 560px; margin: 0 auto; }
 .map-path-list ol { list-style: none; margin: 0; padding: 0; }
 .map-path-list > ol { padding: 6px 8px 10px; }
 .map-path-list-stage h3 { display: flex; justify-content: space-between; margin: 10px 8px 4px; color: var(--muted); font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
@@ -154,3 +156,12 @@
   .map-path-pick-banner > span { flex-basis: 100%; }
   .map-path-pick-banner input { flex: 1; width: auto; }
 }
+
+/* A small flag at the first step of each roadmap, so roadmaps can be found on the map itself. */
+.map-roadmap-flags { position: absolute; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
+.map-roadmap-flag { position: absolute; display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 22px; padding: 0 8px 0 6px; border: 1px solid color-mix(in srgb, #7c5cff 45%, var(--line)); border-radius: 11px 11px 11px 3px; background: color-mix(in srgb, #7c5cff 12%, var(--panel-strong, var(--panel-bg))); color: color-mix(in srgb, #7c5cff 70%, var(--ink)); font: inherit; font-size: 11.5px; font-weight: 600; line-height: 1; white-space: nowrap; cursor: pointer; pointer-events: auto; box-shadow: 0 2px 8px #0001; }
+.map-roadmap-flag:hover { background: color-mix(in srgb, #7c5cff 22%, var(--panel-strong, var(--panel-bg))); }
+.map-roadmap-flag:focus-visible { outline: 2px solid #7c5cff; outline-offset: 1px; }
+.map-roadmap-flag svg { flex: 0 0 auto; width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+.map-roadmap-flag span { overflow: hidden; text-overflow: ellipsis; }
+.map-roadmap-flag em { font-style: normal; font-weight: 500; opacity: .7; }
