@@ -3374,7 +3374,8 @@ function WorkspaceAppContent({
       }),
       onError(error) {
         if (isAbortError(error)) return;
-        if (isApiErrorStatus(error, 401)) { onAuthExpired(); return; }
+        // Signs out only if the session is really gone; the error is still shown beside the request.
+        if (isApiErrorStatus(error, 401)) onAuthExpired();
         if (isApiErrorStatus(error, 402)) {
           onBillingRequired(getErrorText(error, "Add money to your prepaid balance to continue using hosted AI."));
           return;

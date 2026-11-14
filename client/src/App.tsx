@@ -320,6 +320,22 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
     setBillingNotice(null);
   }
 
+  /**
+   * A 401 from a feature request signs out only when the server agrees the
+   * session is gone. Some 401s come from elsewhere (such as an AI provider
+   * refusing its own key), and those must never cost the user their session.
+   */
+  async function handleWorkspaceAuthExpired(message?: string) {
+    try {
+      const user = await requestAuthSession();
+      if (user && user.id === authUser?.id) return;
+    } catch (error) {
+      // Offline or the check itself failed: stay signed in; a real 401 here means signed out.
+      if (!(error instanceof ApiError && error.statusCode === 401)) return;
+    }
+    handleAuthExpired(message);
+  }
+
   async function handleBillingRequired(
     message = "Add money to your prepaid balance before using the hosted models.",
   ) {
@@ -647,7 +663,7 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
       billingErrorMessage={billingError}
       billingSubmitting={billingSubmitting}
       key={apiStorageNamespace(authUser.id)}
-      onAuthExpired={handleAuthExpired}
+      onAuthExpired={(message) => { void handleWorkspaceAuthExpired(message); }}
       onDismissBillingNotice={() => setBillingNotice(null)}
       onBillingRequired={handleBillingRequired}
       onLogout={() => {

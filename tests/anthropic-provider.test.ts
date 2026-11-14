@@ -90,8 +90,13 @@ describe("Anthropic Claude provider", () => {
   });
 
   test("provider HTTP errors keep their status and message", async () => {
+    captureFetch(() => Response.json({ type: "error", error: { type: "rate_limit_error", message: "slow down" } }, { status: 429 }));
+    await expect(requestAnthropicResponse(args())).rejects.toMatchObject({ statusCode: 429, message: "slow down" });
+  });
+
+  test("a refused API key is a 502, never a 401 that would sign the user out", async () => {
     captureFetch(() => Response.json({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }, { status: 401 }));
-    await expect(requestAnthropicResponse(args())).rejects.toMatchObject({ statusCode: 401, message: "invalid x-api-key" });
+    await expect(requestAnthropicResponse(args())).rejects.toMatchObject({ statusCode: 502, message: expect.stringContaining("invalid x-api-key") });
   });
 
   test("usage adds cache tokens to input and sums refusal-fallback attempts", () => {
