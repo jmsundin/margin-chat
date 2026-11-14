@@ -15,6 +15,7 @@ import {
 } from "./lib/api";
 import { rememberOfflineUser, loadOfflineUser, forgetOfflineUser } from "./lib/offlineSession";
 import { getNextTheme, loadInitialTheme, syncTheme, THEME_STORAGE_KEY, type ThemeMode } from "./lib/appearance";
+import { writeSyncedSetting } from "./lib/interfaceSettings";
 import { getCheckoutConfirmationNotice, getCheckoutReturn } from "./lib/billing";
 import DictationControl from "./components/DictationControl";
 import DesktopAppPrompt from "./components/DesktopAppPrompt";
@@ -71,7 +72,7 @@ function GuestTrial() {
   const [theme, setTheme] = useState<ThemeMode>(INITIAL_THEME);
   useEffect(() => {
     syncTheme(theme);
-    try { window.localStorage.setItem(THEME_STORAGE_KEY, theme); } catch { /* The theme lasts until the page reloads. */ }
+    writeSyncedSetting(THEME_STORAGE_KEY, theme);
   }, [theme]);
   return <Suspense fallback={<div className="app-shell" aria-busy="true" />}><GuestApp theme={theme} onSetTheme={setTheme} /></Suspense>;
 }
@@ -172,11 +173,7 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
   useEffect(() => {
     syncTheme(theme);
 
-    try {
-      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-    } catch {
-      return;
-    }
+    writeSyncedSetting(THEME_STORAGE_KEY, theme);
   }, [theme]);
 
   // Follow a theme chosen in another window of the same origin, such as the

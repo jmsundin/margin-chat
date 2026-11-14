@@ -5,6 +5,8 @@ import type { LivePreviewMode } from "./livePreviewMarkdown";
  * classic rich-text editor stays available from Settings. Both choices are
  * saved per device.
  */
+import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
+
 const EDITOR_KEY = "margin-chat:document-editor";
 const MODE_KEY = "margin-chat:document-view-mode";
 const listeners = new Set<() => void>();
@@ -17,8 +19,7 @@ export function readDocumentEditorKind(): DocumentEditorKind {
 }
 
 export function saveDocumentEditorKind(kind: DocumentEditorKind) {
-  try { localStorage.setItem(EDITOR_KEY, kind); }
-  catch { /* Private windows keep the default. */ }
+  writeSyncedSetting(EDITOR_KEY, kind);
   listeners.forEach((listener) => listener());
 }
 
@@ -37,5 +38,6 @@ export function saveDocumentViewMode(mode: LivePreviewMode) {
 
 export function subscribeDocumentEditorPreference(listener: () => void): () => void {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  const stop = onSyncedSettingChange([EDITOR_KEY], listener);
+  return () => { listeners.delete(listener); stop(); };
 }

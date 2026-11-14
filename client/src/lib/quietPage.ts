@@ -4,6 +4,8 @@
  * hover or from ⋮. On by default; Settings → Editor & look turns it off. Saved
  * per device.
  */
+import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
+
 const QUIET_KEY = "margin-chat:quiet-page";
 /** The quiet page starts with the sidebar closed, so it keeps its own open/closed memory. */
 export const QUIET_SIDEBAR_KEY = "margin-chat:quiet-page-sidebar-open";
@@ -15,8 +17,7 @@ export function readQuietPage(): boolean {
 }
 
 export function saveQuietPage(quiet: boolean) {
-  try { localStorage.setItem(QUIET_KEY, String(quiet)); }
-  catch { /* Private windows keep the default. */ }
+  writeSyncedSetting(QUIET_KEY, String(quiet));
   syncPaper(quiet);
   listeners.forEach((listener) => listener());
 }
@@ -34,7 +35,8 @@ export function syncPaper(quiet = readQuietPage()) {
 
 export function subscribeQuietPage(listener: () => void): () => void {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  const stop = onSyncedSettingChange([QUIET_KEY], () => { syncPaper(); listener(); });
+  return () => { listeners.delete(listener); stop(); };
 }
 
 /** Tabs show only when there's a choice to make: two or more documents, or a space you're in. */

@@ -1,10 +1,12 @@
 import { useSyncExternalStore } from "react";
 import { dictationSupported, readDictationButtonPreference, subscribeDictationButtonPreference } from "../lib/dictation";
+import { useFeature } from "../lib/features";
 
-/** Whether mic buttons show: the browser can record and the "Voice typing button" setting is on. */
+/** Whether mic buttons show: Voice typing is on in Features, the browser can record, and the "Voice typing button" setting is on. */
 export function useDictationButton(): boolean {
   const shown = useSyncExternalStore(subscribeDictationButtonPreference, readDictationButtonPreference, () => true);
-  return shown && dictationSupported();
+  const voice = useFeature("voice");
+  return voice && shown && dictationSupported();
 }
 
 export function MicIcon({ size = 14 }: { size?: number }) {

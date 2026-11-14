@@ -73,7 +73,7 @@ try {
       onRefreshBilling() {}, onAddMoney() {}, onManageBilling() {}, onStartSubscription() {},
       billingErrorMessage: null, billingSubmitting: false,
       cloudSyncEnabled: false, cloudSyncStatus: "local" as const, cloudBackupMatchesLocal: false, cloudBackupSizeBytes: 0,
-      errorMessage: null, isOpen: true, isSaving: false,
+      errorMessage: null, isOpen: true, isSaving: false, initialTab: "account" as const,
       localDirectoryStatus: { supported: false, directoryName: null, connected: false, permission: "prompt" },
       vault: {} as any, onBackupToCloud: async () => {}, onChooseLocalDirectory: async () => {}, onClearLocalDirectory: async () => {},
       onClose() { closes += 1; }, onLogout() { logouts += 1; }, onSaveApiKeys: async () => billingUser.apiKeys,

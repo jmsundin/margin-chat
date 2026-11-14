@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { useFeature } from "../lib/features";
 import { createPortal } from "react-dom";
 import {
   finishLiveDictationSession,
@@ -138,7 +139,9 @@ function formatElapsed(ms: number) {
  */
 export default function DictationControl({ userId, segmentMs }: { userId?: string; segmentMs?: number }) {
   const supported = dictationSupported();
-  const showButton = useSyncExternalStore(subscribeDictationButtonPreference, readDictationButtonPreference, () => true);
+  // Voice typing is an opt-in feature: off, it shows no mic and Space only types a space.
+  const voice = useFeature("voice");
+  const showButton = useSyncExternalStore(subscribeDictationButtonPreference, readDictationButtonPreference, () => true) && voice;
   const [focused, setFocused] = useState<HTMLElement | null>(null);
   const [phase, setPhaseState] = useState<Phase>({ kind: "idle" });
   const [anchor, setAnchor] = useState<Anchor | null>(null);
@@ -157,7 +160,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
   const keyPressRef = useRef<number | null>(null);
   // A plain Space press that may turn into push-to-talk if it's held.
   const spaceHoldRef = useRef<{ target: HTMLElement; repeats: number; started: boolean } | null>(null);
-  const holdSpace = useSyncExternalStore(subscribeDictationButtonPreference, readHoldSpacePreference, () => true);
+  const holdSpace = useSyncExternalStore(subscribeDictationButtonPreference, readHoldSpacePreference, () => true) && voice;
   const noticeTimer = useRef(0);
   const coarsePointer = typeof window !== "undefined" && window.matchMedia?.("(pointer: coarse)").matches && !window.matchMedia("(any-pointer: fine)").matches;
 
@@ -493,7 +496,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
         void start(target);
         return;
       }
-      if (!isDictationShortcut(event)) return;
+      if (!voice || !isDictationShortcut(event)) return;
       event.preventDefault();
       event.stopPropagation();
       if (event.repeat) return;
@@ -519,7 +522,7 @@ export default function DictationControl({ userId, segmentMs }: { userId?: strin
       window.removeEventListener("keydown", onKeyDown, true);
       window.removeEventListener("keyup", onKeyUp, true);
     };
-  }, [cancel, finish, holdSpace, start, supported, toggle]);
+  }, [cancel, finish, holdSpace, start, supported, toggle, voice]);
 
   // Mic buttons outside the field, like the document's, start and stop it here.
   useEffect(() => supported ? onDictationRequest(toggle) : undefined, [supported, toggle]);
