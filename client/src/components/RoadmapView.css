@@ -152,7 +152,7 @@
 @keyframes roadmap-build-pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .roadmap-build-step, .roadmap-build-step.is-writing { animation: none; } }
 .roadmap-draft { align-items: center; display: flex; flex-wrap: wrap; gap: 6px; }
-.roadmap-draft input { background: var(--input-bg, transparent); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); flex: 1 1 220px; font-size: .8rem; min-height: 34px; min-width: 0; padding: 4px 10px; }
+.roadmap-draft input:not([type="checkbox"]) { background: var(--input-bg, transparent); border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); flex: 1 1 220px; font-size: .8rem; min-height: 34px; min-width: 0; padding: 4px 10px; }
 .roadmap-draft button { background: transparent; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); cursor: pointer; font-size: .76rem; min-height: 34px; padding: 4px 12px; }
 .roadmap-draft button[type="submit"] { background: var(--accent-soft); border-color: var(--accent); }
 .roadmap-draft button:disabled { opacity: .5; }
@@ -192,3 +192,10 @@
 .roadmap-strip-settings-wide { grid-column: 1 / -1; }
 .roadmap.is-narrow .roadmap-strip .roadmap-strip-where { font-size: .7rem; }
 .roadmap-sheet-scroll > .roadmap-strip { z-index: 40; }
+.roadmap-outcome-reply { color: var(--muted); font-size: .8rem; line-height: 1.5; margin: 0; max-height: 9em; overflow: auto; white-space: pre-wrap; }
+.roadmap-draft-model { align-items: center; display: flex; flex-basis: 100%; flex-wrap: wrap; gap: 10px; }
+.roadmap-draft .roadmap-draft-model-pick { max-width: 100%; min-height: 30px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roadmap-draft-model label { align-items: center; color: var(--ink); cursor: pointer; display: inline-flex; font-size: .76rem; gap: 6px; }
+.roadmap-draft-model label.is-unavailable { color: var(--muted); cursor: default; }
+.roadmap-draft-model input { accent-color: var(--accent); margin: 0; }
+.roadmap-draft-model-note { color: var(--muted); font-size: .72rem; }

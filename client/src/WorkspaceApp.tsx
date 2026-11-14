@@ -114,7 +114,7 @@ import { useVaultPassageIndex } from "./lib/useVaultPassageIndex";
 import { applyJevCategories, withJevConsent } from "./lib/jevAssistance";
 import { applyJevGroupSuggestions } from "./lib/jevGrouping";
 import { getThreadCategoryLabel } from "./lib/threadCategories";
-import { getDocumentBlockAuthorship, normalizeAIInstruction, normalizeAISettings, normalizeDocumentDock, type DocumentDockNode } from "@margin-chat/workspace-contracts";
+import { getDocumentBlockAuthorship, normalizeAIExecution, normalizeAIInstruction, normalizeAISettings, normalizeDocumentDock, type DocumentDockNode } from "@margin-chat/workspace-contracts";
 import { prepareAIContext } from "./lib/aiContext";
 import ConnectorOverlay from "./components/ConnectorOverlay";
 import { buildConnectorOcclusions, buildDocumentConnector, intersectConnectorRects, type ConnectorRect, type DocumentConnectorEndpoint } from "./lib/documentConnectors";
@@ -127,7 +127,7 @@ import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
-import { applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
+import { applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapOutlinePrompt, roadmapOutlineProposal, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
 import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/boardDocument";
 import { buildBoardNoteMessage, type BoardNoteRequest } from "./lib/boardAI";
 import RoadmapView from "./components/RoadmapView";
@@ -856,6 +856,8 @@ function WorkspaceAppContent({
   const [selectionResponseDestination, setSelectionResponseDestination] = useState<"inline" | "side">("side");
   const [selectionReplaceText, setSelectionReplaceText] = useState(false);
   const [documentErrors, setDocumentErrors] = useState<Record<string, string>>({});
+  // Roadmaps being drafted with one plain answer (Agent mode off), by document.
+  const [plainRoadmapDrafts, setPlainRoadmapDrafts] = useState<Record<string, { controller: AbortController; since: number }>>({});
   const { executions: chatExecutions, pendingConversationIds, agentProgress } = useChatStreams(appendAssistantDelta, saveExecutionDetails, retractAssistantText);
   const [documentUploadByConversationId, setDocumentUploadByConversationId] =
     useState<Record<string, { error: string | null; uploading: boolean }>>({});
@@ -5565,18 +5567,60 @@ function WorkspaceAppContent({
   }
 
   /** Ask Agent mode to draft this roadmap from the vault; it comes back as a proposal under the reply. */
-  function handleDraftRoadmap(conversationId: string, goal: string): string | null {
+  function handleDraftRoadmap(conversationId: string, goal: string, options: { agent?: boolean } = {}): string | null {
     const conversation = currentStateRef.current.conversations[conversationId];
     if (!conversation || !goal.trim()) return null;
     if (isHiddenFromAI(conversation)) return HIDDEN_FROM_AI_MESSAGE;
-    if (!supportsAgentMode(conversation.serviceId)) return "Drafting a roadmap needs Agent mode. Choose a model that supports it in Ask AI, then try again.";
-    if (chatExecutions.has(conversationId)) return "AI is still writing in this document. Try again when it finishes.";
+    if (chatExecutions.has(conversationId) || plainRoadmapDrafts[conversationId]) return "AI is still writing in this document. Try again when it finishes.";
+    if (options.agent === false) { void draftRoadmapWithoutAgent(conversationId, goal.trim()); return null; }
+    if (!supportsAgentMode(conversation.serviceId)) return "This model can't use Agent mode. Pick another model, or turn Agent mode off to draft from the model's own knowledge.";
     const blocks = getEditableDocument(conversation).blocks;
     const last = blocks.at(-1);
     if (!last) return "This document can't take an AI reply yet. Type something in it, then try again.";
     handleDocumentSubmit(conversationId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", agent: true,
       prompt: roadmapDraftPrompt(goal) });
     return null;
+  }
+
+  /** Draft with AI with Agent mode off: one answer as an outline, read into a draft that waits for approval like an agent's. */
+  async function draftRoadmapWithoutAgent(conversationId: string, goal: string) {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) return;
+    const controller = new AbortController();
+    setPlainRoadmapDrafts((current) => ({ ...current, [conversationId]: { controller, since: Date.now() } }));
+    setDocumentErrors(({ [conversationId]: _cleared, ...rest }) => rest);
+    const now = new Date().toISOString();
+    const prompt: Message = { id: createId("message"), role: "user", content: roadmapOutlinePrompt(goal), createdAt: now };
+    try {
+      const { reply, metadata } = await requestChatReply({
+        ...prepareAIContext(currentStateRef.current.conversations, conversation, [prompt]),
+        ai: withJevConsent({ ...normalizeAISettings(conversation.ai), agent: false }, jevEnabled), expectedUserId: user.id,
+        conversation: await conversationRequestPayload(currentStateRef.current.conversations, conversation), messages: [prompt],
+        modelId: conversation.modelId, serviceId: conversation.serviceId, signal: controller.signal,
+      });
+      const proposal = roadmapOutlineProposal(reply, conversationId, conversation.title, goal);
+      if (!proposal) throw new Error("The AI didn't send back a roadmap outline. Try again, or turn Agent mode on.");
+      // The draft rides on the reply's execution record, as an agent's does; one is made if the server sent none.
+      const execution = normalizeAIExecution({ schemaVersion: 1, model: metadata?.model || conversation.modelId || "unknown", provider: conversation.serviceId,
+        ...(metadata?.execution ?? {}), agent: { steps: [], stopReason: "answered", proposals: [proposal] } });
+      const answer: Message = { id: createId("message"), role: "assistant", content: `I drafted ${proposal.goal} as ${proposal.stages.length} stages.`, createdAt: new Date().toISOString(),
+        ...(execution ? { execution } : {}) };
+      setState((current) => {
+        const target = current.conversations[conversationId];
+        if (!target) return current;
+        const next = { ...current, conversations: { ...current.conversations, [conversationId]: { ...target, messages: [...target.messages, prompt, answer], updatedAt: answer.createdAt } } };
+        currentStateRef.current = next;
+        return next;
+      });
+    } catch (error) {
+      if (isAbortError(error)) return;
+      if (isApiErrorStatus(error, 401)) onAuthExpired();
+      else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
+      setDocumentErrors((current) => ({ ...current, [conversationId]: getErrorText(error, "AI could not draft the roadmap. Try again.") }));
+    } finally {
+      setPlainRoadmapDrafts(({ [conversationId]: _done, ...rest }) => rest);
+      void onRefreshBilling();
+    }
   }
 
   /** A roadmap step's Explain with AI (an answer written into the step's document) or Dive deeper (its topic as a roadmap of its own). */
@@ -6154,10 +6198,13 @@ function WorkspaceAppContent({
       roadmap={roadmapPage ? <RoadmapView conversation={conversation} conversations={state.conversations} fill={view === "chat"}
         renderDocument={(docId) => state.conversations[docId] ? renderConversationChatPanel(state.conversations[docId], "chat", undefined, true) : null}
         onCreateStep={handleCreateRoadmapStep}
-        drafting={Boolean(pendingConversationIds[conversation.id])} onDraft={(goal) => handleDraftRoadmap(conversation.id, goal)}
-        progress={agentProgress[conversation.id]} budgetMicros={agentModeControls(conversation)?.showBudget ? agentModeControls(conversation)?.budgetMicros : undefined}
-        onStop={() => stopChatStream(conversation.id)}
+        drafting={Boolean(pendingConversationIds[conversation.id] || plainRoadmapDrafts[conversation.id])} onDraft={(goal, options) => handleDraftRoadmap(conversation.id, goal, options)}
+        model={{ serviceId: conversation.serviceId, modelId: conversation.modelId, recentSelections: recentModelSelections,
+          onChange: (serviceId, modelId) => handleModelChange(conversation.id, serviceId, modelId) }}
+        progress={agentProgress[conversation.id] ?? (plainRoadmapDrafts[conversation.id] ? { steps: [], label: "Writing the roadmap outline…", since: plainRoadmapDrafts[conversation.id].since } : undefined)} budgetMicros={agentModeControls(conversation)?.showBudget ? agentModeControls(conversation)?.budgetMicros : undefined}
+        onStop={() => plainRoadmapDrafts[conversation.id] ? plainRoadmapDrafts[conversation.id].controller.abort() : stopChatStream(conversation.id)}
         onDraftDecision={(messageId, proposalId, action) => handleAgentProposal(conversation.id, messageId, proposalId, action)}
+        draftError={documentErrors[conversation.id] ?? null}
         writingIds={pendingConversationIds} onExplain={(docId, context, roadmapId) => handleRoadmapStepAI(roadmapId ?? conversation.id, docId, "explain", context)} onDiveDeeper={(docId, roadmapId) => handleRoadmapStepAI(roadmapId ?? conversation.id, docId, "deeper")}
         cloudDocuments={vault.cloudDocuments} onLoadTargets={(ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); }}
         onChange={(change) => handleRoadmapChange(conversation.id, change)} onChangeRoadmap={handleRoadmapChange}

@@ -2,13 +2,16 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode }
 import type { Conversation, RoadmapNode, RoadmapStatus } from "../types";
 import { getEditableDocument } from "../lib/editableDocument";
 import {
-  buildRoadmapGraph, getRoadmap, newRoadmapId, plainPreview, roadmapDraftLink, roadmapNodeTitle, roadmapStatus, ROADMAP_STATUS_LABELS, type RoadmapChange, type RoadmapGraph,
+  buildRoadmapGraph, getRoadmap, newRoadmapId, plainPreview, roadmapDraftLink, roadmapDraftOutcome, roadmapNodeTitle, roadmapStatus, ROADMAP_STATUS_LABELS, type RoadmapChange, type RoadmapGraph,
 } from "../lib/roadmap";
 import DocumentLinkPicker from "./DocumentLinkPicker";
 import AgentRunLog from "./AgentRunLog";
 import RoadmapCanvas, { openSubKey, roadmapOfStep, type RoadmapFilter, type RoadmapLayoutMode, type RoadmapStep } from "./RoadmapCanvas";
 import StatusMark, { ROADMAP_STATUSES as STATUSES } from "./RoadmapStatusMark";
 import type { AgentProgress } from "../lib/useChatStreams";
+import ServicePickerModal from "./ServicePickerModal";
+import { getBackendServiceSelectionLabel, supportsAgentMode, type RecentBackendServiceSelection } from "../lib/services";
+import type { BackendServiceId } from "../types";
 import "./RoadmapView.css";
 
 export interface RoadmapViewProps {
@@ -22,7 +25,9 @@ export interface RoadmapViewProps {
   /** Download steps' documents that are still only in the cloud. */
   onLoadTargets?: (ids: string[]) => void;
   /** Ask AI to draft stages and steps, from the vault for a goal or from a page whose link is given; returns why it couldn't start, or null. */
-  onDraft?: (goal: string) => string | null;
+  onDraft?: (goal: string, options: { agent: boolean }) => string | null;
+  /** The model Draft with AI uses (this document's, as in Ask AI), and a way to pick another. */
+  model?: { serviceId: BackendServiceId; modelId: string; recentSelections: RecentBackendServiceSelection[]; onChange: (serviceId: BackendServiceId, modelId: string) => void };
   /** AI is writing in this document. */
   drafting?: boolean;
   /** Ask AI to write an explanation of a step's topic into its document; returns why it couldn't start, or null.
@@ -46,6 +51,8 @@ export interface RoadmapViewProps {
   onStop?: () => void;
   /** Approve or dismiss a roadmap the agent drafted for this document; returns why it couldn't, or null. */
   onDraftDecision?: (messageId: string, proposalId: string, action: "approve" | "dismiss") => string | null;
+  /** Why AI's last request in this document failed, shown here because the roadmap page hides the document's text. */
+  draftError?: string | null;
 }
 
 const LAYOUT_KEY = "margin-chat:roadmap-layout";
@@ -80,8 +87,8 @@ function percent(finished: number, total: number) {
  * A step opens its document beside the map, as documents open from the Map; the
  * roadmap's own text opens the same way from its name.
  */
-export default function RoadmapView({ conversation, conversations, onChange, onOpen, cloudDocuments, onLoadTargets, onDraft, drafting = false, onExplain, onDiveDeeper,
-  writingIds, progress, budgetMicros, onStop, onDraftDecision, onChangeRoadmap, onCreateStep, renderDocument, fill = false }: RoadmapViewProps) {
+export default function RoadmapView({ conversation, conversations, onChange, onOpen, cloudDocuments, onLoadTargets, onDraft, model, drafting = false, onExplain, onDiveDeeper,
+  writingIds, progress, budgetMicros, onStop, onDraftDecision, draftError, onChangeRoadmap, onCreateStep, renderDocument, fill = false }: RoadmapViewProps) {
   // ---- Which roadmap is on the canvas: this one, or a step's roadmap gone into ----
   const [trail, setTrail] = useState<string[]>([]);
   useEffect(() => { setTrail([]); }, [conversation.id]);
@@ -124,6 +131,11 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
   useEffect(() => { if (!toast) return; const timer = window.setTimeout(() => setToast(null), 2600); return () => window.clearTimeout(timer); }, [toast]);
   const [draftOpen, setDraftOpen] = useState(false);
   const [goal, setGoal] = useState("");
+  // Agent mode is on for drafts unless turned off here; a model without it drafts from its own knowledge.
+  const [agentWanted, setAgentWanted] = useState(true);
+  const [pickingModel, setPickingModel] = useState(false);
+  const agentAvailable = model ? supportsAgentMode(model.serviceId) : true;
+  const useAgent = agentWanted && agentAvailable;
   const draftLink = useMemo(() => roadmapDraftLink(goal), [goal]);
   const draftLinkName = useMemo(() => {
     if (!draftLink) return "";
@@ -141,6 +153,9 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
     }
     return null;
   }, [conversation.messages, conversation.id]);
+  // A run that ended without a draft for this roadmap says what the agent answered instead.
+  const outcome = useMemo(() => roadmapDraftOutcome(conversation), [conversation]);
+  const [dismissedOutcome, setDismissedOutcome] = useState<string | null>(null);
   const working = drafting && Boolean(progress);
   const building = working ? progress?.roadmapDraft ?? null : null;
   const draftStages = building?.stages ?? (working ? null : waitingDraft?.proposal.stages) ?? null;
@@ -289,7 +304,7 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
     {draftOpen && onDraft && atRoot ? <form className="roadmap-draft" onSubmit={(event) => {
       event.preventDefault();
       if (!goal.trim()) return;
-      const error = onDraft(goal.trim());
+      const error = onDraft(goal.trim(), { agent: useAgent });
       setMessage(error);
       if (!error) { setDraftOpen(false); setGoal(""); }
     }}>
@@ -297,15 +312,36 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
         onChange={(event) => setGoal(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setDraftOpen(false); }} />
       <button type="submit" disabled={!goal.trim()}>{draftLink ? "Build from link" : "Draft"}</button>
       <button type="button" onClick={() => setDraftOpen(false)}>Cancel</button>
-      {draftLink
+      {model ? <div className="roadmap-draft-model">
+        <button type="button" className="roadmap-draft-model-pick" aria-haspopup="dialog" aria-expanded={pickingModel} title="Choose the AI model, as in Ask AI"
+          onClick={() => setPickingModel(true)}>{getBackendServiceSelectionLabel(model.serviceId, model.modelId)}<span aria-hidden="true"> ▾</span></button>
+        <label className={agentAvailable ? undefined : "is-unavailable"} title={agentAvailable ? "The agent reads pages and searches your documents, then proposes the roadmap" : "This model can't use Agent mode"}>
+          <input type="checkbox" checked={useAgent} disabled={!agentAvailable} onChange={(event) => setAgentWanted(event.target.checked)} /> Agent mode
+        </label>
+        {!agentAvailable ? <span className="roadmap-draft-model-note">This model can't use Agent mode, so it drafts from its own knowledge.</span> : null}
+      </div> : null}
+      {!useAgent
+        ? <p>Without Agent mode, AI drafts stages and steps from its own knowledge in one answer{draftLink ? " and may not read the page" : ""}. Each step becomes a new document. Nothing is added until you approve it.</p>
+        : draftLink
         ? <p>AI reads <strong>{draftLinkName}</strong> and proposes its sections as stages and its topics as steps, using your documents where they fit and new ones for the rest. Nothing is added until you approve it.</p>
         : <p>AI searches your documents and proposes stages and steps for this roadmap. Paste a link to a roadmap, an article or an X post to build from that page instead. Nothing is added until you approve it.</p>}
     </form> : null}
+    {model ? <ServicePickerModal currentModelId={model.modelId} currentServiceId={model.serviceId} isOpen={pickingModel} onClose={() => setPickingModel(false)}
+      onSelectModel={(serviceId, modelId) => { model.onChange(serviceId, modelId); setPickingModel(false); }} recentSelections={model.recentSelections} /> : null}
     {message ? <p className="roadmap-message" role="alert">{message}<button type="button" aria-label="Dismiss" onClick={() => setMessage(null)}>×</button></p> : null}
     {graph.cycleEdges.length ? <p className="roadmap-message" role="note">
       Some prerequisites loop back on each other, so {graph.cycleEdges.length === 1 ? "one is" : `${graph.cycleEdges.length} are`} ignored:{" "}
       {graph.cycleEdges.map((edge) => `${stepTitle(shown.id, edge.from)} needs ${stepTitle(shown.id, edge.to)}`).join("; ")}.
     </p> : null}
+    {atRoot && !drafting && !waitingDraft && draftError ? <p className="roadmap-message" role="alert">AI couldn't draft the roadmap: {draftError}</p> : null}
+    {atRoot && !drafting && !waitingDraft && !draftError && outcome && dismissedOutcome !== outcome.messageId ? <section className="roadmap-build roadmap-outcome" aria-label="What the agent answered">
+      <header className="roadmap-build-head">
+        <strong>{outcome.elsewhere ? `The agent drafted its roadmap for “${outcome.elsewhere}”, not this one` : "The agent finished without a roadmap"}</strong>
+        {onDraft ? <button type="button" className="is-primary" onClick={() => { setDraftOpen(true); setMessage(null); }}>Try again</button> : null}
+        <button type="button" onClick={() => setDismissedOutcome(outcome.messageId)}>Dismiss</button>
+      </header>
+      {outcome.reply ? <p className="roadmap-outcome-reply">{outcome.reply.length > 1200 ? `${outcome.reply.slice(0, 1199)}…` : outcome.reply}</p> : null}
+    </section> : null}
     {atRoot && (working || draftStages) ? <section className={`roadmap-build${working ? " is-live" : ""}`} aria-label="Roadmap draft" aria-busy={working}>
       <header className="roadmap-build-head">
         <strong>{working ? draftStages ? "Building the roadmap…" : "Agent is working…" : `Draft ready: ${draftStages!.length} ${draftStages!.length === 1 ? "stage" : "stages"}, ${draftSteps} ${draftSteps === 1 ? "step" : "steps"}`}</strong>

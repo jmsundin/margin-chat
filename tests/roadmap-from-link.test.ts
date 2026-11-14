@@ -132,14 +132,14 @@ describe("a roadmap written live", () => {
   const whole = { roadmap_id: "", goal: "FastAPI", stages: [{ title: "Introduction", steps: [step("a", "Python Basics"), step("b", "Web Concepts")] },
     { title: "Core", steps: [step("c", "Path Parameters"), step("d", "Request Body")] }], summary: "Follows the page." };
 
-  async function run(written: string, status: "completed" | "incomplete", maxInputCharacters?: number) {
+  async function run(written: string, status: "completed" | "incomplete", maxInputCharacters?: number, after: () => Response = () => sse([{ type: "response.completed", response: { status: "completed", output_text: "Here is the roadmap.", output: [] } }])) {
     const drafts: any[] = [];
     sent.length = 0;
     let calls = 0;
     globalThis.fetch = (async (_url: any, init: any) => {
       calls += 1;
       sent.push(JSON.parse(init.body));
-      if (calls > 1) return sse([{ type: "response.completed", response: { status: "completed", output_text: "Here is the roadmap.", output: [] } }]);
+      if (calls > 1) return after();
       const pieces = written.match(/[\s\S]{1,40}/gu) ?? [];
       return sse([{ type: "response.output_item.added", item: { id: "item_1", type: "function_call", name: "propose_roadmap" } },
         ...pieces.map((delta) => ({ type: "response.function_call_arguments.delta", item_id: "item_1", delta })),
@@ -184,6 +184,18 @@ describe("a roadmap written live", () => {
   test("when nothing more can be shed, the run ends with the drafted roadmap instead of an error", async () => {
     const { result } = await run(JSON.stringify(long), "completed", 300);
     expect(sent).toHaveLength(1);
+    expect(result.agent.proposals).toHaveLength(1);
+    expect(result.reply).toBe("The roadmap is drafted and ready for you to review.");
+  });
+
+  test("a model that ends with no words after drafting still hands over the roadmap", async () => {
+    const { result } = await run(JSON.stringify(whole), "completed", undefined, () => sse([{ type: "response.completed", response: { status: "completed", output_text: "", output: [] } }]));
+    expect(result.agent.proposals).toHaveLength(1);
+    expect(result.reply).toBe("The roadmap is drafted and ready for you to review.");
+  });
+
+  test("a model call that fails after drafting still hands over the roadmap", async () => {
+    const { result } = await run(JSON.stringify(whole), "completed", undefined, () => Response.json({ error: { message: "Overloaded" } }, { status: 529 }));
     expect(result.agent.proposals).toHaveLength(1);
     expect(result.reply).toBe("The roadmap is drafted and ready for you to review.");
   });

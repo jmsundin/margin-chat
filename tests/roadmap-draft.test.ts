@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { normalizeAIExecution } from "@margin-chat/workspace-contracts";
 import { createProposalTools, describeProposalStep } from "../server/chat/agent/proposalTools.mjs";
 import { createEmptyState, createStandaloneNoteConversation } from "../client/src/initialState";
-import { applyRoadmapDraft, buildRoadmapGraph, getRoadmap, roadmapDraftIds } from "../client/src/lib/roadmap";
+import { applyRoadmapDraft, buildRoadmapGraph, getRoadmap, roadmapDraftIds, roadmapDraftOutcome, roadmapDraftPrompt, roadmapOutlineProposal } from "../client/src/lib/roadmap";
 import type { AgentRoadmapProposal, AppState } from "../client/src/types";
 
 const at = "2026-11-05T12:00:00.000Z";
@@ -98,5 +98,41 @@ describe("approving a roadmap draft", () => {
     expect(getRoadmap(again.state.conversations.roadmap).stages.map((stage) => stage.title)).toEqual(["Foundations", "Aging", "Review"]);
     expect(applyRoadmapDraft(state, { ...proposal, stages: [{ title: "X", steps: [{ key: "x", documentId: "nowhere", needs: [] }] }] },
       { stages: ["s"], nodes: { x: "n" } }, { updatedAt: at })!.added).toBe(0);
+  });
+});
+
+describe("how a Draft with AI run ended, on the roadmap page", () => {
+  const roadmap = (messages: unknown[]) => ({ ...createStandaloneNoteConversation({ createdAt: at, id: "roadmap", noteId: "roadmap-note" }), messages }) as any;
+  const asked = { id: "u1", role: "user", content: roadmapDraftPrompt("Kubernetes"), createdAt: at };
+  const proposal = (roadmapId: string, status?: string) => ({ id: "proposal-1", kind: "roadmap", roadmapId, roadmapTitle: roadmapId === "roadmap" ? "" : "Docker notes", goal: "K8s", summary: "",
+    stages: [{ title: "Basics", steps: [{ key: "a", title: "Pods", notes: "", needs: [] }] }], ...(status ? { status } : {}) });
+  const reply = (proposals: unknown[] = []) => ({ id: "a1", role: "assistant", content: "Your vault has nothing on Kubernetes yet.", createdAt: at,
+    execution: { agent: { steps: [], stopReason: "answered", proposals } } });
+
+  test("a reply without a roadmap is shown, with what the agent said", () => {
+    expect(roadmapDraftOutcome(roadmap([asked, reply()]))).toEqual({ messageId: "a1", reply: "Your vault has nothing on Kubernetes yet.", elsewhere: null });
+  });
+  test("a draft for another document says where it went", () => {
+    expect(roadmapDraftOutcome(roadmap([asked, reply([proposal("docker")])]))?.elsewhere).toBe("Docker notes");
+  });
+  test("nothing to say while running, with a draft waiting, or after one was decided", () => {
+    expect(roadmapDraftOutcome(roadmap([asked]))).toBeNull();
+    expect(roadmapDraftOutcome(roadmap([asked, reply([proposal("roadmap")])]))).toBeNull();
+    expect(roadmapDraftOutcome(roadmap([asked, reply([proposal("roadmap", "approved")])]))).toBeNull();
+    expect(roadmapDraftOutcome(roadmap([{ ...asked, content: "Explain pods" }, reply()]))).toBeNull();
+  });
+});
+
+describe("Draft with AI without Agent mode", () => {
+  test("an outline answer becomes a draft whose steps are new documents, each needing the one before", () => {
+    const reply = "Here you go:\n\n# Kubernetes basics\n## Foundations\n### Containers\n- Images and layers\n- Running one\n### Pods\n- What a pod is\n## Running apps\n### **Deployments**\n1. Rolling updates\n## Empty stage\n";
+    const proposal = roadmapOutlineProposal(reply, "roadmap", "K8s", "kubernetes")!;
+    expect(proposal).toMatchObject({ kind: "roadmap", roadmapId: "roadmap", goal: "Kubernetes basics" });
+    expect(proposal.stages).toEqual([
+      { title: "Foundations", steps: [{ key: "s1", title: "Containers", notes: "- Images and layers\n- Running one", needs: [] }, { key: "s2", title: "Pods", notes: "- What a pod is", needs: ["s1"] }] },
+      { title: "Running apps", steps: [{ key: "s3", title: "Deployments", notes: "- Rolling updates", needs: ["s2"] }] },
+    ]);
+    expect(normalizeAIExecution({ schemaVersion: 1, model: "m", provider: "openai", agent: { steps: [], stopReason: "answered", proposals: [proposal] } })?.agent?.proposals).toHaveLength(1);
+    expect(roadmapOutlineProposal("Sorry, I can't help with that.", "roadmap", "", "x")).toBeNull();
   });
 });
