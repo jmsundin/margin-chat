@@ -378,6 +378,24 @@ export async function requestMapLevelLabels(args: {
       ...(typeof entry.summary === "string" && entry.summary.trim() ? { summary: entry.summary.trim() } : {}) }));
 }
 
+/**
+ * Code for a code cell, written from the comment just above the cursor. The
+ * server always uses the fast, economical model, metered like other AI use.
+ * An empty string means the model had nothing to suggest.
+ */
+export async function requestCodeSuggestion(args: { prompt: string; signal?: AbortSignal }): Promise<string> {
+  const response = await apiFetch("/api/chat/title", {
+    body: JSON.stringify({ kind: "code", prompt: args.prompt }),
+    signal: args.signal,
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    method: "POST",
+  });
+  const payload = (await readJson(response)) as { code?: unknown } | ErrorPayload | null;
+  ensureOk(response, payload, "Code suggestion failed.");
+  return payload && typeof payload === "object" && "code" in payload && typeof payload.code === "string" ? payload.code : "";
+}
+
 /** Muse Wonder files each numbered document (D1, D2, ...) under a category. */
 export async function requestDocumentCategories(args: {
   content: string;

@@ -120,3 +120,12 @@
 @media (max-width: 600px) {
   .code-cell.code-cell .code-cell-editor .cm-lineNumbers .cm-gutterElement { padding: 0 6px 0 6px; min-width: 20px; }
 }
+
+/* AI code suggestions: faint text after a comment, put in with Tab or a tap. */
+.code-cell .cm-ghost-text { color: var(--cell-muted, #8a8f98); opacity: 0.75; white-space: pre; cursor: pointer; }
+.code-cell .cm-ghost-hint {
+  display: inline-block; margin-left: 10px; padding: 0 6px; border-radius: 4px; vertical-align: 1px;
+  font: 11px/16px system-ui, -apple-system, "Segoe UI", sans-serif; font-style: normal;
+  border: 1px solid currentColor; opacity: 0.7; white-space: nowrap;
+}
+@media (pointer: coarse) { .code-cell .cm-ghost-hint { font-size: 0; } .code-cell .cm-ghost-hint::after { content: "Tap to insert"; font-size: 11px; } }
