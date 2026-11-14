@@ -5,7 +5,7 @@ import "./NotebookCustomise.css";
 
 type Option<T extends string> = { value: T; label: string; hint: string };
 const BEHAVIOURS: Option<AIBehaviour>[] = [
-  { value: "thinks", label: "Thinks with you", hint: "Press Enter after a line or paragraph and the AI asks one question about it in the margin. Its answers end with a question too." },
+  { value: "thinks", label: "Thinks with you", hint: "Press Enter after a line or paragraph and the AI asks one question about it in the margin. Answers are plain explanations, like Ask AI; ask it to help you think a question through and it guides you with questions instead." },
   { value: "asks", label: "When you ask", hint: "The AI answers what you ask and nothing more." },
 ];
 const STANCES: Option<AIStance>[] = [

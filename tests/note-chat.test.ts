@@ -16,13 +16,13 @@ describe("Ask about this note", () => {
   });
 
   test("sends the whole note, the standing instruction and the Try next ask with the question", () => {
-    const message = buildNoteChatMessage(doc, { id: "m", role: "user", content: "Is this proven?", createdAt: base.createdAt }, { instruction: "Be blunt", thinks: true });
+    const message = buildNoteChatMessage(doc, { id: "m", role: "user", content: "Is this proven?", createdAt: base.createdAt }, { instruction: "Be blunt" });
     expect(message.content).toContain("Rapamycin extends lifespan in mice.");
     expect(message.content).toContain("### Try next");
     expect(message.content).toContain("Be blunt");
-    expect(message.content).toContain("makes the user think");
+    expect(message.content).toContain("Answer directly.");
+    expect(message.content).toContain("Only if the user asks you to help them think");
     expect(message.content.endsWith("Is this proven?")).toBe(true);
-    expect(buildNoteChatMessage(doc, { id: "m", role: "user", content: "Q", createdAt: base.createdAt }).content).not.toContain("makes the user think");
   });
 
   test("splits an answer's Try next list off its body", () => {
