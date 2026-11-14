@@ -17,6 +17,10 @@ export interface AISettings {
   agentScope?: "conversation" | "selected" | "workspace";
   /** False when the user stopped Agent mode from turning itself on for prompts that need looking things up. */
   agentAuto?: false;
+  /** The model Agent mode runs on when Auto picks the model; Muse Wonder ("meta-api") when absent. */
+  agentService?: "meta-api" | "anthropic-api" | "xai-api";
+  /** Lets a Grok agent run search posts on X as well as the web. Off unless the user turns it on. */
+  agentXSearch?: true;
 }
 export interface AgentRunStep {
   /** tool: a tool it ran; note: text it wrote between tool calls; thinking: its summarized reasoning for one model call. */

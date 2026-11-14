@@ -4,6 +4,8 @@ const scopes = new Set(["conversation", "selected", "workspace"]);
 /** Agent run budgets offered in the composer, in micro-dollars. */
 export const AGENT_BUDGET_CHOICES_MICROS = Object.freeze([250_000, 500_000, 1_000_000, 2_000_000]);
 export const DEFAULT_AGENT_BUDGET_MICROS = 1_000_000;
+/** Models Agent mode can run on when Auto picks the model: Muse Wonder (the default), Claude Opus or Grok. */
+export const AGENT_SERVICE_CHOICES = Object.freeze(["meta-api", "anthropic-api", "xai-api"]);
 const agentStopReasons = new Set(["answered", "budget", "round-limit", "time-limit", "question"]);
 const routingMethods = new Set(["astra", "astra-task", "jev", "jev-task", "rules", "manual"]);
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
@@ -21,6 +23,8 @@ export function normalizeAISettings(input) {
     ...(value.agent === true ? { agent: true } : {}),
     ...(AGENT_BUDGET_CHOICES_MICROS.includes(value.agentBudgetMicros) ? { agentBudgetMicros: value.agentBudgetMicros } : {}),
     ...(scopes.has(value.agentScope) ? { agentScope: value.agentScope } : {}),
+    ...(AGENT_SERVICE_CHOICES.includes(value.agentService) ? { agentService: value.agentService } : {}),
+    ...(value.agentXSearch === true ? { agentXSearch: true } : {}),
     // On unless switched off: Agent mode starts by itself when a prompt needs looking things up.
     ...(value.agentAuto === false ? { agentAuto: false } : {}),
     ...(Array.isArray(value.allowedProviders) ? {
