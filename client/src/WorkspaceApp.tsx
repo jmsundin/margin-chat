@@ -197,7 +197,7 @@ import {
   loadStoredState,
 } from "./lib/appState";
 import { getConversationRequestPayload } from "./lib/chatContext";
-import { buildLookupMessages, meaningCardLine, parseLookupReply, savedMeaningIn, wordsDeckTitle, type LanguagePair, type LookupAnswer, type LookupRequest, type SavedMeaning } from "./lib/languageLearning";
+import { buildLookupMessages, defaultLanguagePair, rememberLanguagePair, meaningCardLine, parseLookupReply, savedMeaningIn, wordsDeckTitle, type LanguagePair, type LookupAnswer, type LookupRequest, type SavedMeaning } from "./lib/languageLearning";
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
@@ -6333,6 +6333,18 @@ function WorkspaceAppContent({
         onReviewFlashcards={!features.flashcards ? undefined : (id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id), docId: id })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
+        pageView={quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && conversation.nodeType !== "board"}
+        languageLearning={quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && conversation.nodeType !== "board" ? {
+          on: Boolean(conversation.languageLearning),
+          onToggle: (on) => {
+            if (!on) { handleLanguageLearningChange(conversation.id, null); return; }
+            const pair = conversation.languageLearning ?? defaultLanguagePair();
+            rememberLanguagePair(pair);
+            handleLanguageLearningChange(conversation.id, pair);
+          },
+        } : undefined}
+        maximized={maximizedDocument?.id === conversation.id}
+        onToggleMaximize={!isCompactDocument(conversation) ? (id) => maximizedDocument?.id === id ? setMaximizedDocumentId(null) : toggleMaximizedDocument(id) : undefined}
         onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} revealLabel={revealInFolderLabel()}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
@@ -6445,11 +6457,14 @@ function WorkspaceAppContent({
       aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <>{renderAnswerSourcesLine(conversation)}<AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /></> : undefined}
       onWriteBack={(blockId, text) => handleWriteBack(conversation.id, blockId, text)}
-      pageBar={quietHeader && !conversation.vaultFile && !isCompactDocument(conversation) ? <div className="document-page-bar">
+      // The quiet page shows nothing above the text unless it has something to say: Tell the AI and
+      // how the AI joins in are set in the Ask panel, and the page view in the document's ⋯ menu.
+      quiet={quietPage && !conversation.vaultFile && !isCompactDocument(conversation)}
+      pageBar={quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && (renderAnswerSourcesLine(conversation) || conversation.aiInstruction || inheritedAIInstruction(conversation))
+        ? <div className="document-page-bar">
         {renderAnswerSourcesLine(conversation)}
-        <AIInstructionLine compact value={conversation.aiInstruction}
-          inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} />
-        {renderNotebookStanceButton()}
+        {conversation.aiInstruction || inheritedAIInstruction(conversation) ? <AIInstructionLine compact value={conversation.aiInstruction}
+          inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : null}
       </div> : undefined}
       roadmapFill={roadmapPage && view === "chat"}
       roadmap={roadmapPage ? <RoadmapView conversation={conversation} conversations={state.conversations} fill={view === "chat"}
@@ -6475,7 +6490,8 @@ function WorkspaceAppContent({
       // A note in the margin sits on the page it would point back to, so it has no "Keep reading".
       bodyFooter={!embedded && !inMargin && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={{ ...documentNeighbors, children: getChildTabDocuments(conversation) }} onOpen={handleOpenNeighbor} /> : null}
-      fullScreenToggle={!embedded && view === "chat" && !dockHeader && (maximized || (!isMobileViewport && shownSheet.mode === "page")) ? renderFullScreenButton(conversation) : undefined}
+      // Full screen is in the document's ⋯ menu; the header shows only the way back out.
+      fullScreenToggle={!embedded && view === "chat" && !dockHeader && maximized ? renderFullScreenButton(conversation) : undefined}
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={embedded || (view === "chat" && getMinimizedChildNodes(conversation)) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
@@ -7146,12 +7162,11 @@ function WorkspaceAppContent({
                       </button> : null}
                       {/* On computers each document's own header holds it. */}
                       {showSpaceStart ? null : <DocumentMapButton open={shownSheet.mode !== "page"} onToggle={handleToggleDocumentMap} />}
-                      {isMobileViewport ? renderFullScreenButton() : null}
+                      {isMobileViewport && maximizedDocument ? renderFullScreenButton() : null}
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
                         {activeConversation.document || activeConversation.kind === "note" ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
                           onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
-                          title="Ask the AI about this whole note">Ask about this note</button> : null}
-                        {renderDocumentViewsMenu()}
+                          title="Ask the AI about this whole note">Ask</button> : null}
                       </> : <>
                         <button type="button" className="document-header-toggle" aria-expanded={desktopHeaderOpen}
                           aria-label={desktopHeaderOpen ? "Hide path and views" : "Show path and views"}
@@ -7324,25 +7339,23 @@ function WorkspaceAppContent({
                 pressed={(format) => hasSelectionFormat(selectionBlock.content, selectionDraft.startOffset, selectionDraft.endOffset, format as SelectionFormat)}
                 onFormat={(format) => handleFormatSelection(format as SelectionFormat)} /> : null}
               <SelectionToolbarRow
+                // Note, Link and Ask AI stay in view; everything else waits in ⋯ (thread "Simplify Margin Chat with opt-in features").
                 actions={[
-                  ...(selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "highlight" as const, label: "Highlight", ariaLabel: selectionHighlighted ? "Remove highlight" : "Highlight selected text",
-                    pressed: selectionHighlighted, onSelect: handleToggleSelectionHighlight }] : []),
                   { icon: "note", label: "Note", ariaLabel: selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note", onSelect: () => handleCreateSelectionNote() },
                   { icon: "link", label: "Link", ariaLabel: "Link selected text to an existing document or block", pressed: selectionIntent === "link",
                     onSelect: () => { setSelectionLinkError(null); setSelectionIntent((intent) => intent === "link" ? "actions" : "link"); } },
                 ]}
                 more={[
+                  ...(selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "highlight" as const, label: selectionHighlighted ? "Remove highlight" : "Highlight",
+                    onSelect: handleToggleSelectionHighlight }] : []),
                   { icon: "copy", label: "Copy", hint: "⌘C", onSelect: () => { void copySelection(selectionDraft.quote); } },
                   { icon: "find", label: "Find related", onSelect: () => handleFindRelatedToSelection() },
                   { icon: "explain", label: "Explain", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(EXPLAIN_SELECTION_PROMPT) },
                   ...(selectionIsDiagram ? [] : [{ icon: "rewrite" as const, label: "Rewrite", ai: true, disabled: selectionPending, onSelect: () => handleSelectionQuickAction(REWRITE_SELECTION_PROMPT) }]),
                 ]}
-                aiActions={selectionDraft.sourceBlockId && !selectionIsDiagram ? [{ icon: "question" as const, label: "Question", ariaLabel: "Question this: the AI asks you one question about the passage, in the margin",
-                  hint: "The AI asks you one question about this passage, in the margin", disabled: selectionPending, onSelect: handleQuestionSelection },
-                  { icon: "visualize" as const, label: "Visualize", ariaLabel: "Visualize: the AI draws this passage as a diagram you step through",
-                  hint: "A diagram of this passage, in stages, under its paragraph", disabled: selectionPending, onSelect: handleVisualizeSelection },
-                  ...(selectionConversation && canMakeCards(selectionConversation) ? [{ icon: "cards" as const, label: "Quiz", ariaLabel: "Quiz: the AI writes quiz questions about this passage for you to pick from",
-                  hint: "Multiple-choice questions about this passage, for you to pick from", disabled: selectionPending, onSelect: () => handleMakeCardsFromSelection("quiz") }] : [])] : []}
+                aiActions={selectionDraft.sourceBlockId && !selectionIsDiagram && selectionConversation && canMakeCards(selectionConversation)
+                  ? [{ icon: "cards" as const, label: "Quiz", ariaLabel: "Quiz: the AI writes quiz questions about this passage for you to pick from",
+                  hint: "Multiple-choice questions about this passage, for you to pick from", disabled: selectionPending, onSelect: () => handleMakeCardsFromSelection("quiz") }] : []}
                 ask={{ icon: "ai", label: "Ask AI", ariaLabel: selectionIsDiagram ? "Ask AI to change this diagram" : "Ask AI about this passage", pressed: selectionIntent === "branch",
                   onSelect: () => setSelectionIntent((intent) => intent === "branch" ? "actions" : "branch") }}
               /></>}
@@ -7380,6 +7393,10 @@ function WorkspaceAppContent({
                   </> : <>
                     <button type="button" disabled={selectionPending} onClick={handleExplainSelection}>Explain</button>
                     <button type="button" disabled={selectionPending} onClick={() => handleCreateBranch(REWRITE_SELECTION_PROMPT)}>Rewrite</button>
+                    {selectionDraft.sourceBlockId ? <>
+                      <button type="button" disabled={selectionPending} title="The AI asks you one question about this passage, in the margin" onClick={handleQuestionSelection}>Question me</button>
+                      <button type="button" disabled={selectionPending} title="A diagram of this passage, in stages, under its paragraph" onClick={handleVisualizeSelection}>Visualize</button>
+                    </> : null}
                     {selectionConversation && canMakeCards(selectionConversation) ? <>
                       <button type="button" disabled={selectionPending} onClick={() => handleMakeCardsFromSelection("cards")}>Flashcards</button>
                       <button type="button" disabled={selectionPending} onClick={() => handleMakeCardsFromSelection("quiz")}>Quiz questions</button>
@@ -7432,6 +7449,11 @@ function WorkspaceAppContent({
               pending={Boolean(chat && (pendingConversationIds[chat.id] || chatExecutions.has(chat.id)))}
               onAsk={(question) => handleAskAboutNote(noteChatFor, question)}
               onStop={chat ? () => chatExecutions.abort([chat.id]) : undefined}
+              settings={state.conversations[noteChatFor].vaultFile ? undefined : <>
+                <AIInstructionLine value={state.conversations[noteChatFor].aiInstruction} inherited={inheritedAIInstruction(state.conversations[noteChatFor])}
+                  onChange={(text) => handleSetAIInstruction(noteChatFor, text)} />
+                {renderNotebookStanceButton()}
+              </>}
               onClose={closeNoteChat} />;
           })() : null}
           {vaultAnswer ? <VaultAnswerPanel answer={vaultAnswer} onClose={closeVaultAnswer}

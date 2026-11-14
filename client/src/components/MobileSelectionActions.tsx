@@ -132,8 +132,8 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
     role="group" aria-label="Selected text actions" style={{ top, left, width }}
     onSubmit={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()}>
     <div className="mobile-selection-actions-row">
+      {/* The system menu is replaced here, so Copy stays in reach; Highlight waits in More. */}
       {item("copy", copied ? "Copied" : "Copy", () => { void copySelection(quote).then((done) => setCopied(done)); })}
-      {onHighlight ? item("highlight", "Highlight", onHighlight, { ariaLabel: highlighted ? "Remove highlight" : "Highlight selected text", pressed: highlighted }) : null}
       {item("note", "Note", onMarginNote, { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note" : "Create a side note" })}
       {item("link", "Link", onLink, { ariaLabel: "Link selected text to an existing document or block" })}
       {item("ai", "Ask AI", onAsk, { ariaLabel: "Ask AI about this passage", ai: true, disabled })}
@@ -142,6 +142,7 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
       </button>
     </div>
     {moreOpen ? <div className="mobile-selection-actions-more" role="group" aria-label="More selection actions">
+      {onHighlight ? item("highlight", "Highlight", onHighlight, { ariaLabel: highlighted ? "Remove highlight" : "Highlight selected text", pressed: highlighted }) : null}
       {editable ? item("cut", "Cut", () => { void cutSelection(); }) : null}
       {editable ? item("paste", "Paste", () => { void pasteIntoSelection(); }) : null}
       {item("select", "Select all", () => selectAllAround())}

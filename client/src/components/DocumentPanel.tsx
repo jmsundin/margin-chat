@@ -106,6 +106,11 @@ export interface DocumentPanelProps {
    * the view menu and authorship. With it, the instruction line moves into the row.
    */
   pageBar?: ReactNode;
+  /**
+   * The quiet page: nothing above the text unless it has something to say (an instruction the AI
+   * follows here, or authorship marks that are on). The view and authorship switches are in ⋯.
+   */
+  quiet?: boolean;
   /** "Write back…" under a paragraph the AI wrote: the reply goes in below it and the AI answers after. */
   onWriteBack?: (blockId: string, text: string) => void;
   /** The full path of parents in the header, as in Map View's side panel. */
@@ -243,6 +248,8 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   }, [invocation, mobileKeyboard.mobile]);
   // Who wrote which lines, where the vault records it (§9). Margin notes and file viewers don't show it.
   const authorshipView = useAuthorshipMode();
+  // On the quiet page the share-of-lines chip shows only while marks are on, to explain them and turn them off.
+  const authorshipShown = !props.quiet || authorshipView.mode !== "off" || authorshipView.onlyMine;
   const generationModels = useMemo(() => new Map(document.generations.map((generation) => [generation.id, generation.modelId])), [document.generations]);
   const authorship = useDocumentAuthorship(conversation.id, document.blocks, conversation.messages,
     (block) => (block.generationId && generationModels.get(block.generationId)) || null,
@@ -655,7 +662,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
       {props.notice}
-      {props.pageBar && editorMounted ? null : props.aiInstruction}
+      {(props.pageBar || props.quiet) && editorMounted ? null : props.aiInstruction}
       {props.roadmap}
       {agentFollowUps.get(TOP_OF_DOCUMENT)?.length ? <div className="document-proposals-top">{agentFollowUps.get(TOP_OF_DOCUMENT)}</div> : null}
       {board ? <Suspense fallback={<p className="document-board" role="status">Loading board…</p>}>
@@ -667,10 +674,10 @@ export default function DocumentPanel(props: DocumentPanelProps) {
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
         resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram} languageLearning={props.languageLearning}
         authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
-        compactModes={Boolean(props.pageBar)}
-        toolbarStart={props.pageBar || historyPrompts.length || authorship?.summary.totalLines ? <>
+        compactModes={Boolean(props.pageBar || props.quiet)}
+        toolbarStart={props.pageBar || historyPrompts.length || (authorship?.summary.totalLines && authorshipShown) ? <>
           {props.pageBar}
-          {authorship ? <DocumentAuthorshipBar summary={authorship.summary} mode={authorshipView.mode} onlyMine={authorshipView.onlyMine}
+          {authorship && authorshipShown ? <DocumentAuthorshipBar summary={authorship.summary} mode={authorshipView.mode} onlyMine={authorshipView.onlyMine}
             onModeChange={authorshipView.setMode} onOnlyMineChange={authorshipView.setOnlyMine}/> : null}
           {historyPrompts.length ? <PromptHistory count={historyPrompts.length} open={historyOpen} onToggle={togglePromptHistory} onClose={closePromptHistory}
             modal={mobileKeyboard.mobile}>{renderPromptHistory()}</PromptHistory> : null}

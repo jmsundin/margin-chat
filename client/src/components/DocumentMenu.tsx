@@ -4,6 +4,8 @@ import type { Conversation, ConversationGroup } from "../types";
 import { getConversationGroupId } from "../lib/conversationGroups";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { useSuggestedDocumentTitle } from "../lib/documentTitleSuggestion";
+import { readDocumentViewMode, saveDocumentViewMode } from "../lib/documentEditorPreference";
+import { saveAuthorshipMode, saveAuthorshipOnlyMine, useAuthorshipMode, type AuthorshipMode } from "../lib/documentAuthorship";
 import { ConversationGroupPickerContext } from "./ConversationGroupControls";
 import GroupPickerModal from "./GroupPickerModal";
 import { SpaceMenuContext } from "./Spaces";
@@ -61,7 +63,24 @@ export interface DocumentMenuProps {
   onAssignGroup?: (conversationId: string, groupId: string | null) => void;
   className?: string;
   onFocusFallback?: () => void;
+  /**
+   * The quiet page has no row above its text, so how the page shows (Live Preview, Source,
+   * Reading) and who wrote which lines are chosen here.
+   */
+  pageView?: boolean;
+  /** Language learning on this page: tap a word to see what it means. */
+  languageLearning?: { on: boolean; onToggle: (on: boolean) => void };
 }
+
+const PAGE_MODES = [
+  { mode: "live", label: "Live Preview", title: "Markdown shows on the line you're editing" },
+  { mode: "source", label: "Source", title: "The Markdown file as saved" },
+  { mode: "reading", label: "Reading", title: "Rendered, not editable (⌘E)" },
+] as const;
+const AUTHORSHIP_MODES: Array<{ mode: AuthorshipMode; label: string; title: string }> = [
+  { mode: "mine", label: "Mark my lines", title: "Mark the lines you wrote" },
+  { mode: "blame", label: "Who wrote each line", title: "Label who wrote each run of lines, and when" },
+];
 
 const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: string; short: string; title: string }> = [
   { policy: null, label: "Only what I didn't write", short: "Not my lines", title: "Apps may change lines an AI, an app or an import wrote, never yours." },
@@ -71,12 +90,14 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
   const [agentEditOpen, setAgentEditOpen] = useState(false);
   const [spacesOpen, setSpacesOpen] = useState(false);
+  const [pageViewOpen, setPageViewOpen] = useState(false);
+  const authorship = useAuthorshipMode();
   const spaceActions = useContext(SpaceMenuContext);
   const [renameOpen, setRenameOpen] = useState(false);
   const [renameTitle, setRenameTitle] = useState("");
@@ -114,7 +135,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
     };
   }, []);
 
-  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); setSpacesOpen(false); } }, [open]);
+  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); setSpacesOpen(false); setPageViewOpen(false); } }, [open]);
   useOutsideDismiss(open, () => close(), menu, trigger);
 
   useEffect(() => {
@@ -261,7 +282,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
       </div> : null}
       {onNewMarginNote || onAskAboutNote || onMoveToSideDocument || onMoveToMargin ? <div role="group" className="document-menu-section">
         {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
-        {onAskAboutNote ? <button type="button" role="menuitem" onClick={() => action(onAskAboutNote)}>Ask about this note</button> : null}
+        {onAskAboutNote ? <button type="button" role="menuitem" onClick={() => action(onAskAboutNote)}>Ask…</button> : null}
         {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."
           onClick={() => action(onMoveToSideDocument)}>Move to side document</button> : null}
         {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
@@ -313,9 +334,42 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           </div> : null}
         </> : null}
       </div> : null}
+      {pageView ? <div role="group" className="document-menu-section">
+        <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={pageViewOpen}
+          title="How this page shows its Markdown, and whether it marks who wrote what."
+          onClick={() => setPageViewOpen((value) => !value)}>
+          <span>Page view</span>
+          <span className="document-menu-group-name">{languageLearning?.on ? "Language" : PAGE_MODES.find((option) => option.mode === readDocumentViewMode())!.label}</span>
+          <span aria-hidden="true">{pageViewOpen ? "⌄" : "›"}</span>
+        </button>
+        {pageViewOpen ? <div role="group" aria-label="Page view" className="document-menu-choices">
+          {PAGE_MODES.map((option) => {
+            const checked = !languageLearning?.on && readDocumentViewMode() === option.mode;
+            return <button key={option.mode} type="button" role="menuitemradio" aria-checked={checked}
+              title={option.title} onClick={() => { close(true); if (languageLearning?.on) languageLearning.onToggle(false); saveDocumentViewMode(option.mode); }}>
+              <span>{option.label}</span>
+              <span className="document-menu-check" aria-hidden="true">{checked ? "✓" : ""}</span>
+            </button>;
+          })}
+          {languageLearning ? <button type="button" role="menuitemradio" aria-checked={languageLearning.on}
+            title="Tap, click or select text to see what it means" onClick={() => { close(true); languageLearning.onToggle(!languageLearning.on); }}>
+            <span>Language learning</span>
+            <span className="document-menu-check" aria-hidden="true">{languageLearning.on ? "✓" : ""}</span>
+          </button> : null}
+          {AUTHORSHIP_MODES.map((option) => <button key={option.mode} type="button" role="menuitemcheckbox" aria-checked={authorship.mode === option.mode}
+            title={option.title} onClick={() => { close(true); saveAuthorshipMode(authorship.mode === option.mode ? "off" : option.mode); }}>
+            <span>{option.label}</span>
+            <span className="document-menu-check" aria-hidden="true">{authorship.mode === option.mode ? "✓" : ""}</span>
+          </button>)}
+          {authorship.onlyMine ? <button type="button" role="menuitemcheckbox" aria-checked title="Show every line again"
+            onClick={() => { close(true); saveAuthorshipOnlyMine(false); }}>
+            <span>Only my lines</span><span className="document-menu-check" aria-hidden="true">✓</span>
+          </button> : null}
+        </div> : null}
+      </div> : null}
       {onToggleMaximize || onMinimize || onRestore || onClose ? <div role="group" className="document-menu-section">
         {onToggleMaximize ? <button type="button" role="menuitem" onClick={() => action(onToggleMaximize)}>
-          {maximized ? "Restore document size" : "Maximize document"}
+          {maximized ? "Leave full screen" : "Full screen"}
         </button> : null}
         {!minimized && onMinimize
           ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
