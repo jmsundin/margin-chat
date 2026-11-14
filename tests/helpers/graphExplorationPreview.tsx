@@ -120,7 +120,7 @@ function GraphExplorationPreview() {
       <ThreadSidebar mapExplorerRef={setExplorerContainer} mapExplorerActive={sidebarSection === "explore"} onSelectSidebarSection={setSidebarSection}
         collapsed={false} mainViewMode={view === "graph" ? "graph" : "chat"} activeThreadId={activeId} activeOutlineItemId={null}
         currentChatOutline={[]} currentChatTitle={fixture.conversations[activeId].title} groups={fixture.groups} threads={threads} pinnedThreads={[]} streamingThreadIds={new Set()} theme={dark ? "dark" : "light"}
-        onAssignGroup={() => {}} onCreateGroup={() => {}} onDeleteThread={() => {}} onNewChat={() => {}} onNewNote={() => {}} onOpenProfile={() => {}} onOpenSettings={() => {}} onOpenSearch={() => {}}
+        onAssignGroup={() => {}} onCreateGroup={() => {}} onDeleteThread={() => {}} onNewChat={() => {}} onNewNote={() => {}} onOpenProfile={() => {}} onOpenSearch={() => {}}
         onPinThread={() => {}} onUnpinThread={() => {}} onRenameThread={() => {}} onSelectOutlineItem={() => {}}
         onSelectThread={reveal} onToggleGroup={() => {}} onToggleTheme={() => setDark((value) => !value)} />
     </div>
