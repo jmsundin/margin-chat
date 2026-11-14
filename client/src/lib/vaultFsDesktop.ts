@@ -63,7 +63,12 @@ export interface DesktopVaultBridge {
 
 /** What the computer's file manager is called, for "Show in Finder" and the like. */
 export function fileManagerName(platform = typeof navigator === "undefined" ? "" : navigator.platform || navigator.userAgent) {
-  return /mac/i.test(platform) ? "Finder" : /win/i.test(platform) ? "Explorer" : "Files";
+  return /mac/i.test(platform) ? "Finder" : /win/i.test(platform) ? "File Explorer" : "Files";
+}
+
+/** The menu item that shows a document's file in the system file manager, worded as each OS's own apps word it. */
+export function revealInFolderLabel(platform = typeof navigator === "undefined" ? "" : navigator.platform || navigator.userAgent) {
+  return /mac/i.test(platform) ? "Reveal in Finder" : `Show in ${fileManagerName(platform)}`;
 }
 
 /** The desktop app's bridge when it syncs the vault itself; null in browsers and older apps. */

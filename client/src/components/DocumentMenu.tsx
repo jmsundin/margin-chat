@@ -53,8 +53,8 @@ export interface DocumentMenuProps {
   onRevealInFolder?: (id: string) => void;
   /** Opens Version history: earlier versions of this document to compare and restore. */
   onVersionHistory?: (id: string) => void;
-  /** What that's called here: Finder, Explorer or Files. */
-  fileManager?: string;
+  /** What that item says here: "Reveal in Finder" on a Mac, "Show in File Explorer" on Windows. */
+  revealLabel?: string;
   groups?: Record<string, ConversationGroup>;
   onAssignGroup?: (conversationId: string, groupId: string | null) => void;
   className?: string;
@@ -69,7 +69,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, fileManager = "Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onToggleRoadmap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -236,7 +236,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <span>Group</span><span className="document-menu-group-name" title={groupName}>{groupName}</span><span aria-hidden="true">›</span>
         </button> : null}
         {onRevealInFolder ? <button type="button" role="menuitem" title="Show this document's file in your vault folder."
-          onClick={() => action(onRevealInFolder)}>{`Show in ${fileManager}`}</button> : null}
+          onClick={() => action(onRevealInFolder)}>{revealLabel}</button> : null}
         {onVersionHistory ? <button type="button" role="menuitem" title="See earlier versions of this document and restore one."
           onClick={() => action(onVersionHistory)}>Version history</button> : null}
       </div> : null}

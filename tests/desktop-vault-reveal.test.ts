@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { createVaultFolders } from "../desktop/vaultFolders.mjs";
 import { registerVaultBridge, revealInFolder, VAULT_OPERATIONS } from "../desktop/vaultBridge.mjs";
-import { fileManagerName } from "../client/src/lib/vaultFsDesktop";
+import { fileManagerName, revealInFolderLabel } from "../client/src/lib/vaultFsDesktop";
 
 async function setUp() {
   const home = await mkdtemp(path.join(tmpdir(), "margin-reveal-"));
@@ -80,7 +80,13 @@ describe("showing vault files in Finder or Explorer", () => {
 
   test("the file manager is named for the computer", () => {
     expect(fileManagerName("MacIntel")).toBe("Finder");
-    expect(fileManagerName("Win32")).toBe("Explorer");
+    expect(fileManagerName("Win32")).toBe("File Explorer");
     expect(fileManagerName("Linux x86_64")).toBe("Files");
+  });
+
+  test("the menu item is worded the way each computer words it", () => {
+    expect(revealInFolderLabel("MacIntel")).toBe("Reveal in Finder");
+    expect(revealInFolderLabel("Win32")).toBe("Show in File Explorer");
+    expect(revealInFolderLabel("Linux x86_64")).toBe("Show in Files");
   });
 });

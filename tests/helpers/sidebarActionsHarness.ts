@@ -30,7 +30,7 @@ async function click(selector: string) {
   await act(async () => { element(selector).click(); });
 }
 
-async function renderSidebar(collapsed = false) {
+async function renderSidebar(collapsed = false, revealInFolder?: unknown) {
   await act(async () => {
     root.render(createElement(ThreadSidebar, {
       activeOutlineItemId: null, activeThreadId: "side-document", collapsed,
@@ -42,8 +42,8 @@ async function renderSidebar(collapsed = false) {
       onPinThread: (id) => events.push(`pin:${id}`), onRenameThread: noop, onSelectOutlineItem: noop,
       onSelectThread: (id) => events.push(`select:${id}`), onToggleGroup: noop,
       onToggleTheme: noop, onUnpinThread: noop, pinnedThreads: [], streamingThreadIds: new Set(),
-      theme: "dark", threads: [thread, sideThread],
-    }));
+      theme: "dark", threads: [thread, sideThread], revealInFolder,
+    } as never));
   });
 }
 
@@ -123,6 +123,23 @@ try {
   await drag("dragstart", ".thread-item-main");
   await drag("dragend", ".thread-item-main");
   assert.equal(container.querySelector('[data-thread-drop-target="pinned"]'), null);
+  // Reveal in Finder: only with the desktop app's vault folder, and only for documents with a file there.
+  const menuItem = (label: string) => [...container.querySelectorAll('.thread-item-menu [role="menuitem"]')]
+    .find((node) => node.textContent?.trim() === label) as any;
+  await click('[aria-label="Open actions for Research"]');
+  assert(menuItem("Rename"), "The document menu opens.");
+  assert.equal(menuItem("Reveal in Finder"), undefined, "Browsers have no Reveal in Finder.");
+  await click('[aria-label="Open actions for Research"]');
+  await renderSidebar(false, { label: "Reveal in Finder", canReveal: (id: string) => id === "chat", onReveal: (id: string) => events.push(`reveal:${id}`) });
+  await click('[aria-label="Open actions for Side research"]');
+  assert(menuItem("Rename"));
+  assert.equal(menuItem("Reveal in Finder"), undefined, "A document with no file in the folder yet has nothing to reveal.");
+  await click('[aria-label="Open actions for Side research"]');
+  await click('[aria-label="Open actions for Research"]');
+  await act(async () => { menuItem("Reveal in Finder").click(); });
+  assert.equal(events.at(-1), "reveal:chat");
+  assert.equal(container.querySelector(".thread-item-menu"), null, "The menu closes after revealing.");
+
   await renderSidebar(true);
   assert.equal(container.querySelector('[aria-label="New side document"]'), null);
   await click('[aria-label="Open document Side research"]');
