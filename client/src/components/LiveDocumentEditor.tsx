@@ -1327,8 +1327,11 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const decorationKey = JSON.stringify(props.decorations ?? {});
   const authorshipKey = JSON.stringify(props.authorship ?? null);
   const metaKey = visibleBlocks.map((block) => `${block.id}:${getDocumentBlockAuthorship(block, props.sourceMessages)}:${block.sourceMessageId ?? ""}:${readOnlyIds.has(block.id) ? 1 : 0}`).join("|");
-  const placeholderId = props.hidePlaceholder ? undefined
+  const askShown = Boolean(askButton && (props.onInvokeAI || props.onCaretMenu) && editable && editorFocused && mode !== "reading" && !mobileKeyboard.mobile);
+  const emptyBlockId = props.hidePlaceholder ? undefined
     : (visibleBlocks.find((block) => !block.content && !readOnlyIds.has(block.id) && block.id === focusedBlockId) ?? visibleBlocks.filter((block) => !block.content && !readOnlyIds.has(block.id)).at(-1))?.id;
+  // The Ask AI buttons sit on the line below the caret; the empty line's hint would show through them.
+  const placeholderId = askShown && emptyBlockId !== focusedBlockId ? undefined : emptyBlockId;
   const [syncRetry, setSyncRetry] = useState(0);
   useLayoutEffect(() => {
     const view = viewRef.current;
@@ -1629,8 +1632,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     </div>
     {/* Its mics are beside Ask AI and in the pane's corner, so voice typing doesn't float one over the text. */}
     <div ref={hostRef} className="live-document-host" data-dictation-button="own" />
-    {askButton && (props.onInvokeAI || props.onCaretMenu) && editable && editorFocused && mode !== "reading" && !mobileKeyboard.mobile
-      && <div className="live-document-ask-group" style={{ top: askButton.top, left: askButton.left }}>
+    {askShown && askButton && <div className="live-document-ask-group" style={{ top: askButton.top, left: askButton.left }}>
         {props.onInvokeAI && <button type="button" className="live-document-ask"
           aria-label="Ask AI here" title="Ask AI here (or press Space on an empty line)"
           onMouseDown={(event) => { event.preventDefault(); dragFromAskButton(event.nativeEvent); }}
