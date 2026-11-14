@@ -181,6 +181,24 @@ export function normalizeAIInstruction(value) {
     return text || null;
 }
 
+/** Language learning mode: frontmatter `learning-language` (the language being learned) and `translate-into` (the reader's own). */
+export const LEARNING_LANGUAGE_KEY = "learning-language";
+export const TRANSLATE_INTO_KEY = "translate-into";
+function normalizeLanguageCode(value) {
+    if (typeof value !== "string") return null;
+    const code = value.trim();
+    if (!/^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/u.test(code)) return null;
+    const [primary, ...rest] = code.split("-");
+    return [primary.toLowerCase(), ...rest].join("-");
+}
+/** The document's pair of languages, or null when it isn't in Language learning mode. */
+export function normalizeLanguageLearning(value) {
+    if (!value || typeof value !== "object") return null;
+    const target = normalizeLanguageCode(value.target);
+    const base = normalizeLanguageCode(value.base);
+    return target && base && target !== base ? { target, base } : null;
+}
+
 function isHiddenFromAIValue(value) {
     return value === true || (typeof value === "string" && /^(?:true|yes)$/iu.test(value.trim()));
 }
@@ -204,8 +222,9 @@ export function readDocumentGraphProperties(values) {
     const hiddenFromAI = isHiddenFromAIValue(values[HIDE_FROM_AI_KEY]);
     const agentEdit = normalizeAgentEditPolicy(values[AGENT_EDIT_KEY]);
     const aiInstruction = normalizeAIInstruction(values[AI_INSTRUCTION_KEY]);
+    const languageLearning = normalizeLanguageLearning({ target: values[LEARNING_LANGUAGE_KEY], base: values[TRANSLATE_INTO_KEY] });
     return { relationTargets, edgeMeta, ...(nodeType ? { nodeType } : {}), tags, ...(hiddenFromAI ? { hiddenFromAI } : {}),
-        ...(agentEdit ? { agentEdit } : {}), ...(aiInstruction ? { aiInstruction } : {}) };
+        ...(agentEdit ? { agentEdit } : {}), ...(aiInstruction ? { aiInstruction } : {}), ...(languageLearning ? { languageLearning } : {}) };
 }
 
 /**
@@ -237,7 +256,8 @@ export function normalizeConversationGraphFields(input, conversationId, conversa
     return { ...(relations?.length ? { relations } : {}), ...(nodeType ? { nodeType } : {}), ...(tags.length ? { tags } : {}),
         ...(input?.hiddenFromAI === true ? { hiddenFromAI: true } : {}),
         ...(normalizeAgentEditPolicy(input?.agentEdit) ? { agentEdit: normalizeAgentEditPolicy(input.agentEdit) } : {}),
-        ...(normalizeAIInstruction(input?.aiInstruction) ? { aiInstruction: normalizeAIInstruction(input.aiInstruction) } : {}) };
+        ...(normalizeAIInstruction(input?.aiInstruction) ? { aiInstruction: normalizeAIInstruction(input.aiInstruction) } : {}),
+        ...(normalizeLanguageLearning(input?.languageLearning) ? { languageLearning: normalizeLanguageLearning(input.languageLearning) } : {}) };
 }
 
 /** Whether the user keeps this document away from AI models and connected apps. */

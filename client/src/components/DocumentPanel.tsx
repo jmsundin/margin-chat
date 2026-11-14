@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import type { DocumentLanguageLearning } from "../lib/languageLearning";
 import { flushSync } from "react-dom";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
 import type { Conversation, MessageAnchorLink, SelectionDraft } from "../types";
@@ -120,6 +121,8 @@ export interface DocumentPanelProps {
   onSubmit: (request: DocumentAIRequest) => void;
   /** Ask AI in the Edit diagram dialog: returns the diagram's new Mermaid text. */
   onAskDiagram?: (request: DiagramAIRequest) => Promise<string>;
+  /** Language learning mode: tapping or selecting text shows what it means. */
+  languageLearning?: DocumentLanguageLearning;
   onStop: () => void;
   onSelection: (selection: SelectionDraft) => void;
   onClearSelection?: () => void;
@@ -662,7 +665,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </Suspense> : null}
       {!showEditor ? null : editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={editorBlocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
-        resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram}
+        resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram} languageLearning={props.languageLearning}
         authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
         compactModes={Boolean(props.pageBar)}
         toolbarStart={props.pageBar || historyPrompts.length || authorship?.summary.totalLines ? <>

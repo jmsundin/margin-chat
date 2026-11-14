@@ -30,10 +30,11 @@ export function readDocumentGraphProperties(values: Record<string, unknown>): {
   hiddenFromAI?: true;
   agentEdit?: "locked" | "open";
   aiInstruction?: string;
+  languageLearning?: LanguageLearning;
 };
 export function extractMarkdownWikiLinks(markdown: string): MarkdownWikiLink[];
 export function normalizeConversationGraphFields(input: unknown, conversationId: string, conversations?: Record<string, Conversation>):
-  Pick<Conversation, "relations" | "nodeType" | "tags" | "hiddenFromAI" | "agentEdit" | "aiInstruction">;
+  Pick<Conversation, "relations" | "nodeType" | "tags" | "hiddenFromAI" | "agentEdit" | "aiInstruction" | "languageLearning">;
 export const HIDE_FROM_AI_KEY: "hide-from-ai";
 export const AGENT_EDIT_KEY: "agent-edit";
 export type AgentEditPolicy = "non-authored-only" | "locked" | "open";
@@ -45,3 +46,8 @@ export const AI_INSTRUCTION_KEY: "ai-instruction";
 export const AI_INSTRUCTION_MAX_LENGTH: number;
 /** A stored instruction as one trimmed line, or null when there's none. */
 export function normalizeAIInstruction(value: unknown): string | null;
+/** A document's Language learning pair: the language being learned and the one meanings are given in, as language codes like "es" and "en". */
+export interface LanguageLearning { target: string; base: string }
+export const LEARNING_LANGUAGE_KEY: "learning-language";
+export const TRANSLATE_INTO_KEY: "translate-into";
+export function normalizeLanguageLearning(value: unknown): LanguageLearning | null;

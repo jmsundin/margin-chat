@@ -8,7 +8,7 @@ import { DEFAULT_WORKSPACE_PREFERENCES } from "./workspaceModel.mjs";
 import { encodeReadableMarkdown, decodeReadableMarkdown, isReadableMarkdown, markedBlockIds } from "./markdownReadable.mjs";
 import { titleMarkdownPath, legacyMarkdownPath } from "./markdownPaths.mjs";
 import { readFrontmatter, readFrontmatterValues, setFrontmatterEntries } from "./frontmatter.mjs";
-import { AGENT_EDIT_KEY, AI_INSTRUCTION_KEY, normalizeAIInstruction, DOCUMENT_RELATION_TYPES, EDGE_META_KEY, HIDE_FROM_AI_KEY, RESERVED_DOCUMENT_TAGS, documentRelationKey, documentRelationMetadata, normalizeDocumentNodeType, normalizeDocumentRelations, normalizeDocumentTags, readDocumentGraphProperties, readDocumentRelationMetadata } from "./relations.mjs";
+import { AGENT_EDIT_KEY, AI_INSTRUCTION_KEY, LEARNING_LANGUAGE_KEY, TRANSLATE_INTO_KEY, normalizeLanguageLearning, normalizeAIInstruction, DOCUMENT_RELATION_TYPES, EDGE_META_KEY, HIDE_FROM_AI_KEY, RESERVED_DOCUMENT_TAGS, documentRelationKey, documentRelationMetadata, normalizeDocumentNodeType, normalizeDocumentRelations, normalizeDocumentTags, readDocumentGraphProperties, readDocumentRelationMetadata } from "./relations.mjs";
 /**
  * Parsing a file depends only on its text (and, for whole-file parses, its
  * identity and the default model). Remember the last result for each path so an
@@ -254,7 +254,7 @@ function renderMarkdownWorkspace(state, savedAt, previousManifest, selectedConve
             : -1;
         // Graph properties are frontmatter, the one place Obsidian and people read them.
         const { childIds: _childIds, messages: _messages, notes: _notes, parentId: _parentId,
-            relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, agentEdit: _agentEdit, aiInstruction: _aiInstruction, ...conversationMetadata } = conversation;
+            relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, agentEdit: _agentEdit, aiInstruction: _aiInstruction, languageLearning: _languageLearning, ...conversationMetadata } = conversation;
         const metadata = {
             file: portableFileRecord(plannedRecords.get(conversation.id)),
             conversation: {
@@ -724,7 +724,7 @@ function parseConversationFile(source, record, workspace) {
         }
         : null;
     const { publicTopic: rawPublicTopic, linkedConversationIds, document: rawDocument, roadmap: rawRoadmap,
-        relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, agentEdit: _agentEdit, aiInstruction: _aiInstruction, ...conversationMetadata } = metadata.conversation;
+        relations: _relations, nodeType: _nodeType, tags: _tags, hiddenFromAI: _hiddenFromAI, agentEdit: _agentEdit, aiInstruction: _aiInstruction, languageLearning: _languageLearning, ...conversationMetadata } = metadata.conversation;
     const roadmap = normalizeRoadmap(rawRoadmap);
     const graph = readDocumentGraphProperties(readFrontmatterValues(source));
     const documentSection = editableDocumentSection(source);
@@ -1152,6 +1152,10 @@ function renderFrontmatter(conversation, kind, linkTo = () => null) {
         ...(conversation.hiddenFromAI === true ? [`${HIDE_FROM_AI_KEY}: true`] : []),
         ...(conversation.agentEdit === "locked" || conversation.agentEdit === "open" ? [`${AGENT_EDIT_KEY}: ${conversation.agentEdit}`] : []),
         ...(normalizeAIInstruction(conversation.aiInstruction) ? [`${AI_INSTRUCTION_KEY}: ${JSON.stringify(normalizeAIInstruction(conversation.aiInstruction))}`] : []),
+        ...(normalizeLanguageLearning(conversation.languageLearning) ? [
+            `${LEARNING_LANGUAGE_KEY}: ${normalizeLanguageLearning(conversation.languageLearning).target}`,
+            `${TRANSLATE_INTO_KEY}: ${normalizeLanguageLearning(conversation.languageLearning).base}`,
+        ] : []),
         ...renderRelationFrontmatter(conversation, linkTo),
         ...(publicTopic ? [
             `public-topic-id: ${JSON.stringify(publicTopic.id)}`,
@@ -1197,7 +1201,7 @@ function renderRelationFrontmatter(conversation, linkTo) {
 function graphConversationFields(graph) {
     return { ...(graph.nodeType ? { nodeType: graph.nodeType } : {}), ...(graph.tags.length ? { tags: graph.tags } : {}),
         ...(graph.hiddenFromAI ? { hiddenFromAI: true } : {}), ...(graph.agentEdit ? { agentEdit: graph.agentEdit } : {}),
-        ...(graph.aiInstruction ? { aiInstruction: graph.aiInstruction } : {}) };
+        ...(graph.aiInstruction ? { aiInstruction: graph.aiInstruction } : {}), ...(graph.languageLearning ? { languageLearning: graph.languageLearning } : {}) };
 }
 /** Relation links resolve like relationship links: by path, alias or basename,
  * then by a unique document title (how a hand-written `[[Title]]` reads). */
