@@ -22,7 +22,7 @@ export async function requestProviderJson({ apiKey, body, provider, url, signal,
     });
     if (!response.ok) tracker.markRejected();
     const payload = await response.json().catch(() => null);
-    if (!response.ok) throw new HttpError(response.status, extractApiErrorMessage(payload) ?? fallbackError);
+    if (!response.ok) throw providerHttpError(response.status, extractApiErrorMessage(payload) ?? fallbackError, provider);
     tracker.recordUsage(payload);
     return payload;
   });
@@ -53,7 +53,7 @@ export async function requestResponsesApiStream({ apiKey, body, fallbackError, o
     });
     if (!response.ok) {
       tracker.markRejected();
-      throw new HttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? fallbackError);
+      throw providerHttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? fallbackError, provider);
     }
     await onReady?.();
     if (response.headers.get("content-type")?.includes("application/json")) {
@@ -161,7 +161,7 @@ async function otherProviderReply(args, provider, stream) {
     });
     if (!response.ok) {
       tracker.markRejected();
-      throw new HttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? `${provider} request failed.`);
+      throw providerHttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? `${provider} request failed.`, provider);
     }
     let reply = "";
     let resolvedModel = args.model;
@@ -231,10 +231,22 @@ export function anthropicBody(args) {
   };
 }
 
+/**
+ * An error from an AI provider, passed on with the provider's status. A provider
+ * that refuses our key answers 401 or 407, which the browser would read as the
+ * user's own session ending and sign them out; those go back as 502 instead.
+ */
+export function providerHttpError(status, message, provider = "The AI provider") {
+  if (status === 401 || status === 407) {
+    return new HttpError(502, `${provider} refused its API key (HTTP ${status}): ${message}`);
+  }
+  return new HttpError(status, message);
+}
+
 function anthropicError(error, fallbackError) {
   if (error instanceof Anthropic.APIUserAbortError) return error;
   if (error instanceof Anthropic.APIError) {
-    return new HttpError(error.status ?? 502, extractApiErrorMessage(error.error) ?? fallbackError);
+    return providerHttpError(error.status ?? 502, extractApiErrorMessage(error.error) ?? fallbackError, "anthropic");
   }
   return error;
 }
