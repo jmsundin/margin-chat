@@ -29,7 +29,7 @@ export function createChatExecutionService({ apiKeyService, billingService, chat
       // transcript is as long as the transcript; other titles need one line.
       // Labeling the Map's zoom levels returns a sentence for each theme and topic.
       // Muse Wonder always reasons before it answers, and reasoning counts as output.
-      const titleTokens = payload?.kind === "document-categories" ? 16_384 : payload?.kind === "categories" ? 2_048 : payload?.kind === "map-levels" ? 6_144 : payload?.kind === "dictation" ? limits.maxOutputTokens : 256;
+      const titleTokens = payload?.kind === "document-categories" ? 16_384 : payload?.kind === "categories" ? 2_048 : payload?.kind === "map-levels" ? 6_144 : payload?.kind === "dictation" ? limits.maxOutputTokens : payload?.kind === "code" ? 1_024 : 256;
       context.hostedMaxOutputTokens = operation === "title" ? Math.min(limits.maxOutputTokens, titleTokens) : limits.maxOutputTokens;
       context.hostedMaxInputCharacters = limits.maxInputCharacters;
     }

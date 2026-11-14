@@ -13,7 +13,7 @@ import {
   requestXAIResponse, requestXAIResponseStream,
 } from "./providers.mjs";
 import { buildAgentInstruction, buildSystemInstruction } from "./systemPrompt.mjs";
-import { buildChatTitleInstruction, parseGeneratedCategories, parseGeneratedDocumentCategories, parseGeneratedMapLevels, sanitizeCleanedDictation, sanitizeGeneratedChatTitle, sanitizeGeneratedClusterLabel, validateChatTitleRequest } from "./title.mjs";
+import { buildChatTitleInstruction, parseGeneratedCategories, parseGeneratedDocumentCategories, parseGeneratedMapLevels, sanitizeCleanedDictation, sanitizeCodeSuggestion, sanitizeGeneratedChatTitle, sanitizeGeneratedClusterLabel, validateChatTitleRequest } from "./title.mjs";
 import { validateAIOptions, validateChatRequest } from "./validation.mjs";
 import { prepareChatContext } from "./context.mjs";
 import { cannotSeeImageInstruction, modelSeesImages, vaultFileInstruction } from "./fileContext.mjs";
@@ -595,6 +595,8 @@ export function createChatService({ database, documentService, env, runtimeConfi
       if (!assignments.length) throw new HttpError(502, "Muse Wonder returned no categories.");
       return { assignments, ...(context.usageMeter ? { billing: context.usageMeter.summary() } : {}) };
     }
+    // No suggestion is a fine answer: the editor just shows nothing.
+    if (kind === "code") return { code: sanitizeCodeSuggestion(result.reply), ...(context.usageMeter ? { billing: context.usageMeter.summary() } : {}) };
     const generated = kind === "cluster" ? sanitizeGeneratedClusterLabel(result.reply)
       : kind === "dictation" ? sanitizeCleanedDictation(result.reply) : sanitizeGeneratedChatTitle(result.reply);
     if (!generated) throw new HttpError(502, "The model returned an empty chat title.");

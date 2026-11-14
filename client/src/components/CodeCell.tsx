@@ -14,6 +14,9 @@ import { css } from "@codemirror/lang-css";
 import { CODE_LANGUAGE_LABELS, codeCellKind, previewDocument, previewPage, sqlSetup, type CodeLanguage } from "../lib/codeRunner/languages";
 import { CodeCellScopeContext } from "../lib/codeRunner/codeCellScope";
 import { runCode, type RunEvent, type RunResult } from "../lib/codeRunner/runner";
+import { codeSuggestions } from "../lib/codeRunner/ghostText";
+import { requestCodeSuggestion } from "../lib/api";
+import { ApiError } from "../lib/apiError";
 import "./CodeCell.css";
 
 /**
@@ -25,6 +28,16 @@ import "./CodeCell.css";
 
 const SAVE_DELAY_MS = 300;
 const PREVIEW_DELAY_MS = 200;
+
+/**
+ * Turned off for the rest of the visit once the server says AI isn't
+ * available to this person (signed out, a guest, or out of AI allowance),
+ * so typing comments doesn't keep sending requests that will fail.
+ */
+let suggestionsOff = false;
+function stopSuggestionsOn(error: unknown) {
+  if (error instanceof ApiError && [401, 402, 403].includes(error.statusCode)) suggestionsOff = true;
+}
 
 function languageExtension(language: CodeLanguage): Extension {
   switch (language) {
@@ -91,6 +104,14 @@ export default function CodeCell({ language, source, index, dark }: CodeCellProp
         extensions: [
           lineNumbers(), highlightActiveLineGutter(), highlightActiveLine(), drawSelection(), history(), indentOnInput(), bracketMatching(), closeBrackets(),
           syntaxHighlighting(classHighlighter), languageExtension(language),
+          // Write a comment saying what you want; the AI's code for it shows faintly and goes in on Tab.
+          ...(editable ? [codeSuggestions({
+            language,
+            enabled: () => !suggestionsOff && navigator.onLine !== false,
+            request: (prompt, signal) => requestCodeSuggestion({ prompt, signal }),
+            context: () => ({ cells: latest.current.scope?.cells ?? [], own: (latest.current.scope?.offset ?? 0) + latest.current.index }),
+            onError: stopSuggestionsOn,
+          })] : []),
           EditorState.tabSize.of(language === "python" || language === "java" ? 4 : 2),
           EditorState.readOnly.of(!editable), EditorView.editable.of(editable),
           editorPlaceholder(kind === "preview" ? `Write ${CODE_LANGUAGE_LABELS[language]} here` : `Write ${CODE_LANGUAGE_LABELS[language]} here, then Run`),
