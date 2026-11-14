@@ -190,7 +190,8 @@ try {
   assert.equal(notePane(noteId).querySelector('.document-margin-source'), null);
   assert.equal(notePane(noteId).querySelector('.document-children-trigger'), null);
   assert.equal(pane('full-side').querySelector('.document-children-trigger'), null);
-  assert(notePane(noteId).querySelector('.document-margin-actions .document-presentation-toggle'));
+  assert.equal(notePane(noteId).querySelector('.document-presentation-toggle'), null, "Notes have no ↗ button: the dot opens them beside the page.");
+  assert(notePane(noteId).querySelector('.margin-document-open'));
   assert(notePane(noteId).querySelector('.document-margin-actions .document-menu-trigger'));
   checks.push('legacy notes become child documents in the sidebar and parent margin');
 
@@ -228,20 +229,24 @@ try {
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
   checks.push('compact notes resize both dimensions and save their size without changing their content');
 
-  // ↗ moves the note to a side document, and "Move to margin" puts it back: the same document both ways.
+  // The note's dot opens it beside the page, and closing it puts it back in the margin: the same note both ways.
   const noteAnchor = latest.conversations[noteId].branchAnchor;
-  await click(notePane(noteId).querySelector('.document-presentation-toggle'));
-  assert(panes().includes(noteId));
-  assert.equal(latest.conversations[noteId].document!.marginNote, undefined);
-  assert(!notePane(noteId).querySelector('.is-compact-document'));
+  const noteSize = latest.conversations[noteId].document!.marginNote!.size;
+  await click(notePane(noteId).querySelector('.margin-document-open'));
+  assert(panes().includes(noteId), "The note opens as a pane beside its page.");
+  assert.equal(latest.activeConversationId, noteId);
+  assert.equal(pane(mainId).querySelector(`.document-margin [data-margin-note-id="${noteId}"]`), null, "An opened note leaves the margin.");
+  assert(!pane(noteId).querySelector('.is-compact-document'));
+  assert.equal(latest.conversations[noteId].document!.marginNote!.display, 'compact', "Opening a note beside the page changes nothing about the note.");
+  assert.deepEqual(latest.conversations[noteId].document!.marginNote!.size, noteSize);
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
-  await documentAction(noteId, 'Move to margin');
+  await click(pane(noteId).querySelector('.document-close-button'));
   assert(!panes().includes(noteId));
   assert.equal(latest.conversations[noteId].document!.marginNote!.display, 'compact');
-  assert(pane(mainId).querySelector(`.document-margin [data-margin-note-id="${noteId}"] [data-document-id="${noteId}"]`));
+  assert(pane(mainId).querySelector(`.document-margin [data-margin-note-id="${noteId}"] [data-document-id="${noteId}"]`), "Closing the note puts it back in the margin.");
   assert.deepEqual(latest.conversations[noteId].branchAnchor, noteAnchor);
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
-  checks.push('moving to a side document and back to the margin preserves document identity, content and passage association');
+  checks.push('opening a note beside the page and putting it back preserves document identity, content, size and passage association');
 
   await focusPane(mainId);
   assert.equal(latest.activeConversationId, mainId);
@@ -263,27 +268,15 @@ try {
   assert(latest.conversations[passageId].document!.blocks.some((block) => block.content.includes('Thought about this passage')));
   checks.push('a selected passage creates an editable mini document with a normal passage anchor');
 
-  // A side document is made straight from the selection, with no prompt or AI.
+  // Notes and side documents are one kind of note now, so the selection offers Note only.
   await act(async () => {
     firstBlock(mainId).view.dom.focus();
     firstBlock(mainId).commands.setTextSelection({ from: 15, to: 23 });
   });
   await settle();
-  const beforeSideIds = new Set(Object.keys(latest.conversations));
-  await click(element('[aria-label="Create a side document from this passage"]'));
-  const sideId = Object.keys(latest.conversations).find((id) => !beforeSideIds.has(id))!;
-  assert(sideId);
-  const sideDocument = latest.conversations[sideId];
-  assert.equal(sideDocument.parentId, mainId);
-  assert.equal(sideDocument.branchAnchor!.quote, 'document');
-  assert.equal(sideDocument.branchAnchor!.sourceBlockId, latest.conversations[mainId].document!.blocks[0].id);
-  assert.equal(sideDocument.document!.marginNote, undefined);
-  assert.deepEqual(sideDocument.document!.blocks.map((block) => block.content), ['> document']);
-  assert.equal(sideDocument.messages.length, 0, 'No AI request is made.');
-  assert(panes().includes(sideId));
-  await click(documentElement(sideId).querySelector('.document-close-button'));
-  assert(!panes().includes(sideId));
-  checks.push('a selected passage creates a linked side document quoting it, without AI');
+  assert(container.querySelector('[aria-label="Add a margin note"]'));
+  assert.equal(container.querySelector('[aria-label="Create a side document from this passage"]'), null);
+  checks.push('a selected passage offers one Note action, not a separate side document');
 
   // A note across two lines joins them into one block, since a passage points into one block.
   const firstLineId = latest.conversations[mainId].document!.blocks[0].id;

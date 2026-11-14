@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import "./DocumentMargin.css";
 import { MobileKeyboardDirect } from "./MobileKeyboard";
 
@@ -104,7 +105,22 @@ function keepsNoteOpen(aside: HTMLElement | null, target: EventTarget | null): b
   const element = target instanceof Element ? target : null;
   if (!element) return true;
   return Boolean(aside?.contains(element)
-    || element.closest("[role=menu], [role=dialog], .selection-toolbar-row, [data-mobile-keyboard-toggle], [data-mobile-keyboard-bar]"));
+    || element.closest("[role=menu], [role=dialog], .selection-toolbar-row, [data-mobile-keyboard-toggle], [data-mobile-keyboard-bar], [data-note-sheet]"));
+}
+
+/** Phones open a note as a sheet from the bottom of the screen, over the page, instead of beside its dot. */
+const NOTE_SHEET_QUERY = "(max-width: 900px)";
+function useNoteSheet(marks: boolean) {
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && typeof window.matchMedia === "function" && window.matchMedia(NOTE_SHEET_QUERY).matches);
+  useEffect(() => {
+    if (!marks || typeof window.matchMedia !== "function") return;
+    const query = window.matchMedia(NOTE_SHEET_QUERY);
+    const sync = () => setNarrow(query.matches);
+    sync();
+    query.addEventListener?.("change", sync);
+    return () => query.removeEventListener?.("change", sync);
+  }, [marks]);
+  return marks && narrow;
 }
 
 /**
@@ -122,6 +138,11 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const [hoverId, setHoverId] = useState<string | null>(null);
   /** Marks mode: the note opened from its dot. */
   const [openId, setOpenId] = useState<string | null>(null);
+  /** On phones the open note is a sheet: half the screen, so its passage stays in view above it, or all of it. */
+  const sheet = useNoteSheet(marks);
+  const [sheetFull, setSheetFull] = useState(false);
+  const sheetRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!openId) setSheetFull(false); }, [openId]);
   const frame = useRef(0);
   const itemKey = items.map((item) => `${item.id}:${item.anchored ? 1 : 0}`).join("|");
   const heightCallback = useRef(onHeightChange);
@@ -211,7 +232,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   useEffect(() => {
     if (!marks || !openId) return;
     const close = (event: PointerEvent) => { if (!keepsNoteOpen(asideRef.current, event.target)) setOpenId(null); };
-    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && asideRef.current?.contains(document.activeElement)) setOpenId(null); };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape" && (asideRef.current?.contains(document.activeElement) || sheetRef.current?.contains(document.activeElement))) setOpenId(null); };
     document.addEventListener("pointerdown", close, true);
     document.addEventListener("keydown", escape);
     return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", escape); };
@@ -290,7 +311,16 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
             aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${item.label || "Margin note"}`} title={item.label}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
             onClick={() => setOpenId((current) => current === item.id ? null : item.id)} />
-          {open ? <div className="document-margin-mark-note" data-margin-note-id={item.id} data-mobile-keyboard-direct style={{ width: noteWidth }}
+          {open && sheet ? createPortal(<div className={`note-sheet${sheetFull ? " is-full" : ""}`} ref={sheetRef} data-note-sheet
+            data-margin-note-id={item.id} data-mobile-keyboard-direct role="dialog" aria-label={`Note: ${item.label || "Margin note"}`}>
+            <button type="button" className="note-sheet-handle" aria-expanded={sheetFull}
+              aria-label={sheetFull ? "Show the page above the note" : "Make the note full screen"}
+              onClick={() => setSheetFull((full) => !full)}><span aria-hidden="true" /></button>
+            {sheetFull ? <button type="button" className="note-sheet-back" onClick={() => setOpenId(null)}>‹ {label.replace(/^Notes for /, "")}</button>
+              : item.anchored ? null : <span className="document-margin-label">About this document</span>}
+            <div className="note-sheet-body"><MobileKeyboardDirect>{item.node}</MobileKeyboardDirect></div>
+          </div>, asideRef.current?.closest(".app-shell") ?? document.body) : null}
+          {open && !sheet ? <div className="document-margin-mark-note" data-margin-note-id={item.id} data-mobile-keyboard-direct style={{ width: noteWidth }}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
             {item.anchored ? null : <span className="document-margin-label">About this document</span>}
             <MobileKeyboardDirect>{item.node}</MobileKeyboardDirect>

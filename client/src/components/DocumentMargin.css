@@ -74,3 +74,34 @@
    panel's gap above and the wider pane's side padding would push its text down and over. */
 .document-margin-item > .margin-document-family > .margin-document-frame > .chat-panel.document-panel.is-compact-document.is-active { margin-block: 0; }
 .document-margin-item .rich-document-editor { padding-inline: 0; }
+
+/* ---- Phones: an open note is a sheet from the bottom ----
+   Half the screen at first, so the passage stays in view above it; the handle makes it full screen.
+   It is the same editable note as in the margin: tap in it to type, with the usual menus. */
+.note-sheet {
+  position: fixed; z-index: 60; left: 0; right: 0; bottom: 0; height: 52dvh; max-height: calc(100dvh - 56px);
+  display: flex; flex-direction: column; box-sizing: border-box; padding: 0 0 env(safe-area-inset-bottom);
+  border-top: 1px solid var(--line); border-radius: 18px 18px 0 0; background: var(--panel-strong, var(--bg));
+  box-shadow: 0 -12px 32px rgba(40, 32, 20, .16); transition: height .2s ease, border-radius .2s ease;
+}
+.note-sheet.is-full { height: 100dvh; max-height: none; border-radius: 0; border-top: 0; }
+.note-sheet-handle {
+  flex: 0 0 auto; display: flex; justify-content: center; align-items: center; width: 100%; height: 30px;
+  padding: 0; border: 0; background: transparent; cursor: pointer; touch-action: manipulation;
+}
+.note-sheet-handle span { width: 40px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 22%, transparent); }
+.note-sheet-handle:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: -4px; }
+.note-sheet-back {
+  flex: 0 0 auto; align-self: flex-start; min-height: 40px; margin: 0 0 0 14px; padding: 0 6px;
+  border: 0; background: transparent; color: var(--accent); font: inherit; font-size: 14px; cursor: pointer;
+}
+.note-sheet > .document-margin-label { padding: 0 20px; }
+.note-sheet-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.note-sheet-body .margin-document-family { width: 100%; }
+.note-sheet-body .margin-document-frame { width: 100% !important; height: auto !important; max-height: none !important; }
+.note-sheet-body .margin-document-frame > :is(.margin-document-resize, .margin-document-open) { display: none; }
+.note-sheet-body .margin-document-frame > .chat-panel.document-panel { border: 0; background: transparent; box-shadow: none; }
+.note-sheet-body .document-body { --document-left-padding: 20px; --document-right-padding: 44px; }
+.note-sheet-body .margin-document-frame .live-document-host, .is-quiet-page .note-sheet-body .margin-document-frame .live-document-host { font-size: 16px; }
+/* The note's menu lives in the page's ⋮ on phones, so its empty header goes. */
+.note-sheet-body .margin-document-frame .document-header:not(:has(button)) { display: none; }

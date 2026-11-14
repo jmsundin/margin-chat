@@ -231,3 +231,26 @@
 .conversation-canvas.is-tree-browser.is-document-workspace.is-single-document:has(> .conversation-tree-expanded > .document-panel.is-roadmap) { padding: 0 12px 10px !important; overflow-x: hidden; }
 .conversation-canvas.is-tree-browser.is-single-document > .conversation-tree-expanded:has(> .document-panel.is-roadmap) { flex: 1 1 auto; max-width: none; min-width: 0; width: auto; }
 .conversation-tree-expanded:has(> .document-panel.is-roadmap) > .panel-resize-handle { display: none; }
+
+/* ---- A note opened beside its page ----
+   Dragging the line between page and note far enough says where the note goes when you let go. */
+.panel-slot > .note-snap-hint {
+  position: absolute; z-index: 30; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  max-width: calc(100% - 32px); padding: 8px 14px; border-radius: 999px; pointer-events: none;
+  background: var(--ink); color: var(--panel-bg, #fff); font-size: 13px; line-height: 1.3; text-align: center;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, .18);
+}
+.panel-slot:has(> .note-snap-hint.is-margin) > .document-panel { opacity: .55; transition: opacity .12s ease; }
+/* A note as the whole page keeps a thin strip of its page at the left: click it, or press Esc, to go back. */
+.panel-slot > .note-page-strip {
+  position: fixed; z-index: 40; top: 64px; bottom: 16px; left: 0; width: 34px; padding: 18px 0 0;
+  display: flex; justify-content: center; align-items: flex-start;
+  border: 0; border-right: 1px solid var(--line); border-radius: 0 10px 10px 0;
+  background: color-mix(in srgb, var(--ink) 4%, var(--panel-bg, transparent)); color: var(--muted); cursor: pointer;
+}
+.panel-slot > .note-page-strip span {
+  writing-mode: vertical-rl; transform: rotate(180deg); font-size: 12.5px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-height: 100%;
+}
+.panel-slot > .note-page-strip:hover { color: var(--ink); background: color-mix(in srgb, var(--ink) 8%, var(--panel-bg, transparent)); }
+.panel-slot > .note-page-strip:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

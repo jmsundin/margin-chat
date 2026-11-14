@@ -133,7 +133,6 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
       {item("copy", copied ? "Copied" : "Copy", () => { void copySelection(quote).then((done) => setCopied(done)); })}
       {onHighlight ? item("highlight", "Highlight", onHighlight, { ariaLabel: highlighted ? "Remove highlight" : "Highlight selected text", pressed: highlighted }) : null}
       {item("note", "Note", onMarginNote, { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note" : "Create a side note" })}
-      {item("side", "Side doc", onSideDocument, { ariaLabel: "Create a side document from this passage" })}
       {item("link", "Link", onLink, { ariaLabel: "Link selected text to an existing document or block" })}
       {item("ai", "Ask AI", onAsk, { ariaLabel: "Ask AI about this passage", ai: true, disabled })}
       <button type="button" aria-label="More selection actions" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>

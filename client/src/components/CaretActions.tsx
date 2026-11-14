@@ -22,7 +22,7 @@ const VIEWPORT_MARGIN = 12;
 
 /**
  * The selection toolbar's twin for when nothing is selected: the same row at the caret, with
- * Paste and Select in place of Copy and Highlight. Note, Side doc and Link use the paragraph.
+ * Paste and Select in place of Copy and Highlight. Note and Link use the paragraph.
  */
 export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onFindRelated, onClose, marginNoteLabel = "Margin note" }: CaretActionsProps) {
   const ref = useRef<HTMLDivElement>(null);
@@ -72,7 +72,6 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
           { icon: "paste", label: "Paste", ariaLabel: "Paste at the cursor", onSelect: run(menu.paste) },
           ...(paragraph ? [
             { icon: "note" as const, label: "Note", ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note to this paragraph" : "Create a side note on this paragraph", onSelect: run(onNote) },
-            { icon: "side" as const, label: "Side doc", ariaLabel: "Create a side document from this paragraph", onSelect: run(onSideDocument) },
             { icon: "link" as const, label: "Link", ariaLabel: "Link this paragraph to an existing document or block", onSelect: run(onLink) },
           ] : []),
         ]}
@@ -101,7 +100,6 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
       {item("paste", "Paste", run(menu.paste), { ariaLabel: "Paste at the cursor" })}
       {item("select", "Select", run(menu.selectParagraph), { ariaLabel: "Select paragraph" })}
       {paragraph ? item("note", "Note", run(onNote), { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note to this paragraph" : "Create a side note on this paragraph" }) : null}
-      {paragraph ? item("side", "Side doc", run(onSideDocument), { ariaLabel: "Create a side document from this paragraph" }) : null}
       {paragraph ? item("link", "Link", run(onLink), { ariaLabel: "Link this paragraph to an existing document or block" }) : null}
       {item("ai", "Ask AI", run(menu.askAI), { ariaLabel: "Ask AI here", ai: true })}
       <button type="button" aria-label="More actions at the cursor" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>
