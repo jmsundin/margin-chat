@@ -103,7 +103,7 @@ import { collectExpiredEmptyDocuments, EMPTY_DOCUMENT_CLEANUP_CHECK_MS, noteDocu
 import { addDocumentLink, createDocumentLink, getDocumentLinkTarget, remapDocumentLinks, removeDocumentLink } from "./lib/documentLinks";
 import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
-import { fileManagerName } from "./lib/vaultFsDesktop";
+import { revealInFolderLabel } from "./lib/vaultFsDesktop";
 import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
 import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import VaultFolderGate from "./components/VaultFolderGate";
@@ -2186,6 +2186,12 @@ function WorkspaceAppContent({
       setRevealNotice(error instanceof Error && error.message ? error.message : "The vault folder couldn’t be opened.");
     });
   }
+  // The sidebar's ⋯ menu: Reveal in Finder for documents that already have a file in the vault folder.
+  const sidebarRevealInFolder = vault.revealInFolder && vault.hasFolderFile ? {
+    label: revealInFolderLabel(),
+    canReveal: (id: string) => { const conversation = state.conversations[id]; return Boolean(conversation && vault.hasFolderFile?.(conversation)); },
+    onReveal: (id: string) => handleRevealInFolder(id),
+  } : undefined;
   // The app's File menu: Open Vault Folder, and Show Document in Finder for the document on screen.
   const handleVaultFolderMenu = useEffectEvent((action: unknown) => {
     if (action === "open-folder") handleRevealInFolder();
@@ -6123,7 +6129,7 @@ function WorkspaceAppContent({
         onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id), docId: id })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
-        onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} fileManager={fileManagerName()}
+        onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} revealLabel={revealInFolderLabel()}
         groups={state.groups} onAssignGroup={handleAssignConversationGroup}
         onFocusFallback={() => {
           const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
@@ -6193,7 +6199,7 @@ function WorkspaceAppContent({
       onClose={dock ? () => dock.onClose() : undefined} onRename={handleRenameThread}
       onToggleHiddenFromAI={handleToggleHiddenFromAI}
       onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
-        onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} fileManager={fileManagerName()}
+        onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} revealLabel={revealInFolderLabel()}
       groups={state.groups} onAssignGroup={handleAssignConversationGroup} />;
   }
 
@@ -6707,6 +6713,7 @@ function WorkspaceAppContent({
               onOpenFlashcards={() => { setFlashcardReview({ title: "All cards" }); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
+              revealInFolder={sidebarRevealInFolder}
               onSelectOutlineItem={handleSelectOutlineItem}
               onOutlineNavigated={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
               onSelectThread={handleRevealConversation}

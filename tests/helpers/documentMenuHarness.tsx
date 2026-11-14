@@ -21,7 +21,7 @@ function Host() {
   return createElement(DocumentMenu, {
     conversation,
     onRevealInFolder: enabled ? (id: string) => { revealed.push(id); } : undefined,
-    fileManager: "Explorer",
+    revealLabel: "Show in File Explorer",
     onRename: enabled ? (id, title) => { changes.push([id, title]); setConversation((current) => ({ ...current, title })); } : undefined,
     onSetAgentEdit: (id: string, policy: "locked" | "open" | null) => {
       policies.push([id, policy]);
@@ -118,7 +118,7 @@ try {
   checks.push("agent editing is chosen in the menu, and only there");
 
   await click(trigger());
-  await click(button("Show in Explorer"));
+  await click(button("Show in File Explorer"));
   assert.deepEqual(revealed, ["main"]);
   assert.equal(browser.document.querySelector('[role="menu"]'), null);
   checks.push("the desktop app's menu shows the document's file in its folder");
@@ -127,7 +127,7 @@ try {
   await click(trigger());
   assert(![...browser.document.querySelectorAll('[role="menuitem"]')].some((node) => node.textContent === "Rename document"));
   assert(![...browser.document.querySelectorAll('[role="menuitem"]')].some((node) => node.textContent?.startsWith("Show in")));
-  checks.push("read-only menus omit renaming, and browsers have no Show in Finder");
+  checks.push("read-only menus omit renaming, and browsers have no Reveal in Finder");
   console.log(JSON.stringify({ checks }));
 } finally {
   await act(async () => root.unmount());

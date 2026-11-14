@@ -17,8 +17,10 @@ import "./ThreadSidebar.css";
 type ThemeMode = "light" | "dark";
 type ThreadActionTarget = Pick<ThreadSummary, "id" | "title">;
 
-const THREAD_MENU_WIDTH = 176;
+const THREAD_MENU_WIDTH = 204;
 const THREAD_MENU_HEIGHT = 212;
+/** One more action row, such as Reveal in Finder. */
+const THREAD_MENU_ITEM_HEIGHT = 42;
 const THREAD_MENU_GAP = 8;
 const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
@@ -70,6 +72,11 @@ interface ThreadSidebarProps {
   onNewBoard?: () => void;
   onPinThread: (conversationId: string) => void;
   onRenameThread: (conversationId: string, title: string) => void;
+  /**
+   * Desktop app with its own vault folder only: show a document's file in Finder or File Explorer.
+   * `canReveal` leaves the item out for documents with no file in the folder yet.
+   */
+  revealInFolder?: { label: string; canReveal: (conversationId: string) => boolean; onReveal: (conversationId: string) => void };
   onSelectOutlineItem: (outlineItemId: string) => void;
   /** After the Outline moved the reader somewhere without an outline item, such as a PDF chapter. */
   onOutlineNavigated?: () => void;
@@ -83,7 +90,8 @@ interface ThreadSidebarProps {
   threads: ThreadSummary[];
 }
 
-function getThreadMenuPosition(triggerRect: DOMRect) {
+function getThreadMenuPosition(triggerRect: DOMRect, extraHeight = 0) {
+  const menuHeight = THREAD_MENU_HEIGHT + extraHeight;
   if (typeof window === "undefined") {
     return {
       left: THREAD_MENU_VIEWPORT_MARGIN,
@@ -92,15 +100,15 @@ function getThreadMenuPosition(triggerRect: DOMRect) {
   }
 
   const openAbove =
-    triggerRect.bottom + THREAD_MENU_GAP + THREAD_MENU_HEIGHT >
+    triggerRect.bottom + THREAD_MENU_GAP + menuHeight >
     window.innerHeight - THREAD_MENU_VIEWPORT_MARGIN;
   const top = openAbove
     ? Math.max(
         THREAD_MENU_VIEWPORT_MARGIN,
-        triggerRect.top - THREAD_MENU_HEIGHT - THREAD_MENU_GAP,
+        triggerRect.top - menuHeight - THREAD_MENU_GAP,
       )
     : Math.min(
-        window.innerHeight - THREAD_MENU_HEIGHT - THREAD_MENU_VIEWPORT_MARGIN,
+        window.innerHeight - menuHeight - THREAD_MENU_VIEWPORT_MARGIN,
         triggerRect.bottom + THREAD_MENU_GAP,
       );
   const left = Math.min(
@@ -361,6 +369,7 @@ export default function ThreadSidebar({
   onNewBoard,
   onPinThread,
   onRenameThread,
+  revealInFolder,
   onSelectOutlineItem,
   onOutlineNavigated,
   onSelectThread,
@@ -576,7 +585,7 @@ export default function ThreadSidebar({
 
   function handleOpenMenu(event: React.MouseEvent<HTMLButtonElement>, thread: ThreadSummary) {
     const triggerRect = event.currentTarget.getBoundingClientRect();
-    const nextPosition = getThreadMenuPosition(triggerRect);
+    const nextPosition = getThreadMenuPosition(triggerRect, revealInFolder?.canReveal(thread.id) ? THREAD_MENU_ITEM_HEIGHT : 0);
 
     setOpenMenuState((current) =>
       current?.threadId === thread.id
@@ -1373,6 +1382,20 @@ export default function ThreadSidebar({
                 >
                   Rename
                 </button>
+                {revealInFolder?.canReveal(thread.id) ? (
+                  <button
+                    className="thread-item-menu-action"
+                    onClick={() => {
+                      revealInFolder.onReveal(thread.id);
+                      setOpenMenuState(null);
+                    }}
+                    role="menuitem"
+                    title="Show this document's file in your vault folder."
+                    type="button"
+                  >
+                    {revealInFolder.label}
+                  </button>
+                ) : null}
                 <ConversationGroupSelect
                   className="is-menu"
                   conversationId={thread.id}

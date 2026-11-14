@@ -1235,11 +1235,12 @@ export function useMarkdownVault(args: {
     revealInFolder: revealFolderId ? async (document?: { id: string; vaultFile?: { path: string } }) => {
       const bridge = desktopVaultBridge();
       if (!bridge?.reveal) return;
-      const path = document?.vaultFile?.path
-        ?? (document ? workspaceFromVault(displayedFiles.current).manifest.files.find((record) => record.id === document.id)?.path : undefined)
-        ?? "";
+      const path = document?.vaultFile?.path ?? (document ? documentPath(document.id) : undefined) ?? "";
       await unwrap(bridge.reveal(revealFolderId, path));
     } : undefined,
+    /** Whether a document already has its own file in the desktop vault folder, so revealing it can select that file. */
+    hasFolderFile: revealFolderId ? (document: { id: string; vaultFile?: { path: string } }) =>
+      Boolean(document.vaultFile?.path ?? documentPath(document.id)) : undefined,
     async download() {
       await enqueue(async () => {
         await saveAndRefresh(false);

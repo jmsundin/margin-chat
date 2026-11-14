@@ -1639,7 +1639,7 @@ button {
   box-shadow: var(--shadow);
   padding: 8px;
   position: fixed;
-  width: min(calc(100vw - 24px), 176px);
+  width: min(calc(100vw - 24px), 204px);
   z-index: 30;
 }
 

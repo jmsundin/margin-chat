@@ -238,7 +238,7 @@ function showWorkspaceView(window, mode) {
 
 /** Finder on a Mac, Explorer on Windows; the page uses the same names (client/src/lib/vaultFsDesktop.ts). */
 function fileManagerName(platform = process.platform) {
-  return platform === "darwin" ? "Finder" : platform === "win32" ? "Explorer" : "Files";
+  return platform === "darwin" ? "Finder" : platform === "win32" ? "File Explorer" : "Files";
 }
 
 /** Asks the page to open its vault folder, or show the open document in it; the page knows which folder is its own. */
