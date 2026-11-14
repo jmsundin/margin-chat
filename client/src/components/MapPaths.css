@@ -120,8 +120,10 @@
 .map-path-message button { margin-left: auto; border: 0; background: none; width: 26px; height: 26px; border-radius: 7px; color: var(--muted); }
 
 /* ---- List ---- */
-.map-path-list { position: absolute; top: calc(var(--map-header-bottom, 48px) + 10px); bottom: 120px; left: 50%; transform: translateX(-50%); z-index: 7; width: min(440px, calc(100% - 24px));
-  overflow: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 12px 34px #0003; }
+/* List takes the map's place in its pane, rather than floating over the map. */
+.map-path-list { position: absolute; top: var(--map-header-bottom, 48px); bottom: 0; left: 0; right: 0; z-index: 7; overflow: auto; padding-bottom: 130px;
+  background: var(--bg, var(--panel-bg)); }
+.map-path-list > ol { max-width: 560px; margin: 0 auto; }
 .map-path-list ol { list-style: none; margin: 0; padding: 0; }
 .map-path-list > ol { padding: 6px 8px 10px; }
 .map-path-list-stage h3 { display: flex; justify-content: space-between; margin: 10px 8px 4px; color: var(--muted); font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }

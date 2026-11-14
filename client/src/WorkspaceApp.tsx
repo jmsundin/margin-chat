@@ -132,7 +132,7 @@ import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/b
 import { buildBoardNoteMessage, type BoardNoteRequest } from "./lib/boardAI";
 import RoadmapView from "./components/RoadmapView";
 import type { MapPathActions } from "./components/MapPaths";
-import { createMapPath, pathNameFromGoal } from "./lib/mapPaths";
+import { buildMapPath, createMapPath, isPathDocument, pathNameFromGoal } from "./lib/mapPaths";
 import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
 import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
@@ -825,6 +825,8 @@ function WorkspaceAppContent({
   // The document area's box inside the canvas section, which the map and the sheet's handle are placed in.
   const [sheetArea, setSheetArea] = useState<{ top: number; left: number; width: number; height: number } | null>(null);
   const sheetRestRef = useRef<DocumentSheet>(PAGE_SHEET);
+  /** A roadmap to turn on in the map beside the document. */
+  const [pathRequest, setPathRequest] = useState<{ id: string; requestId: number } | null>(null);
   const canvasSectionRef = useRef<HTMLElement | null>(null);
   const documentAreaRef = useRef<HTMLDivElement | null>(null);
   const mapUndoRef = useRef<((current: AppState) => AppState) | null>(null);
@@ -907,9 +909,37 @@ function WorkspaceAppContent({
       break;
     }
   }, [pendingConversationIds, chatExecutions]);
+  /**
+   * Roadmaps AI drafts go straight in, with no approval step: when a run ends, any roadmap it proposed is
+   * added (with an Undo on the map). Roadmap documents are checked too, so a draft left waiting goes in.
+   */
+  const roadmapDraftChecks = useRef(new Set<string>());
+  const roadmapDraftsTried = useRef(new Set<string>());
+  const applyFinishedRoadmapDrafts = useEffectEvent(() => {
+    const conversations = currentStateRef.current.conversations;
+    const ids = new Set(roadmapDraftChecks.current);
+    for (const conversation of Object.values(conversations)) if (conversation.nodeType === "roadmap") ids.add(conversation.id);
+    for (const id of ids) {
+      if (pendingConversationIds[id] || chatExecutions.has(id) || plainRoadmapDrafts[id]) continue;
+      roadmapDraftChecks.current.delete(id);
+      const conversation = conversations[id];
+      if (!conversation) continue;
+      for (const message of conversation.messages.slice(-8)) {
+        for (const proposal of message.execution?.agent?.proposals ?? []) {
+          if (proposal.kind !== "roadmap" || proposal.status || roadmapDraftsTried.current.has(proposal.id)) continue;
+          roadmapDraftsTried.current.add(proposal.id);
+          const reason = handleAgentProposal(id, message.id, proposal.id, "approve");
+          if (reason) setDocumentErrors((current) => ({ ...current, [id]: reason }));
+        }
+      }
+    }
+  });
+  useEffect(() => { applyFinishedRoadmapDrafts(); }, [state.conversations, pendingConversationIds, chatExecutions, plainRoadmapDrafts]);
   const refreshBillingAfterChat = useEffectEvent(() => { void onRefreshBilling(); });
   useEffect(() => {
-    const completed = Object.keys(previousPendingChats.current).some((id) => !pendingConversationIds[id]);
+    const finished = Object.keys(previousPendingChats.current).filter((id) => !pendingConversationIds[id]);
+    for (const id of finished) roadmapDraftChecks.current.add(id);
+    const completed = finished.length > 0;
     previousPendingChats.current = pendingConversationIds;
     if (completed) refreshBillingAfterChat();
   }, [pendingConversationIds]);
@@ -1437,6 +1467,20 @@ function WorkspaceAppContent({
   const startTourFromRequest = useEffectEvent(startTour);
   useEffect(() => { if (tourRequest) startTourFromRequest(); }, [tourRequest]);
   const mapShown = isGraphView || (mainViewMode === "chat" && sheet.mode !== "page");
+  /** For each document, the roadmaps it is a step in: "Step 7 of Learn Kubernetes". */
+  const roadmapSteps = useMemo(() => {
+    const steps = new Map<string, { pathId: string; name: string; number: number; total: number }[]>();
+    for (const conversation of Object.values(state.conversations)) {
+      if (!isPathDocument(conversation)) continue;
+      const path = buildMapPath(conversation, state.conversations);
+      for (const step of path.steps) {
+        const list = steps.get(step.docId) ?? [];
+        list.push({ pathId: path.id, name: path.name, number: step.number, total: path.total });
+        steps.set(step.docId, list);
+      }
+    }
+    return steps;
+  }, [state.conversations]);
   useEffect(() => { if (mapShown && !onboarding.mapSeen) updateOnboarding({ mapSeen: true }); }, [mapShown, onboarding.mapSeen]);
   const starterTasksDone = useMemo(() => completedStarterTasks(state, { map: onboarding.mapSeen, beside: notesBeside.length > 0 }),
     [state.conversations, state.sessions, onboarding.mapSeen, notesBeside.length]);
@@ -2084,6 +2128,10 @@ function WorkspaceAppContent({
     window.addEventListener("resize", measure);
     return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
   }, [mainViewMode, isMobileViewport]);
+
+  // Opening a roadmap's document shows the roadmap on the map beside it.
+  const showOpenedRoadmap = useEffectEvent((id: string) => { if (mainViewMode === "chat" && isPathDocument(state.conversations[id])) showRoadmapOnMap(id); });
+  useEffect(() => { showOpenedRoadmap(activeConversation.id); }, [activeConversation.id]);
 
   // The map follows the document you're reading, wherever you went from.
   const mapFollowIdRef = useRef<string | null>(null);
@@ -3309,9 +3357,28 @@ function WorkspaceAppContent({
       const ids = roadmapDraftIds(proposal, createId);
       const cloudIds = new Set((vault.cloudDocuments ?? []).map((entry) => entry.id));
       const updatedAt = new Date().toISOString();
-      const preview = applyRoadmapDraft(currentStateRef.current, proposal, ids, { updatedAt, known: (id) => cloudIds.has(id) });
+      const before = currentStateRef.current;
+      const preview = applyRoadmapDraft(before, proposal, ids, { updatedAt, known: (id) => cloudIds.has(id) });
       if (!preview?.added) return "None of the documents this roadmap cites are in your vault any more.";
       commit((current) => applyRoadmapDraft(current, proposal, ids, { updatedAt, known: (id) => cloudIds.has(id) })?.state ?? null, { status: "approved" });
+      // The draft goes straight in; Undo takes the whole draft back out, new notes included.
+      const changed = Object.keys(preview.state.conversations).filter((id) => preview.state.conversations[id] !== before.conversations[id]);
+      mapUndoRef.current = (current) => {
+        const at = new Date().toISOString();
+        let next = current;
+        for (const id of changed) {
+          if (before.conversations[id] || !next.conversations[id]) continue;
+          next = removeMapNote(next, id, createMainConversation({ id: createId("conversation"), modelId: next.defaultModelId, serviceId: next.defaultServiceId }));
+        }
+        const conversations = { ...next.conversations };
+        for (const id of changed) {
+          const old = before.conversations[id];
+          if (old && conversations[id]) conversations[id] = { ...old, childIds: conversations[id].childIds.filter((child) => Boolean(conversations[child])), updatedAt: at };
+        }
+        return { ...next, conversations };
+      };
+      const steps = proposal.stages.reduce((sum, stage) => sum + stage.steps.length, 0);
+      setMapEditMessage(`Added “${proposal.roadmapTitle || proposal.goal}”: ${steps} step${steps === 1 ? "" : "s"}${preview.created ? `, ${preview.created} new note${preview.created === 1 ? "" : "s"}` : ""}.`);
       return null;
     }
     if (!currentStateRef.current.conversations[proposal.parentId]) return `Open \u201c${proposal.parentTitle || "the parent document"}\u201d first, then try again.`;
@@ -5668,6 +5735,7 @@ function WorkspaceAppContent({
       else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
       setDocumentErrors((current) => ({ ...current, [conversationId]: getErrorText(error, "AI could not draft the roadmap. Try again.") }));
     } finally {
+      roadmapDraftChecks.current.add(conversationId);
       setPlainRoadmapDrafts(({ [conversationId]: _done, ...rest }) => rest);
       void onRefreshBilling();
     }
@@ -5705,6 +5773,30 @@ function WorkspaceAppContent({
     currentStateRef.current = next;
     setState((current) => createMapPath(current, args));
     return args.id;
+  }
+
+  /** Show the map beside the document with this roadmap turned on. */
+  function showRoadmapOnMap(pathId: string) {
+    setPathRequest((current) => ({ id: pathId, requestId: (current?.requestId ?? 0) + 1 }));
+    if (mainViewMode !== "chat") setMainViewMode("chat");
+    if (shownSheet.mode === "page") handleExpandSheet();
+  }
+
+  /** The ⋯ menu's Show on map: a roadmap turns itself on; any other document opens the map around it. */
+  function handleShowOnMap(conversationId: string) {
+    if (conversationId !== activeConversation.id) handleSelectConversation(conversationId, { nextViewMode: "chat" });
+    if (isPathDocument(state.conversations[conversationId])) { showRoadmapOnMap(conversationId); return; }
+    if (shownSheet.mode === "page") handleExpandSheet();
+  }
+
+  /** The ⋯ menu's Make a roadmap from this: AI drafts a roadmap that builds on this document, and it appears on the map as it fills in. */
+  function handleMakeRoadmapFrom(conversationId: string) {
+    const conversation = state.conversations[conversationId];
+    if (!conversation) return;
+    const title = conversation.title || "this document";
+    const made = mapPathActions.onDraftPath(`Learn ${title}, building on my document \u201c${title}\u201d and the notes around it`);
+    if ("error" in made) { setRevealNotice(made.error); return; }
+    showRoadmapOnMap(made.id);
   }
 
   const mapPathActions: MapPathActions = {
@@ -6022,10 +6114,8 @@ function WorkspaceAppContent({
       backTitle={backId ? state.conversations[backId].title || "Untitled document" : null} onBack={handleDocumentBack}
       onExpand={handleExpandDocumentHere} onOpenBeside={handleOpenDocumentBeside} plain={plain} openedAt={documentOpenedAt}
       // On a computer the compass sits beside the path it continues; phones list the views as tabs below it.
-      trailing={isMobileViewport ? undefined : <>
-        {navigationStyle === "compass" && documentNeighbors ? <DocumentCompass neighbors={documentNeighbors} onOpen={handleOpenNeighbor} besidePath /> : null}
-        <DocumentNavigationSwitcher value={navigationStyle} onChange={handleChangeNavigationStyle} />
-      </>} />;
+      // The map beside the document (⌘G) shows its neighbours, so the path needs no compass or outline next to it.
+      trailing={undefined} />;
   }
 
 
@@ -6126,7 +6216,9 @@ function WorkspaceAppContent({
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onAskAboutNote={conversation.document || conversation.kind === "note" ? (id) => setNoteChatFor(id) : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
-        onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleRoadmap={handleToggleRoadmap} onToggleBoard={handleToggleBoard}
+        onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleBoard={handleToggleBoard}
+        onMakeRoadmap={conversation.nodeType !== "roadmap" && !isHiddenFromAI(conversation) ? handleMakeRoadmapFrom : undefined}
+        onShowOnMap={handleShowOnMap}
         flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
         onMakeFlashcards={!conversation.vaultFile && !isHiddenFromAI(conversation) ? (id) => setMakeCards({ docId: id }) : undefined}
         onCheckClaims={(conversation.document || conversation.kind === "note") && !conversation.vaultFile && !isHiddenFromAI(conversation)
@@ -6149,8 +6241,14 @@ function WorkspaceAppContent({
     // On phones the breadcrumb bar lists notes and children (and reopens closed notes), so the header skips them.
     const noteCount = isMobileViewport ? 0 : getMarginDocuments(conversation).length;
     const claimCount = view === "chat" ? ratchet.documents[conversation.id]?.claims.length ?? 0 : 0;
-    if (!(view === "chat" && noteCount) && !claimCount) return null;
+    const roadmap = view === "chat" && isPathDocument(conversation) ? buildMapPath(conversation, state.conversations) : null;
+    const steps = view === "chat" ? (roadmapSteps.get(conversation.id) ?? []).filter((step) => step.pathId !== conversation.id).slice(0, 2) : [];
+    if (!(view === "chat" && noteCount) && !claimCount && !roadmap && !steps.length) return null;
     return <>
+      {roadmap ? <button type="button" className="document-roadmap-chip" title="Show this roadmap on the map"
+        onClick={() => showRoadmapOnMap(conversation.id)}>Roadmap <span>{roadmap.finished}/{roadmap.total}</span></button> : null}
+      {steps.map((step) => <button key={step.pathId} type="button" className="document-roadmap-chip" title={`Show “${step.name}” on the map`}
+        onClick={() => showRoadmapOnMap(step.pathId)}>Step {step.number} of <span>{step.name}</span></button>)}
       {claimCount ? <button type="button" className="document-claims-toggle" aria-pressed={!hiddenClaims[conversation.id]}
         aria-label={`${hiddenClaims[conversation.id] ? "Show" : "Hide"} checked claims for ${conversation.title}`}
         title={hiddenClaims[conversation.id] ? "Show checked claims" : "Hide checked claims"}
@@ -6214,7 +6312,8 @@ function WorkspaceAppContent({
     const dockHeader = !embedded && view === "chat" && !maximized && pinnedDocumentIds.includes(conversation.id);
     // On phones the workspace header names the document and holds its menu, which can minimize and close it.
     const bareHeader = !embedded && view === "chat" && isMobileViewport;
-    const roadmapPage = !embedded && conversation.nodeType === "roadmap";
+    // A roadmap is drawn on the Map beside its document now; its document reads like any other.
+    const roadmapPage = false;
     return <DocumentPanel key={embedded ? `roadmap-sheet:${conversation.id}` : conversation.id} conversation={conversation}
       compact={isCompactDocument(conversation)} bareHeader={bareHeader}
       onMinimize={!embedded && view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
@@ -6229,7 +6328,8 @@ function WorkspaceAppContent({
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
       </>}
-      childNavigation={renderChildrenMenu(conversation, view, view === "graph" ? dock : undefined)}
+      // A note's own notes are listed at the end of its page and drawn on the map beside it, so document view has no Children menu.
+      childNavigation={view === "graph" ? renderChildrenMenu(conversation, view, dock) : undefined}
       claimHighlights={view === "chat" ? getClaimHighlights(conversation) : undefined}
       onOpenClaim={(claimId) => setClaimsView({ id: conversation.id, focus: claimId })}
       marginNotes={getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
@@ -6268,7 +6368,7 @@ function WorkspaceAppContent({
       // A note in the margin sits on the page it would point back to, so it has no "Keep reading".
       bodyFooter={!embedded && !inMargin && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={documentNeighbors} onOpen={handleOpenNeighbor} /> : null}
-      fullScreenToggle={!embedded && view === "chat" && !dockHeader && (maximized || !isMobileViewport) ? renderFullScreenButton(conversation) : undefined}
+      fullScreenToggle={!embedded && view === "chat" && !dockHeader && (maximized || (!isMobileViewport && shownSheet.mode === "page")) ? renderFullScreenButton(conversation) : undefined}
       documentMenu={dockHeader || bareHeader ? null : view === "graph" ? renderMapDocumentMenu(conversation, dock) : renderDocumentMenu(conversation)}
       minimizedSideDocuments={embedded || (view === "chat" && getMinimizedChildNodes(conversation)) ? undefined : minimizedSideDocumentsByParent.get(conversation.id)}
       moveTargets={blockMoveTargets} onMoveBlock={handleMoveDocumentBlock}
@@ -6834,6 +6934,7 @@ function WorkspaceAppContent({
                     onSetMapConnection={handleSetMapConnection}
                     onSetRelation={handleSetMapRelation}
                     paths={mapPathActions}
+                    pathRequest={pathRequest}
                     onRemoveMapNote={handleRemoveMapNote}
                     onUndoMapEdit={handleUndoMapEdit}
                     mapEditMessage={mapEditMessage}
@@ -6963,8 +7064,7 @@ function WorkspaceAppContent({
                   <div className={`document-workspace-with-search${showMapModal ? ` is-sheet-${shownSheet.mode} is-sheet-edge-${sheetEdge}` : ""}${sheetDragging ? " is-sheet-dragging" : ""}`} ref={documentAreaRef}
                     style={sheetDocked ? (sheetEdge === "top" ? { paddingTop: shownSheet.size + 20 } : { paddingLeft: shownSheet.size })
                       : undefined}>
-                  {navigationStyle === "outline" && documentNeighbors && !isMobileViewport ? <DocumentTopicOutline neighbors={documentNeighbors}
-                    onOpen={(id) => handleSelectConversation(id, { nextViewMode: "chat" })} /> : null}
+                  
                   {searchPanel ? <SearchResultsPanel initialQuery={searchPanel.query} initialScope={searchPanel.scope} provider={vaultSearchProvider}
                     currentConversationId={activeConversation.id} openingPath={vault.openingPath ?? null}
                     onOpenDocument={handleOpenVaultSearchDocument} onOpenPassage={handleOpenVaultSearchPassage}

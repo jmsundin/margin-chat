@@ -90,3 +90,9 @@
   .document-topic-outline { flex: 0 0 auto; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
   .document-navigation-switcher-option { width: 34px; height: 32px; }
 }
+/* A note's own notes, as chips at the end of its page (they replace the header's Children menu). */
+.document-inside-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px; }
+.document-inside-chip { max-width: 100%; padding: 5px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--button-surface); color: var(--ink); font: inherit; font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.document-inside-chip:hover { border-color: var(--accent); color: var(--accent); }
+.document-inside-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

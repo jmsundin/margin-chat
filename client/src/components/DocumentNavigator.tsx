@@ -147,9 +147,15 @@ export function DocumentKeepReading({ neighbors, onOpen }: { neighbors: Document
     <span className="document-keep-reading-preview">{getDocumentPreview(document, 110)}</span>
   </button>;
   return <nav className="document-keep-reading" aria-label="Keep reading">
-    <div className="document-keep-reading-heading">Keep reading</div>
+    {children.length ? <>
+      <div className="document-keep-reading-heading">Inside this note · {children.length}</div>
+      <div className="document-inside-chips">
+        {children.map((child) => <button key={child.id} type="button" className="document-inside-chip" title={getDocumentPreview(child, 160)}
+          onClick={() => onOpen(child.id, "child")}>{titleOf(child)}</button>)}
+      </div>
+    </> : null}
+    {next || previous || (!next && parent) ? <div className="document-keep-reading-heading">Keep reading</div> : null}
     <div className="document-keep-reading-cards">
-      {children.slice(0, 3).map((child) => card(child, "child", "Go deeper"))}
       {next ? card(next, "sibling", `Next · ${index + 2} of ${siblings.length}`) : null}
       {previous ? card(previous, "sibling", "Previous") : null}
       {!next && parent ? card(parent, "parent", "Back up") : null}

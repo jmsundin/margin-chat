@@ -53,13 +53,15 @@ interface Props extends ConversationGraphViewProps {
   onCreateExploreDocument?: (args: { title: string; content: string; parentId?: string }) => string | null;
   /** Paths (roadmaps drawn on the map): making, changing and drafting them. */
   paths?: MapPathActions;
+  /** Turn this roadmap on (a new requestId asks again). */
+  pathRequest?: { id: string; requestId: number } | null;
 }
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 const hostname = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
 const editable = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")));
 
-export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, ...personalProps }: Props) {
+export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, pathRequest, ...personalProps }: Props) {
   const [sourcesFor, setSourcesFor] = useState<string | "add" | null>(null);
   const [addedTopicId, setAddedTopicId] = useState<string | null>(null);
   const [personalFocus, setPersonalFocus] = useState<Props["focusRequest"]>(null);
@@ -178,6 +180,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     rememberActivePath(pathsKey, id);
   }
   function setPathLayout(layout: "map" | "list") { setPathLayoutState(layout); rememberPathLayout(layout); }
+  useEffect(() => { if (pathRequest) { setPicking(null); setActivePath(pathRequest.id); } }, [pathRequest?.requestId]);
   // A path that was deleted turns itself off.
   useEffect(() => { if (activePathId && conversations[activePathId] && !isPathDocument(conversations[activePathId])) setActivePath(null); }, [activePathId, conversations]);
   const pathSpotlight = useMemo<MapSpotlight | null>(() => activePath?.steps.length ? {
