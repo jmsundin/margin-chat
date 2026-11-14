@@ -46,12 +46,23 @@ export function joinDictation(before: string, text: string): string {
 export interface TextSurface {
   caret(): number;
   read(from: number, to: number): string;
+  /** The end of the field's text, in the same positions as `caret`. */
+  length(): number;
   /**
    * Replaces text and puts the cursor after it, returning the text as the
-   * field stored it. Without `history`, undo never sees it.
+   * field stored it. Without `history`, undo never sees it. With
+   * `keepSelection`, the person's cursor stays where they put it instead,
+   * moving only as far as the edit shifts it.
    */
-  replace(from: number, to: number, text: string, history: boolean): string;
+  replace(from: number, to: number, text: string, history: boolean, keepSelection?: boolean): string;
   focus(): void;
+}
+
+/** Where a position ends up after `from`–`to` became `inserted` characters. A cursor at the edit's end follows it. */
+export function mapThroughEdit(position: number, from: number, to: number, inserted: number): number {
+  if (position >= to) return position + inserted - (to - from);
+  if (position <= from) return position;
+  return from + inserted;
 }
 
 // Rich and code editors register how to reach their text (./dictationEditors).
@@ -76,15 +87,22 @@ function surfaceFor(target: HTMLElement): TextSurface | null {
   if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) {
     return {
       caret: () => target.selectionEnd ?? target.value.length,
-      read: (from, to) => target.value.slice(from, to),
-      replace(from, to, value, history) {
+      length: () => target.value.length,
+      read: (from, to) => target.value.slice(Math.max(0, from), Math.max(0, to)),
+      replace(from, to, value, history, keepSelection = false) {
         // One-line fields can't hold line breaks.
         const text = target instanceof HTMLInputElement ? value.replace(/\s+/gu, " ") : value;
-        target.focus();
+        const start = target.selectionStart ?? from;
+        const end = target.selectionEnd ?? from;
+        const restore = () => {
+          if (keepSelection) target.setSelectionRange(mapThroughEdit(start, from, to, text.length), mapThroughEdit(end, from, to, text.length));
+        };
+        if (!keepSelection) target.focus();
         target.setSelectionRange(from, to);
         // insertText keeps the browser's undo stack; previews skip it.
-        if (history && text && document.execCommand?.("insertText", false, text)) return text;
+        if (history && text && document.execCommand?.("insertText", false, text)) { restore(); return text; }
         setNativeValue(target, target.value.slice(0, from) + text + target.value.slice(to), from + text.length, text);
+        restore();
         return text;
       },
       focus: () => target.focus(),
@@ -193,39 +211,105 @@ export interface DictationPreview {
   discard(): void;
 }
 
+// Positions of text either side of the live words, checked to find them again after the person edits.
+const ANCHOR_SPAN = 24;
+const wordsOf = (text: string) => text.split(/\s+/u).filter(Boolean);
+
 /**
  * Shows live words at the cursor, outside undo history, and replaces them with
- * the final transcript. If the person edits over the preview, it stops
- * updating and the final text goes in at the cursor instead. Returns null for
- * fields it cannot preview in, such as plain contenteditable elements.
+ * the final transcript. The person can keep editing while they talk, like in
+ * Claude Code: their cursor stays where they put it, and words they change
+ * become theirs, so the transcript stops rewriting them and only adds what's
+ * said next after them. Returns null for fields it cannot preview in, such as
+ * plain contenteditable elements.
  */
 export function startDictationPreview(target: HTMLElement): DictationPreview | null {
   const surface = surfaceFor(target);
   if (!surface) return null;
-  const at = surface.caret();
-  const before = surface.read(Math.max(0, at - 1), at);
+  // The live words not yet the person's: `shown`, starting at `start`, with the text around them to find them by.
+  let start = surface.caret();
   let shown = "";
+  let before = "";
+  let after = "";
+  let tail = 0;
+  // Transcript words the person now owns, because they edited them; only words after these are still typed.
+  let ownedWords = 0;
+  let shownWords = 0;
   let lost = false;
-  const intact = () => !lost && target.isConnected && surface.read(at, at + shown.length) === shown;
+  const read = (from: number, to: number) => {
+    const end = surface.length();
+    return surface.read(Math.min(end, Math.max(0, from)), Math.min(end, Math.max(0, to)));
+  };
+  const remember = (at: number) => {
+    start = at;
+    before = read(at - ANCHOR_SPAN, at);
+    const end = at + shown.length;
+    after = read(end, end + ANCHOR_SPAN);
+    tail = surface.length() - end;
+  };
+  remember(start);
+
+  /** Where the live words are now, and whether they're still as typed. Null when they can't be found. */
+  const locate = (): { at: number; intact: boolean } | null => {
+    if (!target.isConnected) return null;
+    // Nothing after them changed, so they're the same distance from the end (edits above them shift them).
+    const end = surface.length() - tail;
+    if (end >= 0 && read(end, end + ANCHOR_SPAN) === after) {
+      const at = end - shown.length;
+      if (at >= 0 && read(at, end) === shown) return { at, intact: true };
+      // The person edited the live words, or right before them: what's there is theirs now; new words go at the end.
+      if (shown) return { at: end, intact: false };
+    }
+    // Nothing before them changed, so they start where they did (edits below them don't move them).
+    if (read(start - ANCHOR_SPAN, start) === before) {
+      if (read(start, start + shown.length) === shown) return { at: start, intact: true };
+    }
+    return null;
+  };
+
+  /** Puts the words after the person's own in place of the live words, outside undo. */
+  const show = (words: string[]) => {
+    const found = locate();
+    if (!found) { lost = true; return; }
+    if (!found.intact) {
+      ownedWords = shownWords;
+      shown = "";
+    }
+    const fresh = words.slice(ownedWords);
+    const next = joinDictation(read(found.at - 1, found.at), fresh.join(" "));
+    if (next !== shown || !found.intact) {
+      shown = surface.replace(found.at, found.at + shown.length, next, false, true);
+    }
+    shownWords = ownedWords + fresh.length;
+    remember(found.at);
+  };
+
   return {
     update(text) {
-      if (!intact()) { lost = true; return; }
-      const next = joinDictation(before, text);
-      if (next === shown) return;
-      shown = surface.replace(at, at + shown.length, next, false);
+      if (lost) return;
+      show(wordsOf(text));
     },
     commit(text) {
       if (!target.isConnected) return null;
-      if (!intact()) return insertDictation(target, text);
-      if (shown) surface.replace(at, at + shown.length, "", false);
+      const words = wordsOf(text);
+      const found = lost ? null : locate();
+      // Lost track of the live words: the rest goes in at the cursor instead.
+      if (!found) return insertDictation(target, words.slice(ownedWords).join(" "));
+      if (!found.intact) { ownedWords = shownWords; shown = ""; }
+      const { at } = found;
+      if (shown) surface.replace(at, at + shown.length, "", false, true);
       shown = "";
-      const insert = joinDictation(before, text);
-      const typed = insert ? surface.replace(at, at, insert, true) : "";
-      surface.focus();
-      return trackInsertion(target, surface, at, before, typed);
+      lost = true;
+      const charBefore = read(at - 1, at);
+      const insert = joinDictation(charBefore, words.slice(ownedWords).join(" "));
+      const typed = insert ? surface.replace(at, at, insert, true, true) : "";
+      return trackInsertion(target, surface, at, charBefore, typed);
     },
     discard() {
-      if (shown && intact()) surface.replace(at, at + shown.length, "", false);
+      if (!lost && shown) {
+        const found = locate();
+        if (found?.intact) surface.replace(found.at, found.at + shown.length, "", false, true);
+      }
       shown = "";
       lost = true;
     },
