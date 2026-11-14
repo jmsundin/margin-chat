@@ -6,6 +6,8 @@ import AccountDeletionForm from "./AccountDeletionForm";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AiFeatureSettings, AppearanceSettings, useVoiceTypingEnabled, VoiceTypingSettings, type ThemeMode } from "./AppSettingsSections";
+import { FeatureSettings } from "./FeatureSettings";
+import { FEATURES, useFeatures } from "../lib/features";
 import type {
   ApiKeyProvider,
   ApiKeySettings,
@@ -22,7 +24,7 @@ import type { MainViewMode } from "../types";
 import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
 import type { StateUploadProgress } from "../lib/api";
 
-export type SettingsSection = "account" | "billing" | "api-keys" | "agents" | "appearance" | "voice" | "storage";
+export type SettingsSection = "features" | "account" | "billing" | "api-keys" | "agents" | "appearance" | "voice" | "storage";
 
 interface SettingsPageProps {
   /** The section to open; null or left out opens the section list on phones and Account on computers. */
@@ -74,6 +76,7 @@ interface SettingsPageProps {
 }
 
 const SECTIONS: Array<{ id: SettingsSection; label: string; description: string; keywords: string }> = [
+  { id: "features", label: "Features", description: "Margin Chat starts simple. Turn on the tools you want.", keywords: "features plugins customize customise simple everything flashcards quiz roadmaps boards claims check voice typing presets turn on off" },
   { id: "account", label: "Account", description: "Your name, email and password.", keywords: "profile name email password log out sign out delete account close account remove" },
   { id: "billing", label: "Plan & credit", description: "Your plan, AI balance, payments and receipts.", keywords: "billing balance money payment receipts subscription plus cloud plan budget" },
   { id: "api-keys", label: "AI & privacy", description: "Your own model keys and the AI features that read your vault.", keywords: "api keys openai anthropic claude gemini google hugging face xai meta muse jev search by meaning embeddings" },
@@ -105,6 +108,7 @@ export function matchesSettingsQuery(section: (typeof SECTIONS)[number], query: 
 }
 
 const SECTION_ICONS: Record<SettingsSection, string> = {
+  features: "M4 7h10M18 7h2M4 17h2M10 17h10M16 4v6M8 14v6",
   account: "M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8ZM4 20c1.5-3.5 4.5-5 8-5s6.5 1.5 8 5",
   billing: "M5 5h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2ZM3 10h18M7 15h4",
   "api-keys": "M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8Z",
@@ -230,11 +234,13 @@ export default function SettingsPage({
   const [apiKeySaving, setApiKeySaving] = useState(false);
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const phone = useSyncExternalStore(subscribePhoneLayout, readPhoneLayout, () => false);
-  const voiceTypingOn = useVoiceTypingEnabled();
+  const featureSet = useFeatures();
+  const voiceTypingOn = useVoiceTypingEnabled() && featureSet.voice;
+  const featuresOn = FEATURES.filter((feature) => featureSet[feature.id]).length;
   const [selectedTab, setActiveTab] = useState<SettingsSection | null>(initialTab ?? null);
   const [query, setQuery] = useState("");
   // Phones show the section list until a section is picked; computers always show one section.
-  const activeTab: SettingsSection = selectedTab && !(guest && GUEST_HIDDEN_SECTIONS.has(selectedTab)) ? selectedTab : "account";
+  const activeTab: SettingsSection = selectedTab && !(guest && GUEST_HIDDEN_SECTIONS.has(selectedTab)) ? selectedTab : "features";
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
@@ -426,6 +432,7 @@ export default function SettingsPage({
 
   const configuredKeyCount = Object.values(apiKeySettings.byProvider).filter((summary) => summary?.configured).length;
   const facts: Partial<Record<SettingsSection, string>> = {
+    features: featuresOn ? `${featuresOn} on` : "Simple",
     billing: user.billing.creditBalanceMicros > 0 ? formatCreditBalance(user.billing.creditBalanceMicros) : undefined,
     "api-keys": configuredKeyCount ? `${configuredKeyCount} key${configuredKeyCount === 1 ? "" : "s"}` : undefined,
     appearance: theme ? (theme === "dark" ? "Dark" : "Light") : undefined,
@@ -706,6 +713,8 @@ export default function SettingsPage({
             {activeTab === "appearance" ? (
               <AppearanceSettings mainViewMode={mainViewMode} onSetMainViewMode={onSetMainViewMode} onSetTheme={onSetTheme} theme={theme} />
             ) : null}
+
+            {activeTab === "features" ? <FeatureSettings guest={guest} /> : null}
 
             {activeTab === "voice" ? <VoiceTypingSettings /> : null}
 

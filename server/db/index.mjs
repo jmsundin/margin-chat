@@ -57,6 +57,7 @@ import * as topics from "./topicRepository.mjs";
 import * as library from "./libraryRepository.mjs";
 import * as flashcards from "./flashcardRepository.mjs";
 import * as ratchet from "./ratchetRepository.mjs";
+import * as interfaceSettings from "./interfaceSettingsRepository.mjs";
 import * as passages from "./passageRepository.mjs";
 import { recordDesktopDownload } from "./downloadRepository.mjs";
 
@@ -457,6 +458,8 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
       catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
     }),
     readRatchetCheck: (args) => withClient((client) => ratchet.readRatchetCheck(client, args)),
+    readInterfaceSettings: (args) => withClient((client) => interfaceSettings.readInterfaceSettings(client, args)),
+    saveInterfaceSettings: (args) => withClient((client) => interfaceSettings.saveInterfaceSettings(client, args)),
     listLibraryFields: (args) => withClient((client) => library.listLibraryFields(client, args)),
     readLibraryField: (args) => withClient((client) => library.readLibraryField(client, args)),
     createLibraryField: (args) => withClient((client) => library.createLibraryField(client, args)),

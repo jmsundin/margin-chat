@@ -16,6 +16,8 @@ export type MarginMode = "right" | "marks";
 export type AIStance = "supportive" | "neutral" | "antagonistic";
 export interface NotebookPrefs { aiBehaviour: AIBehaviour; marginMode: MarginMode; proactive: boolean; stance: AIStance }
 
+import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
+
 const KEY = "margin-chat:notebook";
 export const DEFAULT_NOTEBOOK_PREFS: NotebookPrefs = { aiBehaviour: "thinks", marginMode: "right", proactive: false, stance: "supportive" };
 const listeners = new Set<() => void>();
@@ -43,12 +45,13 @@ export function readNotebookPrefs(): NotebookPrefs {
 
 export function saveNotebookPrefs(change: Partial<NotebookPrefs>) {
   const next = { ...readNotebookPrefs(), ...change };
-  try { localStorage.setItem(KEY, JSON.stringify(next)); }
-  catch { cached = { raw: JSON.stringify(next), prefs: next }; }
+  writeSyncedSetting(KEY, JSON.stringify(next));
+  cached = { raw: JSON.stringify(next), prefs: next };
   listeners.forEach((listener) => listener());
 }
 
 export function subscribeNotebookPrefs(listener: () => void): () => void {
   listeners.add(listener);
-  return () => listeners.delete(listener);
+  const stop = onSyncedSettingChange([KEY], listener);
+  return () => { listeners.delete(listener); stop(); };
 }

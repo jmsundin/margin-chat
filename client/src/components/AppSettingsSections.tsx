@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, readHoldSpacePreference, saveDictationButtonPreference, saveHoldSpacePreference, subscribeDictationButtonPreference } from "../lib/dictation";
 import { readDocumentEditorKind, saveDocumentEditorKind, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import { readQuietPage, saveQuietPage, subscribeQuietPage } from "../lib/quietPage";
+import { setFeature, useFeature } from "../lib/features";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "../lib/notebookPrefs";
 import type { MainViewMode } from "../types";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
@@ -71,7 +72,7 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
         <div className="app-settings-copy">
           <label className="app-settings-label" htmlFor="quiet-page">Quiet page</label>
           <p className="app-settings-description" id="quiet-page-disclosure">
-            Warm paper and a serif page, one line above the document, no frame around it, and the sidebar closed until you open it (⌘B). View and authorship controls show when you point at them. Turn this off for the full toolbars. Saved on this device.
+            Warm paper and a serif page, one line above the document, no frame around it, and the sidebar closed until you open it (⌘B). View and authorship controls show when you point at them. Turn this off for the full toolbars.
           </p>
         </div>
         <input id="quiet-page" type="checkbox" role="switch" aria-describedby="quiet-page-disclosure"
@@ -109,7 +110,7 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
         <div className="app-settings-copy">
           <label className="app-settings-label" htmlFor="classic-document-editor">Classic document editor</label>
           <p className="app-settings-description" id="classic-document-editor-disclosure">
-            Documents open in Live Preview, which shows Markdown only on the line you&apos;re editing, like Obsidian. Turn this on for the earlier editor with a grip and toolbar on each block. Saved on this device.
+            Documents open in Live Preview, which shows Markdown only on the line you&apos;re editing, like Obsidian. Turn this on for the earlier editor with a grip and toolbar on each block.
           </p>
         </div>
         <input id="classic-document-editor" type="checkbox" role="switch" aria-describedby="classic-document-editor-disclosure"
@@ -123,8 +124,17 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
 export function VoiceTypingSettings() {
   const showDictationButton = useVoiceTypingEnabled();
   const holdSpaceToTalk = useSyncExternalStore(subscribeDictationButtonPreference, readHoldSpacePreference, () => true);
+  const voice = useFeature("voice");
   if (!dictationSupported()) {
     return <p className="thread-dialog-copy">Voice typing isn&apos;t available in this browser.</p>;
+  }
+  if (!voice) {
+    return <div className="app-settings-body">
+      <p className="thread-dialog-copy">Voice typing is off. Turn it on to get a mic in text fields and Hold Space to talk.</p>
+      <div className="thread-dialog-actions">
+        <button className="thread-dialog-button is-primary" type="button" onClick={() => setFeature("voice", true)}>Turn on voice typing</button>
+      </div>
+    </div>;
   }
   return (
     <div className="app-settings-body">
@@ -143,7 +153,7 @@ export function VoiceTypingSettings() {
         <div className="app-settings-copy">
           <label className="app-settings-label" htmlFor="dictation-hold-space">Hold Space to talk</label>
           <p className="app-settings-description" id="dictation-hold-space-disclosure">
-            In any text field, hold Space and talk, then let go to type what you said, like Claude Code. A quick tap still types a space, and on an empty document line it still opens AI; holding there talks into the AI box. Saved on this device.
+            In any text field, hold Space and talk, then let go to type what you said, like Claude Code. A quick tap still types a space, and on an empty document line it still opens AI; holding there talks into the AI box.
           </p>
         </div>
         <input id="dictation-hold-space" type="checkbox" role="switch" aria-describedby="dictation-hold-space-disclosure"

@@ -47,6 +47,9 @@ import {
   type CSSProperties,
 } from "react";
 import BranchRail from "./components/BranchRail";
+import { featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, useFeatures } from "./lib/features";
+import { interfaceSettingsLoaded, onInterfaceSettingsLoaded, startInterfaceSettingsSync } from "./lib/interfaceSettings";
+import { parseDocumentFlashcards } from "./lib/flashcards";
 import ServicePickerModal from "./components/ServicePickerModal";
 import DocumentPanel from "./components/DocumentPanel";
 import VersionHistoryPanel from "./components/VersionHistoryPanel";
@@ -1536,6 +1539,31 @@ function WorkspaceAppContent({
     for (const { card } of flashcards.scheduled) counts.set(card.docId, (counts.get(card.docId) ?? 0) + 1);
     return counts;
   }, [flashcards.scheduled]);
+  /** Which opt-in features are on (Settings → Features); every device of the account matches. */
+  const features = useFeatures();
+  useEffect(() => (guest ? undefined : startInterfaceSettingsSync(user.id)), [guest, user.id]);
+  const settingsLoaded = useSyncExternalStore(onInterfaceSettingsLoaded, interfaceSettingsLoaded, () => false);
+  // An account from before features existed keeps on what it already uses; new accounts start on Simple.
+  const featuresSeededFromUsage = useRef(false);
+  useEffect(() => {
+    if (guest || !settingsLoaded || !vault.ready || hasFeatureChoices()) return;
+    const conversations = Object.values(currentStateRef.current.conversations);
+    featuresSeededFromUsage.current = true;
+    saveFeatures(featuresFromUsage({
+      roadmaps: conversations.some((conversation) => conversation.nodeType === "roadmap"),
+      boards: conversations.some((conversation) => conversation.nodeType === "board"),
+      flashcards: flashcards.totalCards > 0 || conversations.some((conversation) => !conversation.vaultFile
+        && (conversation.document || conversation.kind === "note")
+        && parseDocumentFlashcards(conversation.id, getEditableDocument(conversation).blocks).length > 0),
+      claims: false,
+      voice: false,
+    }));
+  }, [guest, settingsLoaded, vault.ready, flashcards.totalCards]);
+  // Card history can arrive from the account a moment after that first look.
+  useEffect(() => {
+    if (featuresSeededFromUsage.current && flashcards.totalCards > 0 && !features.flashcards) setFeature("flashcards", true);
+    if (flashcards.totalCards > 0) featuresSeededFromUsage.current = false;
+  }, [flashcards.totalCards, features.flashcards]);
   /**
    * The open "make cards" dialog: for a document (or the passage selected in it), or with
    * docId null, for a deck the person picks or a new document on a topic.
@@ -1628,7 +1656,7 @@ function WorkspaceAppContent({
   }
 
   /** Cards can be written into Markdown documents the AI may read (not PDFs or images). */
-  const canMakeCards = (conversation: Conversation) => !conversation.vaultFile && !isHiddenFromAI(conversation);
+  const canMakeCards = (conversation: Conversation) => features.flashcards && !conversation.vaultFile && !isHiddenFromAI(conversation);
 
   /** Flashcards or quiz questions about the selected passage, from the selection menu. */
   function handleMakeCardsFromSelection(style: FlashcardStyle) {
@@ -6216,14 +6244,16 @@ function WorkspaceAppContent({
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onAskAboutNote={conversation.document || conversation.kind === "note" ? (id) => setNoteChatFor(id) : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
-        onToggleHiddenFromAI={handleToggleHiddenFromAI} onToggleBoard={handleToggleBoard}
-        onMakeRoadmap={conversation.nodeType !== "roadmap" && !isHiddenFromAI(conversation) ? handleMakeRoadmapFrom : undefined}
+        onToggleHiddenFromAI={handleToggleHiddenFromAI}
+        // With Boards off, a board keeps its way back to a plain document.
+        onToggleBoard={features.boards || conversation.nodeType === "board" ? handleToggleBoard : undefined}
+        onMakeRoadmap={features.roadmaps && conversation.nodeType !== "roadmap" && !isHiddenFromAI(conversation) ? handleMakeRoadmapFrom : undefined}
         onShowOnMap={handleShowOnMap}
         flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
-        onMakeFlashcards={!conversation.vaultFile && !isHiddenFromAI(conversation) ? (id) => setMakeCards({ docId: id }) : undefined}
-        onCheckClaims={(conversation.document || conversation.kind === "note") && !conversation.vaultFile && !isHiddenFromAI(conversation)
+        onMakeFlashcards={canMakeCards(conversation) ? (id) => setMakeCards({ docId: id }) : undefined}
+        onCheckClaims={features.claims && (conversation.document || conversation.kind === "note") && !conversation.vaultFile && !isHiddenFromAI(conversation)
           ? (id) => { ratchet.load(id); setClaimsView({ id, focus: null }); } : undefined}
-        onReviewFlashcards={(id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id), docId: id })}
+        onReviewFlashcards={!features.flashcards ? undefined : (id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id), docId: id })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
         onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} revealLabel={revealInFolderLabel()}
@@ -6803,7 +6833,7 @@ function WorkspaceAppContent({
               onAssignGroup={handleAssignConversationGroup}
               onCreateGroup={handleCreateConversationGroup}
               onDeleteThread={handleDeleteThread}
-              onNewChat={() => handleCreateMainConversation()} onNewBoard={() => handleCreateMainConversation("board")}
+              onNewChat={() => handleCreateMainConversation()} onNewBoard={features.boards ? () => handleCreateMainConversation("board") : undefined}
               onNewNote={handleCreateStandaloneNote}
               onOpenInbox={guest ? undefined : () => setCaptureInboxOpen(true)}
               onImportChatHistory={() => setHistoryImportOpen(true)}
@@ -6815,7 +6845,7 @@ function WorkspaceAppContent({
               }}
               onOpenSearch={handleOpenSearch}
               flashcardsDue={flashcards.totalCards ? flashcards.dueCount : null}
-              onOpenFlashcards={() => { setFlashcardReview({ title: "All cards" }); if (isMobileViewport) setLeftSidebarOpen(false); }}
+              onOpenFlashcards={!features.flashcards ? undefined : () => { setFlashcardReview({ title: "All cards" }); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
               revealInFolder={sidebarRevealInFolder}
@@ -6933,7 +6963,7 @@ function WorkspaceAppContent({
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}
                     onSetRelation={handleSetMapRelation}
-                    paths={mapPathActions}
+                    paths={features.roadmaps ? mapPathActions : undefined}
                     pathRequest={pathRequest}
                     onRemoveMapNote={handleRemoveMapNote}
                     onUndoMapEdit={handleUndoMapEdit}
@@ -7128,7 +7158,7 @@ function WorkspaceAppContent({
           ) : null}
 
           {createSlot && mainViewMode === "chat" && !leftSidebarOpen ? <MobileCreateMenu slot={createSlot} prepare={prepareCreateMenu}
-            onNewDocument={() => handleCreateMainConversation()} onNewBoard={() => handleCreateMainConversation("board")} onSideDocument={handleCreateMenuSideDocument} onMarginNote={handleCreateMenuNote}
+            onNewDocument={() => handleCreateMainConversation()} onNewBoard={features.boards ? () => handleCreateMainConversation("board") : undefined} onSideDocument={handleCreateMenuSideDocument} onMarginNote={handleCreateMenuNote}
             onUpload={handleCreateMenuUpload} /> : null}
           {!isTileView && caretMenu && !selectionDraft ? <CaretActions menu={caretMenu} mobile={mobileKeyboard.mobile} onClose={closeCaretMenu}
             onNote={() => handleCreateSelectionNote(caretMenu.paragraph)}

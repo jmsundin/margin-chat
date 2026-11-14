@@ -1,4 +1,5 @@
 import { isApplePlatform } from "./workspaceViewShortcuts";
+import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
 
 /**
  * Recordings have no length limit. They're kept as pieces of a few minutes
@@ -462,14 +463,14 @@ export function readDictationButtonPreference(): boolean {
 }
 
 export function saveDictationButtonPreference(show: boolean) {
-  try { localStorage.setItem(BUTTON_PREFERENCE_KEY, show ? "on" : "off"); }
-  catch { /* Private windows keep the default. */ }
+  writeSyncedSetting(BUTTON_PREFERENCE_KEY, show ? "on" : "off");
   preferenceListeners.forEach((listener) => listener());
 }
 
 export function subscribeDictationButtonPreference(listener: () => void): () => void {
   preferenceListeners.add(listener);
-  return () => preferenceListeners.delete(listener);
+  const stop = onSyncedSettingChange([BUTTON_PREFERENCE_KEY, HOLD_SPACE_PREFERENCE_KEY], listener);
+  return () => { preferenceListeners.delete(listener); stop(); };
 }
 
 const REQUEST_EVENT = "margin-chat:dictation-request";
@@ -498,7 +499,6 @@ export function readHoldSpacePreference(): boolean {
 }
 
 export function saveHoldSpacePreference(on: boolean) {
-  try { localStorage.setItem(HOLD_SPACE_PREFERENCE_KEY, on ? "on" : "off"); }
-  catch { /* Private windows keep the default. */ }
+  writeSyncedSetting(HOLD_SPACE_PREFERENCE_KEY, on ? "on" : "off");
   preferenceListeners.forEach((listener) => listener());
 }

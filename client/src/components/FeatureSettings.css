@@ -1,0 +1,16 @@
+/* Settings → Features: presets on top, then one switch per feature, grouped. */
+.feature-settings-intro { color: var(--muted); line-height: 1.55; margin: 0; max-width: 62ch; }
+.feature-settings-presets { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+.feature-settings-preset {
+  align-items: flex-start; background: var(--button-surface); border: 1px solid var(--button-border); border-radius: 12px;
+  color: var(--ink); cursor: pointer; display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; text-align: left;
+}
+.feature-settings-preset span { color: var(--muted); font-size: 0.82rem; line-height: 1.35; }
+.feature-settings-preset:hover { border-color: var(--ink); }
+.feature-settings-preset:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.feature-settings-preset.is-active { background: var(--panel-bg); border-color: var(--ink); box-shadow: var(--toggle-shadow); }
+.feature-settings-group { display: flex; flex-direction: column; gap: 16px; }
+.feature-settings-group-name {
+  color: var(--muted); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; margin: 6px 0 -4px; text-transform: uppercase;
+}
+.feature-settings-adds { color: var(--muted); font-size: 0.82rem; line-height: 1.45; margin: 4px 0 0; opacity: 0.8; }

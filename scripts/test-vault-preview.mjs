@@ -128,6 +128,7 @@ function syntheticRatchetReply(asked) {
     return { claim: claim.id, verdict, evidence: [{ passage: passage.id, quote, stance }], reason: `Synthetic: ${passage.document} says so.` };
   }) });
 }
+const interfaceRows = new Map();
 const database = {
   ready: async () => undefined,
   getHealth: () => ({ configured: true, ready: true, host: "isolated fixture" }),
@@ -170,6 +171,13 @@ const database = {
   },
   async saveRatchetCheck({ userId, documentId, claims, run }) { ratchetRows.set(key(userId, documentId), { claims, run }); },
   async readRatchetCheck({ userId, documentId }) { return ratchetRows.get(key(userId, documentId)) ?? { claims: [], run: null }; },
+  async readInterfaceSettings({ userId }) { return { ...(interfaceRows.get(userId) ?? {}) }; },
+  async saveInterfaceSettings({ userId, changes }) {
+    const next = { ...(interfaceRows.get(userId) ?? {}) };
+    for (const [name, value] of Object.entries(changes)) value === null ? delete next[name] : next[name] = value;
+    interfaceRows.set(userId, next);
+    return { ...next };
+  },
   async readFlashcardChanges({ userId, cardSince = 0, reviewSince = 0, limit = 2000 }) {
     const cards = [...flashcardRows.cards.values()].filter((row) => row.userId === userId && row.seq > cardSince).sort((a, b) => a.seq - b.seq).slice(0, limit);
     const reviews = [...flashcardRows.reviews.values()].filter((row) => row.userId === userId && row.seq > reviewSince).sort((a, b) => a.seq - b.seq).slice(0, limit);
