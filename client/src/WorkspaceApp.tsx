@@ -3155,9 +3155,9 @@ function WorkspaceAppContent({
     }
     const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection,
       instruction: documentAIInstruction(currentStateRef.current.conversations, source),
-      // An answer in a side document hands the thinking back with a question, unless the AI is set to answer only;
-      // text written into the page never gets one.
-      followUp: request.destination === "side" && readNotebookPrefs().aiBehaviour === "thinks" });
+      // An answer in a side document is a direct explanation in every AI behaviour; it helps the user think the
+      // question through only when they ask for that. Text written into the page gets neither.
+      thinkOnRequest: request.destination === "side" });
     // A diagram the AI rewrites stays one Mermaid fence, whatever words come with it.
     const diagramReply = request.destination === "inline" && (request.visualize || request.replaceSelection && isMermaidDiagramPassage(selectedQuote));
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
@@ -4244,7 +4244,6 @@ function WorkspaceAppContent({
     const history = chat.messages.filter((message) => message.role === "user" || message.role === "assistant").slice(-10);
     const request = buildNoteChatMessage(source, userMessage, {
       instruction: documentAIInstruction(currentStateRef.current.conversations, source),
-      thinks: readNotebookPrefs().aiBehaviour === "thinks",
     });
     startAssistantStream(updated, [...history, request]);
   }
@@ -4598,11 +4597,10 @@ function WorkspaceAppContent({
     const next = replaceDocumentConversation(currentStateRef.current, updated);
     currentStateRef.current = next;
     setState(next);
-    const thinks = readNotebookPrefs().aiBehaviour === "thinks";
+    // A plain answer, like Ask AI's, in every AI behaviour; it turns to questions only when the user asks for help thinking.
     handleDocumentSubmit(conversationId, { blockId: replyId, from: text.length, to: text.length, sourceContent: text, destination: "inline", replaceSelection: false,
       prompt: [`You wrote: "${aiBlock.content.trim()}"`, `I wrote back: "${text}"`,
-        thinks ? "Reply to what I wrote back in two to four sentences. Build on my reply rather than answering for me, and end with one question that moves my thinking on."
-          : "Reply to what I wrote back, briefly."].join("\n\n") });
+        "Reply to what I wrote back, briefly. If I asked something, answer it directly. Only if I ask you to help me think it through, ask me a question that moves my thinking on instead of answering."].join("\n\n") });
   }
 
   /** Bold, a heading, a list…: the selection toolbar's format row writes the Markdown into the passage's block. */

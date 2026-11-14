@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { createMarkdownWorkspace, discoverMarkdownWorkspace, normalizeAIInstruction, parseMarkdownWorkspace } from "@margin-chat/workspace-contracts";
 import { createEmptyState } from "../client/src/initialState";
-import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT } from "../client/src/lib/documentAI";
+import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT, THINK_ON_REQUEST_LINE } from "../client/src/lib/documentAI";
 import type { Conversation } from "../client/src/types";
 
 const at = "2026-11-07T10:00:00.000Z";
@@ -65,12 +65,16 @@ describe("the document's standing instruction to the AI", () => {
 
 describe("thinking with the user", () => {
   const prompt = { id: "m", role: "user" as const, content: "Why?", createdAt: at };
-  test("an answer in a side document ends with a follow-up question; text written into the page doesn't", () => {
+  test("an answer in a side document is a direct explanation that turns to questions only when asked; text written into the page gets neither", () => {
     const { conversation } = documentFile({});
-    expect(buildDocumentAIMessage(conversation as Conversation, prompt, "safe", { followUp: true }).content).toContain("End your answer with one short follow-up question");
-    expect(buildDocumentAIMessage(conversation as Conversation, prompt, "safe").content).not.toContain("follow-up question");
+    const side = buildDocumentAIMessage(conversation as Conversation, prompt, "safe", { thinkOnRequest: true }).content;
+    expect(side).toContain(THINK_ON_REQUEST_LINE);
+    expect(side).toContain("Answer the request directly");
+    expect(side).toContain("Only if the user asks you to help them think");
+    expect(side).not.toContain("follow-up question");
+    expect(buildDocumentAIMessage(conversation as Conversation, prompt, "safe").content).not.toContain(THINK_ON_REQUEST_LINE);
     // A diagram reply must stay one Mermaid fence.
-    expect(buildDocumentAIMessage(conversation as Conversation, prompt, "```mermaid\nflowchart TD\n A-->B\n```", { followUp: true, replaceSelection: true }).content).not.toContain("follow-up question");
+    expect(buildDocumentAIMessage(conversation as Conversation, prompt, "```mermaid\nflowchart TD\n A-->B\n```", { thinkOnRequest: true, replaceSelection: true }).content).not.toContain(THINK_ON_REQUEST_LINE);
   });
 
   test("Question this asks for one question and no answer", () => {
