@@ -227,7 +227,7 @@ function createWindow() {
 const WORKSPACE_VIEWS = [
   { mode: "chat", label: "Document View", accelerator: "CmdOrCtrl+Shift+D" },
   { mode: "tiles", label: "Tile View", accelerator: "CmdOrCtrl+Shift+L" },
-  { mode: "graph", label: "Map View", accelerator: "CmdOrCtrl+G" },
+  { mode: "graph", label: "Show or Hide the Map", accelerator: "CmdOrCtrl+G" },
 ];
 
 function showWorkspaceView(window, mode) {

@@ -5,9 +5,13 @@ export const workspaceViews: ReadonlyArray<{ mode: MainViewMode; label: string; 
   // Plain Cmd+D inserts the date in documents, so Document takes the Shift variant.
   { mode: "chat", label: "Document View", key: "d", shift: true },
   { mode: "tiles", label: "Tile View", key: "l", shift: true },
-  // G for graph; replaces the browser's Find next inside the app.
-  { mode: "graph", label: "Map View", key: "g", shift: false },
+  // G for graph; replaces the browser's Find next inside the app. The map is no longer a view of its own:
+  // the shortcut shows or hides the map around the document you're reading.
+  { mode: "graph", label: "Map around this document", key: "g", shift: false },
 ];
+
+/** The views the header's toggle offers. The map opens beside the document from its map button, not as a view. */
+export const toggleViews = workspaceViews.filter((view) => view.mode !== "graph");
 
 export const isApplePlatform = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 

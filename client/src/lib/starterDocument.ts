@@ -25,7 +25,7 @@ export const STARTER_TASKS: { id: StarterTask; line: string }[] = [
   { id: "note", line: "Select a sentence below and choose **Note**: a comment that stays beside the text." },
   { id: "side", line: "Select a phrase and choose **Side doc**: a new idea that grows out of it, in its own pane." },
   { id: "ai", line: "Select some text and choose **✦ Ask AI**, or press Space on an empty line to ask about the page." },
-  { id: "map", line: "Open **Map View** (⌘G) to see how your documents connect." },
+  { id: "map", line: "Press the map button at the top right (⌘G) to see how your documents connect." },
   { id: "session", line: "Make a **space** from the button left of the tabs: a place for one project's documents that you can come back to." },
 ];
 const CONNECT_LINE = "Connect Claude, ChatGPT or Gemini to your vault: [marginchat.com/connect](https://www.marginchat.com/connect)";

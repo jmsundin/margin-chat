@@ -1,6 +1,6 @@
 import type { KeyboardEvent } from "react";
 import type { MainViewMode } from "../types";
-import { ariaShortcut, shortcutLabel, workspaceViews } from "../lib/workspaceViewShortcuts";
+import { ariaShortcut, shortcutLabel, toggleViews as workspaceViews } from "../lib/workspaceViewShortcuts";
 import "./WorkspaceModeToggle.css";
 
 export interface WorkspaceModeToggleProps {
@@ -16,8 +16,9 @@ function ModeIcon({ mode }: { mode: MainViewMode }) {
   </svg>;
 }
 
-/** Three icon buttons for Document, Tile and Map, as one radio group. */
-export default function WorkspaceModeToggle({ mainViewMode, onSetMainViewMode }: WorkspaceModeToggleProps) {
+/** Two icon buttons for Document and Tile, as one radio group. The map opens beside the document instead. */
+export default function WorkspaceModeToggle({ mainViewMode: shownMode, onSetMainViewMode }: WorkspaceModeToggleProps) {
+  const mainViewMode: MainViewMode = shownMode === "tiles" ? "tiles" : "chat";
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
     const index = workspaceViews.findIndex(({ mode }) => mode === mainViewMode);
     const last = workspaceViews.length - 1;
