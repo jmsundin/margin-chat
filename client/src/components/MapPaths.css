@@ -1,0 +1,156 @@
+/* Paths: a roadmap drawn over the Map. One toolbar menu, a layer of numbers and arrows, and one bar at the bottom. */
+.map-paths-menu, .map-path-layer, .map-path-dock, .map-path-list, .map-path-pick-banner {
+  --path-learning: #9b8cff;
+  --path-done: var(--sage, #3f9a68);
+  --roadmap-learning: var(--path-learning);
+  --roadmap-done: var(--path-done);
+}
+
+/* ---- Toolbar menu ---- */
+.map-paths-menu { position: relative; flex: 0 1 auto; min-width: 0; }
+.map-paths-menu > summary { display: flex; align-items: center; gap: 6px; min-height: 34px; max-width: 220px; padding: 5px 10px; box-sizing: border-box; list-style: none;
+  border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg); color: var(--ink); font-size: .78rem; cursor: pointer; white-space: nowrap; }
+.map-paths-menu > summary::-webkit-details-marker { display: none; }
+.map-paths-menu > summary span { overflow: hidden; text-overflow: ellipsis; }
+.map-paths-menu > summary.is-on { background: var(--accent-soft); color: var(--accent); border-color: transparent; }
+.map-paths-menu > summary:hover { background: var(--accent-soft); }
+.map-paths-menu svg { width: 15px; height: 15px; flex: 0 0 15px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.map-paths-menu > div { position: absolute; top: calc(100% + 7px); right: 0; width: 280px; max-height: min(420px, 70vh); overflow: auto; padding: 5px; display: flex; flex-direction: column; z-index: 35;
+  border: 1px solid var(--line); border-radius: 9px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 8px 24px #0002; }
+.map-paths-menu:not([open]) > div { display: none; }
+.map-paths-menu > div > button { display: flex; align-items: center; gap: 8px; border: 0; border-radius: 6px; background: transparent; color: var(--ink); font: inherit; font-size: .8rem; text-align: left; min-height: 36px; padding: 7px 9px; cursor: pointer; }
+.map-paths-menu > div > button span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-paths-menu > div > button em { font-style: normal; color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; }
+.map-paths-menu > div > button[aria-checked="true"] { background: var(--accent-soft); color: var(--accent); }
+.map-paths-menu > div > button:hover { background: var(--accent-soft); }
+.map-paths-menu > div > button:focus-visible, .map-paths-menu > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.map-paths-menu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 2px; width: auto; }
+.map-paths-empty { margin: 4px 6px; color: var(--muted); font-size: .76rem; line-height: 1.4; }
+.map-paths-draft { display: grid; gap: 8px; padding: 6px; font-size: .78rem; }
+.map-paths-draft label { color: var(--ink); line-height: 1.35; }
+.map-paths-draft input { min-height: 34px; padding: 6px 9px; border: 1px solid var(--line-strong, var(--line)); border-radius: 7px; background: var(--panel-bg); color: var(--ink); font: inherit; }
+.map-paths-draft small { color: var(--muted); line-height: 1.35; }
+.map-paths-draft p { margin: 0; color: var(--danger, #c2453d); }
+.map-paths-draft > div { display: flex; gap: 6px; }
+.map-paths-draft button { min-height: 32px; padding: 5px 12px; border: 1px solid var(--line); border-radius: 7px; background: var(--panel-bg); color: var(--ink); font: inherit; cursor: pointer; }
+.map-paths-draft button[type="submit"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.map-paths-draft button:disabled { opacity: .5; cursor: default; }
+
+/* ---- Layer over the map ---- */
+.map-path-layer { position: absolute; inset: 0; pointer-events: none; z-index: 4; }
+.map-path-layer svg { position: absolute; inset: 0; overflow: visible; }
+.map-path-layer path { fill: none; stroke: color-mix(in srgb, var(--ink) 30%, transparent); stroke-width: 1.4; }
+.map-path-layer path.is-on { stroke: var(--accent); stroke-width: 2.4; }
+.map-path-layer marker path { fill: color-mix(in srgb, var(--ink) 30%, transparent); stroke: none; }
+.map-path-layer #map-path-arrow-on path { fill: var(--accent); }
+.map-path-badge { position: absolute; transform: translate(-45%, -45%); min-width: 19px; height: 19px; padding: 0 5px; box-sizing: border-box; border-radius: 10px; display: grid; place-items: center;
+  background: var(--ink); color: var(--panel-bg); font-size: 10.5px; font-weight: 700; font-variant-numeric: tabular-nums; box-shadow: 0 1px 3px #0003; }
+.map-path-badge.is-done { background: var(--path-done); color: #fff; }
+.map-path-badge.is-learning { background: var(--path-learning); color: #fff; }
+.map-path-badge.is-next:not(.is-done) { box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 35%, transparent); }
+.map-path-badge.is-current { background: var(--accent); color: #fff; box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent); }
+
+/* ---- Making a path by hand ---- */
+.map-path-picker { position: absolute; inset: 0; z-index: 6; }
+.map-path-picker > button { position: absolute; padding: 0; border: 1.5px dashed transparent; border-radius: 10px; background: transparent; cursor: copy; }
+.map-path-picker > button:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.map-path-picker > button.is-picked { border: 2.5px solid var(--accent); }
+.map-path-picker > button span { position: absolute; left: -9px; top: -9px; min-width: 20px; height: 20px; border-radius: 10px; display: grid; place-items: center; padding: 0 5px; box-sizing: border-box;
+  background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; }
+.map-path-picker > button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.map-path-pick-banner { position: absolute; top: calc(var(--map-header-bottom, 48px) + 10px); left: 50%; transform: translateX(-50%); z-index: 9; display: flex; align-items: center; gap: 8px;
+  max-width: calc(100% - 24px); box-sizing: border-box; padding: 6px 6px 6px 14px; border-radius: 12px; background: var(--ink); color: var(--panel-bg); font-size: .8rem; box-shadow: 0 8px 24px #0003; }
+.map-path-pick-banner > span { min-width: 0; }
+.map-path-pick-banner input { width: 150px; min-height: 30px; padding: 4px 9px; border: 0; border-radius: 7px; background: color-mix(in srgb, var(--panel-bg) 92%, transparent); color: var(--ink); font: inherit; }
+.map-path-pick-banner button { min-height: 30px; padding: 4px 11px; border: 0; border-radius: 7px; background: color-mix(in srgb, var(--panel-bg) 18%, transparent); color: inherit; font: inherit; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.map-path-pick-banner button.is-primary { background: var(--accent); color: #fff; }
+.map-path-pick-banner button:disabled { opacity: .5; cursor: default; }
+
+/* ---- Path bar and step strip ---- */
+.map-path-dock { position: absolute; left: 50%; bottom: 64px; transform: translateX(-50%); z-index: 8; width: max-content; max-width: min(760px, calc(100% - 140px)); display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+.map-path-bar, .map-path-step, .map-path-draft, .map-path-message { border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 8px 24px #0002; color: var(--ink); font-size: .8rem; }
+.map-path-bar { display: flex; align-items: center; gap: 6px; padding: 5px; min-width: 0; }
+.map-path-bar button { font: inherit; color: inherit; cursor: pointer; }
+.map-path-bar button:focus-visible, .map-path-step button:focus-visible, .map-path-list button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.map-path-name { display: flex; align-items: center; gap: 4px; min-width: 0; padding-left: 6px; font-weight: 600; }
+.map-path-name svg { width: 15px; height: 15px; flex: 0 0 15px; fill: none; stroke: var(--accent); stroke-width: 1.7; stroke-linecap: round; }
+.map-path-name button { border: 0; background: none; padding: 3px 4px; border-radius: 6px; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.map-path-name button.is-crumb { color: var(--muted); font-weight: 500; max-width: 120px; }
+.map-path-name button:hover { background: var(--accent-soft); color: var(--accent); }
+.map-path-meter { width: 60px; height: 4px; flex: 0 0 60px; border-radius: 9px; background: var(--line); overflow: hidden; }
+.map-path-meter > span { display: block; height: 100%; background: var(--path-done); transition: width .3s; }
+.map-path-count { color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.map-path-stepper { display: flex; align-items: center; gap: 1px; min-width: 0; padding-left: 6px; border-left: 1px solid var(--line); }
+.map-path-stepper > button { border: 0; background: none; min-width: 30px; height: 30px; border-radius: 8px; font-size: 1rem; }
+.map-path-stepper > button.map-path-current { font-size: .8rem; max-width: 220px; padding: 0 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-path-stepper > button:hover:not(:disabled) { background: var(--accent-soft); color: var(--accent); }
+.map-path-stepper > button:disabled { opacity: .4; cursor: default; }
+.map-path-layouts { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel-bg); }
+.map-path-layouts button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; border-radius: 7px; padding: 4px 9px; color: var(--muted); font-size: .76rem; }
+.map-path-layouts button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.map-path-layouts svg, .map-path-bar svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; }
+.map-path-close { border: 0; background: none; width: 30px; height: 30px; border-radius: 8px; color: var(--muted); font-size: 1.1rem; }
+.map-path-close:hover { background: var(--accent-soft); color: var(--accent); }
+
+.map-path-step { padding: 10px 12px; display: grid; gap: 8px; max-width: 560px; justify-self: center; width: 100%; box-sizing: border-box; }
+.map-path-step header { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.map-path-step header strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .86rem; }
+.map-path-step header em { font-style: normal; color: var(--muted); font-size: .74rem; white-space: nowrap; margin-right: auto; }
+.map-path-step select { font: inherit; font-size: .76rem; padding: 3px 6px; border: 1px solid var(--line-strong, var(--line)); border-radius: 7px; background: var(--panel-bg); color: var(--ink); }
+.map-path-step .roadmap-status-mark, .map-path-list .roadmap-status-mark { fill: none; flex: 0 0 16px; height: 16px; width: 16px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; color: var(--muted); }
+.map-path-step .roadmap-status-mark.is-learning, .map-path-list .roadmap-status-mark.is-learning { color: var(--path-learning); }
+.map-path-step .roadmap-status-mark.is-done, .map-path-list .roadmap-status-mark.is-done { color: var(--path-done); }
+.map-path-step .roadmap-status-fill, .map-path-list .roadmap-status-fill { fill: currentColor; stroke: none; }
+.map-path-links { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--muted); font-size: .74rem; }
+.map-path-links > span { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.map-path-links button, .map-path-actions button, .map-path-draft button, .map-path-message button { font: inherit; cursor: pointer; }
+.map-path-links button { border: 1px solid var(--line); background: var(--panel-bg); color: var(--ink); border-radius: 999px; padding: 2px 9px; font-size: .74rem; }
+.map-path-links button:hover { border-color: var(--accent); color: var(--accent); }
+.map-path-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.map-path-actions button, .map-path-draft button { min-height: 30px; padding: 4px 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel-bg); color: var(--ink); font-size: .78rem; }
+.map-path-actions button:hover:not(:disabled), .map-path-draft button:hover { background: var(--accent-soft); }
+.map-path-actions button:disabled { opacity: .55; cursor: default; }
+.map-path-draft { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 12px; border-color: color-mix(in srgb, #a46be0 60%, var(--line)); }
+.map-path-draft > span:not(.map-path-spinner) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-path-draft button.is-primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.map-path-spinner { width: 12px; height: 12px; flex: 0 0 12px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent); animation: map-path-spin .8s linear infinite; }
+@keyframes map-path-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .map-path-spinner { animation: none; } .map-path-meter > span { transition: none; } }
+.map-path-message { display: flex; align-items: center; gap: 8px; margin: 0; padding: 6px 6px 6px 12px; line-height: 1.35; }
+.map-path-message button { margin-left: auto; border: 0; background: none; width: 26px; height: 26px; border-radius: 7px; color: var(--muted); }
+
+/* ---- List ---- */
+.map-path-list { position: absolute; top: calc(var(--map-header-bottom, 48px) + 10px); bottom: 120px; left: 50%; transform: translateX(-50%); z-index: 7; width: min(440px, calc(100% - 24px));
+  overflow: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 12px 34px #0003; }
+.map-path-list ol { list-style: none; margin: 0; padding: 0; }
+.map-path-list > ol { padding: 6px 8px 10px; }
+.map-path-list-stage h3 { display: flex; justify-content: space-between; margin: 10px 8px 4px; color: var(--muted); font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.map-path-list-stage h3 span { font-variant-numeric: tabular-nums; letter-spacing: 0; }
+.map-path-list-stage button { display: flex; align-items: center; gap: 9px; width: 100%; min-height: 40px; padding: 6px 10px; border: 1px solid transparent; border-radius: 10px; background: none; color: var(--ink); font: inherit; font-size: .84rem; text-align: left; cursor: pointer; }
+.map-path-list-stage button > span:not(.map-path-list-number) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.map-path-list-stage button:hover { background: var(--accent-soft); }
+.map-path-list-stage button.is-current { border-color: var(--accent); background: color-mix(in srgb, var(--accent-soft) 60%, transparent); }
+.map-path-list-stage button em { font-style: normal; color: var(--accent); font-size: .72rem; font-weight: 600; }
+.map-path-list-number { min-width: 18px; color: var(--muted); font-size: .74rem; font-variant-numeric: tabular-nums; text-align: right; }
+.map-path-list-empty { padding: 18px 12px; color: var(--muted); font-size: .82rem; line-height: 1.45; }
+
+@media (max-width: 760px) {
+  .map-paths-menu > summary { min-height: 40px; }
+  .map-paths-menu > summary span { display: none; }
+  .map-paths-menu > div { position: fixed; top: calc(var(--map-header-bottom, 56px) + 8px); left: 8px; right: 8px; bottom: auto; width: auto; max-height: 60vh; }
+  /* On a phone the zoom bar owns the bottom edge, so the path sits under the map header, its step below it. */
+  .map-path-dock { left: 8px; right: 8px; transform: none; width: auto; max-width: none; top: calc(var(--map-header-bottom, 56px) + 8px); bottom: auto; flex-direction: column-reverse; }
+  .map-path-name, .map-path-meter { display: none; }
+  .map-path-stepper { flex: 1; border-left: 0; padding-left: 0; }
+  .map-path-stepper > button.map-path-current { flex: 1; max-width: none; text-align: left; }
+  .map-path-stepper > button { min-width: 38px; height: 38px; }
+  .map-path-layouts button span { display: none; }
+  .map-path-layouts button { padding: 7px 9px; }
+  .map-path-close { width: 38px; height: 38px; }
+  .map-path-step { max-width: none; }
+  .map-path-list { top: calc(var(--map-header-bottom, 56px) + 64px); bottom: 116px; width: auto; left: 8px; right: 8px; transform: none; }
+  .map-path-dock:has(.map-path-step) ~ .map-path-list, .map-path-list:has(~ .map-path-dock .map-path-step) { top: calc(var(--map-header-bottom, 56px) + 170px); }
+  .map-path-pick-banner { flex-wrap: wrap; left: 8px; right: 8px; transform: none; }
+  .map-path-pick-banner > span { flex-basis: 100%; }
+  .map-path-pick-banner input { flex: 1; width: auto; }
+}

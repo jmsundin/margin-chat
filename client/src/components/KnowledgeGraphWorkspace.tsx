@@ -19,6 +19,9 @@ import { MapExploredHistory, MapPreviewBar, MapPreviewDetails, MapPreviewLayer, 
 import { getStandaloneNote } from "../lib/standaloneNotes";
 import TopicExplorer from "./TopicExplorer";
 import type { Conversation } from "../types";
+import { MapPathBar, MapPathLayer, MapPathList, MapPathPickBanner, MapPathPicker, MapPathsMenu, type MapPathActions } from "./MapPaths";
+import { buildMapPath, isPathDocument, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
+import type { MapSpotlight } from "../lib/mapSpotlight";
 import "./KnowledgeGraphWorkspace.css";
 
 interface Props extends ConversationGraphViewProps {
@@ -48,13 +51,15 @@ interface Props extends ConversationGraphViewProps {
   onKeepExplored?: (exploration: MapExploration, ids: string[], detached?: string[]) => Record<string, string>;
   /** Makes a document with this text, under `parentId` when given; returns its id. Used by Explore. */
   onCreateExploreDocument?: (args: { title: string; content: string; parentId?: string }) => string | null;
+  /** Paths (roadmaps drawn on the map): making, changing and drafting them. */
+  paths?: MapPathActions;
 }
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 const hostname = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
 const editable = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")));
 
-export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, ...personalProps }: Props) {
+export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, ...personalProps }: Props) {
   const [sourcesFor, setSourcesFor] = useState<string | "add" | null>(null);
   const [addedTopicId, setAddedTopicId] = useState<string | null>(null);
   const [personalFocus, setPersonalFocus] = useState<Props["focusRequest"]>(null);
@@ -153,6 +158,45 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
 
   function openSources(id: string | "add") { setSourcesFor(id); setSelectedPreview(null); setHistoryOpen(false); }
   function focusDocument(id: string) { setPersonalFocus({ conversationId: id, requestId: -(++counter.current) }); }
+
+  // ---- Paths: a roadmap drawn over the map ----
+  const pathsKey = personalProps.workspaceKey ?? "workspace";
+  const [activePathId, setActivePathIdState] = useState<string | null>(() => readActivePath(pathsKey));
+  /** Paths gone into from a step (Dive deeper), outermost first. */
+  const [pathTrail, setPathTrail] = useState<string[]>([]);
+  const [pathLayout, setPathLayoutState] = useState<"map" | "list">(readPathLayout);
+  const [pathFrame, setPathFrame] = useState(1);
+  const [mapSelection, setMapSelection] = useState<string | null>(null);
+  const [picking, setPicking] = useState<string[] | null>(null);
+  const [pathMessage, setPathMessage] = useState<string | null>(null);
+  const hasPaths = Boolean(pathActions);
+  const pathSummaries = useMemo(() => hasPaths ? listMapPaths(conversations) : [], [hasPaths, conversations]);
+  const activePathNote = activePathId && isPathDocument(conversations[activePathId]) ? conversations[activePathId] : null;
+  const activePath = useMemo(() => activePathNote && hasPaths ? buildMapPath(activePathNote, conversations) : null, [activePathNote, hasPaths, conversations]);
+  function setActivePath(id: string | null, trail: string[] = []) {
+    setActivePathIdState(id); setPathTrail(trail); setPathMessage(null); setPathFrame((frame) => frame + 1);
+    rememberActivePath(pathsKey, id);
+  }
+  function setPathLayout(layout: "map" | "list") { setPathLayoutState(layout); rememberPathLayout(layout); }
+  // A path that was deleted turns itself off.
+  useEffect(() => { if (activePathId && conversations[activePathId] && !isPathDocument(conversations[activePathId])) setActivePath(null); }, [activePathId, conversations]);
+  const pathSpotlight = useMemo<MapSpotlight | null>(() => activePath?.steps.length ? {
+    label: activePath.name, path: true, requestId: -pathFrame,
+    scores: Object.fromEntries(activePath.steps.map((step) => [step.docId, 1])),
+  } : null, [activePath, pathFrame]);
+  // Steps still only in the cloud come down, so the whole path draws.
+  const requestedPathDocs = useRef(new Set<string>());
+  useEffect(() => {
+    if (!activePathNote || !pathActions?.onLoadDocuments) return;
+    const missing = [...new Set((activePathNote.roadmap?.nodes ?? []).map((node) => node.target.docId))]
+      .filter((id) => !conversations[id] && !requestedPathDocs.current.has(id));
+    if (!missing.length) return;
+    missing.forEach((id) => requestedPathDocs.current.add(id));
+    pathActions.onLoadDocuments(missing);
+  }, [activePathNote, conversations, pathActions]);
+  function stepTo(docId: string) { setPersonalFocus({ conversationId: docId, requestId: -(++counter.current), keepViewMode: true }); }
+  function startPicking() { setActivePath(null); setPicking([]); setSourcesFor(null); setHistoryOpen(false); setSelectedPreview(null); }
+  const pickIds = useMemo(() => picking ? Object.keys(conversations).filter((id) => !isPathDocument(conversations[id])) : [], [picking, conversations]);
   function selectPreview(id: string | null) {
     setSelectedPreview(id);
     if (!id) return;
@@ -408,6 +452,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         {exploreMessage ? <div className={`map-workspace-notice${exploreMessage.error ? " is-error" : ""}`} role={exploreMessage.error ? "alert" : "status"}><span>{exploreMessage.text}</span><button type="button" onClick={() => setExploreMessage(null)}>Dismiss</button></div> : null}
       </div> : null}
       <ConversationGraphView {...personalProps} isVisible={isVisible && !exploring} renderNodeActions={renderActions} onCreateDocument={onCreateExploreDocument}
+        spotlight={personalProps.spotlight ?? (picking ? null : pathSpotlight)} onSelectionChange={setMapSelection}
         searchPlaceholder={narrowScreen() ? "Search or ask…" : "Search, ask, or paste a link…"} searchRequest={searchRequest} onSearchSubmit={submitSearch}
         renderSearchFallback={(query, close, matchedIds) => <MapSearchLookFurther query={query} matchedCount={matchedIds.length} canAsk={Boolean(publicMapAccount?.canAsk)}
           onMapPage={(url) => { close(); mapPage(url, anchorFor(query, matchedIds)); }}
@@ -417,16 +462,40 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         renderMapOverlay={(context) => <>
           <MapPreviewLayer context={context} exploration={exploration} selectedId={selectedPreview} revealRequest={revealRequest} panelOpen={Boolean(previewItem || historyOpen || sourcesFor)}
             onSelect={selectPreview} onKeep={(id) => keep([id])} onHide={(id) => updateExploration((current) => setOnMap(current, [id], false))} />
-          {onMapIds.length ? <MapPreviewBar count={onMapIds.length} onKeepAll={() => keep(onMapIds)} onClear={() => updateExploration((current) => setOnMap(current, onMapIds, false))} /> : null}
+          {onMapIds.length && !activePath ? <MapPreviewBar count={onMapIds.length} onKeepAll={() => keep(onMapIds)} onClear={() => updateExploration((current) => setOnMap(current, onMapIds, false))} /> : null}
+          {activePath && !picking && pathLayout === "map" ? <MapPathLayer context={context} path={activePath} currentDocId={mapSelection} /> : null}
+          {picking ? <MapPathPicker context={context} ids={pickIds} picked={picking}
+            onToggle={(id) => setPicking((current) => current ? current.includes(id) ? current.filter((item) => item !== id) : [...current, id] : current)} /> : null}
         </>}
         renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
         toolbarLeading={sidebarToggle}
-        toolbarTrailing={addActions}
+        toolbarTrailing={<>{pathActions ? <MapPathsMenu paths={pathSummaries} activeId={activePath ? activePathId : null}
+          onPick={(id) => { setPicking(null); setActivePath(id); }} onNew={startPicking}
+          onDraft={(goal) => {
+            const made = pathActions.onDraftPath(goal);
+            if ("error" in made) return made.error;
+            setPicking(null); setActivePath(made.id); return null;
+          }} /> : null}{addActions}</>}
         focusRequest={personalProps.focusRequest ?? personalFocus}
         onFocusRequestHandled={(id) => { if (personalProps.focusRequest?.requestId === id) personalProps.onFocusRequestHandled?.(id); else setPersonalFocus(null); }}
         onConnectConversation={(source, target) => { if (source !== target) { onSetMapConnection(source, target, true); setConnectingId(null); } }}
         onRemoveConnection={(source, target) => onSetMapConnection(source, target, false)}
         onCreateNoteAt={(position) => onCreateMapNote({ position })} />
+      {!exploring && picking && pathActions ? <MapPathPickBanner count={picking.length} onCancel={() => setPicking(null)} onDone={(title) => {
+        const made = pathActions.onCreatePath(title, picking);
+        if ("error" in made) { setPathMessage(made.error); return; }
+        setPicking(null); setActivePath(made.id);
+      }} /> : null}
+      {!exploring && !picking && activePath && pathActions ? <>
+        {pathLayout === "list" ? <MapPathList path={activePath} currentDocId={mapSelection} onStep={stepTo} /> : null}
+        <MapPathBar path={activePath} conversations={conversations} currentDocId={mapSelection} layout={pathLayout} actions={pathActions} message={pathMessage}
+          trail={pathTrail.flatMap((id) => pathSummaries.filter((item) => item.id === id))}
+          onStep={stepTo} onLayout={setPathLayout} onClose={() => setActivePath(null)} onMessage={setPathMessage}
+          onOpenNote={() => personalProps.onOpenConversation(activePath.id)}
+          onOpenStep={(id) => personalProps.onOpenConversation(id)}
+          onGoIn={(id) => setActivePath(id, [...pathTrail, activePath.id])}
+          onGoTo={(id) => { const index = pathTrail.indexOf(id); setActivePath(id, index >= 0 ? pathTrail.slice(0, index) : []); }} />
+      </> : null}
       {exploring ? null : previewItem ? <MapPreviewDetails key={previewItem.id} item={previewItem} exploration={exploration} account={publicMapAccount}
         anchorTitle={previewItem.parent?.kind === "document" ? conversations[previewItem.parent.id]?.title ?? null : null}
         onClose={() => setSelectedPreview(null)}

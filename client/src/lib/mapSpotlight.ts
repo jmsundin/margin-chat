@@ -11,6 +11,8 @@ export interface MapSpotlight {
   /** Document id → match strength, 0 to 1. */
   scores: Record<string, number>;
   requestId: number;
+  /** A path drawn on the Map: its steps stay lit without the Show on Map bar, glow or linked neighbours. */
+  path?: boolean;
 }
 
 export type SpotlightHeat = 1 | 2 | 3;

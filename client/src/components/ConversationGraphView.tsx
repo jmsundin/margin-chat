@@ -362,12 +362,16 @@ export interface ConversationGraphViewProps {
   renderExpandedConversation?: (conversationId: string) => ReactNode;
   /** The docked document draws the split pane controls in its own header. */
   dockControlsInHeader?: boolean;
+  /** The document selected on the map changed (null when nothing is). */
+  onSelectionChange?: (conversationId: string | null) => void;
 }
 
 /** Where things are on screen, for drawing over the map. */
 export interface MapOverlayContext {
   /** A document's card on screen, or null when this view does not draw it. */
   nodeBox(conversationId: string): { x: number; y: number; width: number; height: number } | null;
+  /** The circle a document is drawn as on screen, or null when it is drawn as a card (or not drawn). */
+  dotBox?(conversationId: string): { x: number; y: number; width: number; height: number } | null;
   /** Open space just right of the documents on the map, on screen. */
   openSpace: { x: number; y: number };
   size: { width: number; height: number };
@@ -1194,6 +1198,7 @@ export default function ConversationGraphView({
   searchPlaceholder = "Search this map…",
   spotlight = null,
   onClearSpotlight,
+  onSelectionChange,
   renderMapOverlay,
   explorerContainer,
   onOpenExplorer,
@@ -1271,6 +1276,8 @@ export default function ConversationGraphView({
   const showTidyUp = isCanvasMode && !panelView;
   const showLayoutPicker = documentsOnly && !panelView && !isClustersMode && !isNetworkMode;
   const setSelectedConversationId = (id: string | null) => navigation.update({ selectedConversationId: id });
+  const reportSelection = useEffectEvent((id: string | null) => onSelectionChange?.(id));
+  useEffect(() => { reportSelection(selectedConversationId ?? null); }, [selectedConversationId]);
   const setDetailLevel = (value: ConversationGraphDetail) => navigation.update({ detailLevel: value });
   const setDockedConversationId = (id: string | null) => navigation.update({ dockedConversationId: id, source: null });
   const setViewport = navigation.update;
@@ -1564,7 +1571,7 @@ export default function ConversationGraphView({
     return entries.length ? new Map(entries) : null;
   }, [spotlight, scopedIds]);
   const spotlightLit = useMemo(() => spotlightScores ? new Set(spotlightScores.keys()) : null, [spotlightScores]);
-  const spotlightNear = useMemo(() => spotlightLit ? spotlightNeighbours(spotlightLit, analysisEdges, scopedIds) : null, [spotlightLit, analysisEdges, scopedIds]);
+  const spotlightNear = useMemo(() => spotlightLit && !spotlight?.path ? spotlightNeighbours(spotlightLit, analysisEdges, scopedIds) : null, [spotlightLit, analysisEdges, scopedIds, spotlight?.path]);
   const mapMatches = useMemo(() => {
     const base = lensMatches && searchMatches ? new Set([...lensMatches].filter((id) => searchMatches.has(id))) : lensMatches ?? searchMatches;
     if (!spotlightLit) return base;
@@ -2529,6 +2536,10 @@ export default function ConversationGraphView({
         const center = toScreen({ x: placement.x + placement.width / 2, y: placement.y + placement.height / 2, width: 0, height: 0 });
         return { x: center.x - 6, y: center.y - 6, width: 12, height: 12 };
       },
+      dotBox: (id) => {
+        const dot = !showTerritories && !hiddenConversationIds.has(id) ? dotNodes.get(id) : undefined;
+        return dot ? toScreen(dot.bounds) : null;
+      },
       openSpace: { x: viewport.x + worldBounds.right * viewport.scale, y: viewport.y + (worldBounds.top + worldBounds.height / 2) * viewport.scale },
       size: viewportSize,
       reveal: (box) => {
@@ -2542,7 +2553,7 @@ export default function ConversationGraphView({
         if (Math.abs(dx) > 1 || Math.abs(dy) > 1) applyViewport({ ...current, x: current.x + dx, y: current.y + dy });
       },
     };
-  }, [renderMapOverlay, panelView, viewportSize, viewport, showTerritories, hiddenConversationIds, nodeVisualBounds, placementByConversationId, worldBounds, applyViewport]);
+  }, [renderMapOverlay, panelView, viewportSize, viewport, showTerritories, hiddenConversationIds, nodeVisualBounds, placementByConversationId, worldBounds, applyViewport, dotNodes]);
 
   // A new Show on Map frames what it lit.
   const framedSpotlightRef = useRef<number | null>(null);
@@ -4406,7 +4417,7 @@ export default function ConversationGraphView({
         onSave={(name) => setSavedLenses([...savedLenses.filter((item) => item.name !== name), { id: `lens-${Date.now().toString(36)}`, name, filters: lens.filters }])}
         onApplySaved={(item) => setLens({ filters: item.filters })}
         onDeleteSaved={(id) => setSavedLenses(savedLenses.filter((item) => item.id !== id))} /> : null}
-      {spotlight && !panelView ? <div className="graph-map-neighborhood graph-map-spotlight" role="region" aria-label="Shown on the Map">
+      {spotlight && !spotlight.path && !panelView ? <div className="graph-map-neighborhood graph-map-spotlight" role="region" aria-label="Shown on the Map">
         <div><strong>{spotlight.label}</strong>
           <span>{spotlightScores ? `${describeSpotlight(spotlightScores.values())}${spotlightNear?.size ? ` · ${spotlightNear.size} linked` : ""}` : "None of these documents are on this map"}</span></div>
         {onClearSpotlight ? <button type="button" onClick={onClearSpotlight}>Clear</button> : null}
@@ -4715,7 +4726,7 @@ export default function ConversationGraphView({
                   color={colorOf ? colorOf.get(conversation.id) ?? null : undefined}
                   lensDimmed={lensDimmed(conversation.id)}
                   searchMatch={isSearchMatch(conversation.id)}
-                  spotlightHeat={spotlightScores?.has(conversation.id) ? spotlightHeat(spotlightScores.get(conversation.id)!) : undefined}
+                  spotlightHeat={!spotlight?.path && spotlightScores?.has(conversation.id) ? spotlightHeat(spotlightScores.get(conversation.id)!) : undefined}
                   spotlightNear={spotlightNear?.has(conversation.id)}
                   lineFocus={lineFocusNeighbors.has(conversation.id)}
                   relationFaded={relationFaded(conversation.id)}

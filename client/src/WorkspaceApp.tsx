@@ -127,10 +127,12 @@ import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
-import { applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, type RoadmapChange } from "./lib/roadmap";
+import { applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
 import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/boardDocument";
 import { buildBoardNoteMessage, type BoardNoteRequest } from "./lib/boardAI";
 import RoadmapView from "./components/RoadmapView";
+import type { MapPathActions } from "./components/MapPaths";
+import { createMapPath, pathNameFromGoal } from "./lib/mapPaths";
 import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
 import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
@@ -5598,6 +5600,41 @@ function WorkspaceAppContent({
     return null;
   }
 
+  /** A new path on the Map through these documents, in order: a path note (a roadmap document) that stays in the background. */
+  function createPathNote(title: string, docIds: string[]) {
+    const unique = [...new Set(docIds)];
+    const args = { id: createId("note-conversation"), noteId: createId("note"), createdAt: new Date().toISOString(), title: title.trim().slice(0, 100) || "New path",
+      docIds: unique, stageId: newRoadmapId("stage"), nodeIds: unique.map(() => newRoadmapId("node")) };
+    const next = createMapPath(currentStateRef.current, args);
+    if (!next.conversations[args.id]) return null;
+    currentStateRef.current = next;
+    setState((current) => createMapPath(current, args));
+    return args.id;
+  }
+
+  const mapPathActions: MapPathActions = {
+    onCreatePath: (title, docIds) => {
+      if (!docIds.length) return { error: "Click at least one note to make a path." };
+      const id = createPathNote(title, docIds);
+      return id ? { id } : { error: "Couldn't make the path. Try again." };
+    },
+    onDraftPath: (goal) => {
+      if (!goal.trim()) return { error: "Say what you want to learn, or paste a link." };
+      if (!supportsAgentMode(currentStateRef.current.defaultServiceId)) return { error: "Drafting a path needs Agent mode. Choose a model that supports it in Ask AI, then try again." };
+      const id = createPathNote(pathNameFromGoal(goal), []);
+      if (!id) return { error: "Couldn't make the path. Try again." };
+      const reason = handleDraftRoadmap(id, goal);
+      return reason ? { error: reason } : { id };
+    },
+    onChange: handleRoadmapChange,
+    onStepAI: (pathId, docId, action) => handleRoadmapStepAI(pathId, docId, action),
+    onDraftDecision: (pathId, messageId, proposalId, action) => handleAgentProposal(pathId, messageId, proposalId, action),
+    onStopDraft: (pathId) => stopChatStream(pathId),
+    writingIds: pendingConversationIds,
+    progress: agentProgress,
+    onLoadDocuments: (ids) => { void vault.loadCloudDocuments?.(ids).catch(() => undefined); },
+  };
+
   function handleToggleRoadmap(conversationId: string) {
     setState((current) => {
       const conversation = current.conversations[conversationId];
@@ -6701,6 +6738,7 @@ function WorkspaceAppContent({
                     onCreateMapNote={handleCreateMapNote}
                     onSetMapConnection={handleSetMapConnection}
                     onSetRelation={handleSetMapRelation}
+                    paths={mapPathActions}
                     onRemoveMapNote={handleRemoveMapNote}
                     onUndoMapEdit={handleUndoMapEdit}
                     mapEditMessage={mapEditMessage}
