@@ -1,6 +1,6 @@
 import { analyzeAutoRoute, AUTO_ROUTER_LABEL } from "./autoRouter.mjs";
 import { HttpError } from "../lib/errors.mjs";
-import { AGENT_PROVIDERS, WEB_SEARCH_PROVIDERS } from "./agent/adapters.mjs";
+import { AGENT_PROVIDERS, WEB_SEARCH_PROVIDERS, X_SEARCH_PROVIDERS } from "./agent/adapters.mjs";
 import { agentNeedFromPrompt } from "./agent/autoAgent.mjs";
 import { runAgent } from "./agent/runner.mjs";
 import { vaultToolAccess } from "./agent/vaultTools.mjs";
@@ -35,6 +35,7 @@ const PROVIDERS = Object.freeze({
 });
 /** Automatic routing runs Agent mode on Muse Wonder when Meta is available; plain replies never use it. */
 const AGENT_DEFAULT_SERVICE_ID = "meta-api";
+const AGENT_MODEL_LABELS = { "meta-api": "Meta's Muse Wonder", "anthropic-api": "Claude Opus", "xai-api": "xAI's Grok" };
 /** A roadmap of 60 steps with notes is about 8,000 tokens of tool call, before the model's thinking. */
 const AGENT_OUTPUT_TOKENS = 16_000;
 const PREPAID_BALANCE_REQUIRED = "Your prepaid AI balance is empty. Add money in Billing or subscribe for $20/month to use hosted models. You can also use your own provider API key.";
@@ -141,18 +142,25 @@ export function createChatService({ database, documentService, env, runtimeConfi
     return null;
   }
 
-  /** Auto's routes for an Agent mode reply: Muse Wonder first when Meta is available, then the other
-   * models that can call tools, then the rest as fallbacks. */
-  function preferAgentModel(routes, autoReason) {
+  /** Auto's routes for an Agent mode reply: the user's chosen agent model first (Muse Wonder unless they
+   * picked Claude Opus or Grok), then Muse Wonder, then the other models that can call tools, then the rest
+   * as fallbacks. */
+  function preferAgentModel(routes, autoReason, chosenServiceId = AGENT_DEFAULT_SERVICE_ID) {
     const canAct = (route) => AGENT_PROVIDERS.includes(providerName(route.serviceId));
     const ordered = [...routes.filter(canAct), ...routes.filter((route) => !canAct(route))];
-    const route = ordered.find((candidate) => candidate.serviceId === AGENT_DEFAULT_SERVICE_ID);
-    if (!route) return ordered;
-    const model = getRuntimeDefaultModelForService(runtimeConfig, AGENT_DEFAULT_SERVICE_ID);
     const started = autoReason ? `Agent mode turned on automatically because ${autoReason}. ` : "";
-    return [{ ...route, model, routing: { method: "rules", selectedModel: model },
-      reason: `${started}Agent mode uses Meta's Muse Wonder (${model}) by default.` },
-    ...ordered.filter((candidate) => candidate !== route)];
+    const preferred = [...new Set([chosenServiceId, AGENT_DEFAULT_SERVICE_ID])].flatMap((serviceId) => {
+      const route = ordered.find((candidate) => candidate.serviceId === serviceId);
+      if (!route) return [];
+      const model = getRuntimeDefaultModelForService(runtimeConfig, serviceId);
+      const why = serviceId === chosenServiceId
+        ? serviceId === AGENT_DEFAULT_SERVICE_ID ? `Agent mode uses ${AGENT_MODEL_LABELS[serviceId]} (${model}) by default.` : `Agent mode uses ${AGENT_MODEL_LABELS[serviceId]} (${model}), as chosen in AI settings.`
+        : `${AGENT_MODEL_LABELS[chosenServiceId] ?? "The chosen agent model"} isn't available, so Agent mode uses ${AGENT_MODEL_LABELS[serviceId]} (${model}).`;
+      return [{ ...route, model, routing: { method: "rules", selectedModel: model }, reason: `${started}${why}` }];
+    });
+    if (!preferred.length) return ordered;
+    const preferredIds = new Set(preferred.map((route) => route.serviceId));
+    return [...preferred, ...ordered.filter((candidate) => !preferredIds.has(candidate.serviceId))];
   }
 
   /** Auto's routes for a plain reply leave out Muse Wonder unless it is the only model available. */
@@ -176,6 +184,19 @@ export function createChatService({ database, documentService, env, runtimeConfi
     if (!WEB_SEARCH_PROVIDERS.includes(provider) || !credential.apiKey) return false;
     if (credential.source !== "hosted") return true;
     try { return Number.isSafeInteger(getHostedModelPrice(env, provider, route.model).webSearchMicrosPerSearch); } catch { return false; }
+  }
+
+  /** Whether a Grok agent run on this route may search X: only when the user turned it on, and on
+   * Margin Chat's key only when hosted pricing lists per-post and per-profile rates. */
+  function canSearchX(route, context, ai) {
+    const provider = providerName(route.serviceId);
+    const credential = getProviderCredential(route.serviceId, context);
+    if (ai?.agentXSearch !== true || !X_SEARCH_PROVIDERS.includes(provider) || !credential.apiKey) return false;
+    if (credential.source !== "hosted") return true;
+    try {
+      const price = getHostedModelPrice(env, provider, route.model);
+      return Number.isSafeInteger(price.xPostMicrosPerPost) && Number.isSafeInteger(price.xUserMicrosPerUser);
+    } catch { return false; }
   }
 
   function getRoutes(chatRequest, context) {
@@ -369,7 +390,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
       : chatRequest.agentAnswer ? "it answers the question the agent asked"
       : agentNeedFromPrompt(chatRequest, { web: webReachable }) ?? (routingAnalysis?.needsAgent ? "it needs information this conversation doesn't include" : null);
     const agentRequested = explicitAgent || Boolean(autoAgentReason);
-    if (automatic) routes = agentRequested ? preferAgentModel(routes, autoAgentReason) : withoutAgentOnlyRoutes(routes);
+    if (automatic) routes = agentRequested ? preferAgentModel(routes, autoAgentReason, chatRequest.ai.agentService) : withoutAgentOnlyRoutes(routes);
     // Agent mode searches the vault itself; a plain reply gets the best passages up front.
     const [attachedContext, vaultContext] = await Promise.all([
       documentContextWork,
@@ -420,6 +441,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
       const credential = getProviderCredential(route.serviceId, context);
       const agentProvider = agentRequested && AGENT_PROVIDERS.includes(providerName(route.serviceId)) ? providerName(route.serviceId) : null;
       const webSearch = Boolean(agentProvider) && canSearchWeb(route, context);
+      const xSearch = Boolean(agentProvider) && canSearchX(route, context, chatRequest.ai);
       const sendsImage = Boolean(file?.image) && !agentProvider && modelSeesImages(providerName(route.serviceId));
       const blindToImage = file?.kind === "image" && !sendsImage && !file.text;
       const receipt = {
@@ -469,7 +491,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         signal: context.signal,
         systemInstruction: [instructionOverride ?? (agentProvider
           ? buildAgentInstruction(prepared.chatRequest, { vaultTools, canWidenScope: Boolean(workspace) && !vaultTools,
-            documents: Boolean(chatRequest.acceptsDocuments && handlers?.onDocuments), webSearch, questions: Boolean(chatRequest.acceptsQuestions),
+            documents: Boolean(chatRequest.acceptsDocuments && handlers?.onDocuments), webSearch, webFetch: webSearch && agentProvider === "anthropic", xSearch, questions: Boolean(chatRequest.acceptsQuestions),
             proposals: Boolean(chatRequest.acceptsProposals), answering: chatRequest.agentAnswer ?? null })
           : buildSystemInstruction(prepared.chatRequest)), blindToImage ? cannotSeeImageInstruction(file) : ""].filter(Boolean).join("\n\n"),
         image: sendsImage ? file.image : null,
@@ -489,7 +511,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         // stream. Once any delta or agent step is exposed, retries would corrupt a reply.
         const onDelta = async (delta) => { await ensureReady(); await handlers.onDelta?.(delta); };
         const result = agentProvider ? await runAgent({
-          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, workspace, webSearch, questions: Boolean(chatRequest.acceptsQuestions), proposals: Boolean(chatRequest.acceptsProposals),
+          ...args, provider: agentProvider, budgetMicros: chatRequest.ai.agentBudgetMicros ?? DEFAULT_AGENT_BUDGET_MICROS, workspace, webSearch, xSearch, questions: Boolean(chatRequest.acceptsQuestions), proposals: Boolean(chatRequest.acceptsProposals),
           ...(handlers ? {
             onDelta,
             onRetract: async () => { await ensureReady(); await handlers.onRetract?.(); },
