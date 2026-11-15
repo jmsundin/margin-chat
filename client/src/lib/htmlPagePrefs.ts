@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 
 /**
  * How one HTML page is shown, chosen per page and remembered on this device: whether it fills the
@@ -30,6 +30,28 @@ export function saveHtmlPagePrefs(documentId: string, prefs: HtmlPagePrefs) {
   } catch { /* The choice lasts while the page is open. */ }
 }
 
+// The panel around a page and the page's own view both follow the choice, so a change in one reaches the other at once.
+const listeners = new Set<() => void>();
+const cache = new Map<string, HtmlPagePrefs>();
+const current = (documentId: string) => {
+  let prefs = cache.get(documentId);
+  if (!prefs) { prefs = loadHtmlPagePrefs(documentId); cache.set(documentId, prefs); }
+  return prefs;
+};
+
+/** A page's remembered look, and a way to change it. */
+export function useHtmlPagePrefs(documentId: string): [HtmlPagePrefs, (prefs: HtmlPagePrefs) => void] {
+  const prefs = useSyncExternalStore(
+    (listener) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
+    () => current(documentId), () => DEFAULT_HTML_PAGE_PREFS);
+  const set = useCallback((next: HtmlPagePrefs) => {
+    cache.set(documentId, readHtmlPagePrefs(next));
+    saveHtmlPagePrefs(documentId, next);
+    for (const listener of listeners) listener();
+  }, [documentId]);
+  return [prefs, set];
+}
+
 /** The theme a page is given: its own pinned choice, otherwise the app's. */
 export function htmlPageTheme(choice: HtmlPageTheme, app: "light" | "dark"): "light" | "dark" {
   return choice === "auto" ? app : choice;
@@ -53,8 +75,8 @@ export function useAppTheme(): "light" | "dark" {
   return theme;
 }
 
-/** Phones always fill: a page flowing inline with notes leaves it a strip of a small screen. */
-export function useHtmlPageLayout(choice: HtmlPageLayout): HtmlPageLayout {
+/** Whether the window is phone sized, where a page always fills. */
+export function useSmallScreen(): boolean {
   const [small, setSmall] = useState(() => typeof window !== "undefined" && Boolean(window.matchMedia?.("(max-width: 640px)").matches));
   useEffect(() => {
     const media = window.matchMedia?.("(max-width: 640px)");
@@ -64,5 +86,10 @@ export function useHtmlPageLayout(choice: HtmlPageLayout): HtmlPageLayout {
     update();
     return () => media.removeEventListener?.("change", update);
   }, []);
-  return small ? "fill" : choice;
+  return small;
+}
+
+/** Phones always fill: a page flowing inline with notes leaves it a strip of a small screen. */
+export function useHtmlPageLayout(choice: HtmlPageLayout): HtmlPageLayout {
+  return useSmallScreen() ? "fill" : choice;
 }

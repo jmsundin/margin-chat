@@ -3,7 +3,8 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReference } from "../types";
 import { useVaultMedia } from "../lib/vaultMedia";
-import { htmlPageTheme, loadHtmlPagePrefs, useAppTheme, useHtmlPageLayout } from "../lib/htmlPagePrefs";
+import { htmlPageTheme, useAppTheme, useHtmlPageLayout, useHtmlPagePrefs, useSmallScreen } from "../lib/htmlPagePrefs";
+import HtmlPageMenu from "./HtmlPageMenu";
 import { htmlAssetContentType, htmlAssetPath, htmlPageHasAssets, inlineHtmlAssets } from "../lib/htmlAssets";
 import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
@@ -31,6 +32,8 @@ export interface VaultFileViewerProps {
   toolbarTarget?: HTMLElement | null;
   /** How an HTML page is laid out, when the panel around it decides; otherwise the page's own remembered choice. */
   htmlLayout?: "fill" | "inline";
+  /** The start of the bar above an HTML page, where its title menu goes. */
+  htmlBarStart?: HTMLElement | null;
 }
 
 type Loaded = { status: "loading" } | { status: "missing" } | { status: "error"; message: string } | { status: "ready"; blob: Blob };
@@ -676,12 +679,37 @@ const MAX_CREEPING_GROWTHS = 6;
 const MAX_FRAME_HEIGHT = 60_000;
 const FRAME_BORDERS = 2;
 
+const escapeAttribute = (value: string) => value.replace(/&/gu, "&amp;").replace(/"/gu, "&quot;").replace(/</gu, "&lt;").replace(/>/gu, "&gt;");
+
+/**
+ * The page by itself in a new tab. The tab's address belongs to Margin Chat, so the page is not put there
+ * directly: it runs in the same kind of sandboxed frame as here, filling the tab, where its scripts
+ * still can't reach the app's sign-in or storage.
+ */
+function openHtmlPageInTab(title: string, document: string) {
+  const shell = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">`
+    + `<title>${escapeAttribute(title)}</title><style>html,body{margin:0;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style></head>`
+    + `<body><iframe title="${escapeAttribute(title)}" sandbox="${HTML_FRAME_SANDBOX}" allow="fullscreen; clipboard-write" referrerpolicy="no-referrer" srcdoc="${escapeAttribute(document)}"></iframe></body></html>`;
+  const url = URL.createObjectURL(new Blob([shell], { type: "text/html" }));
+  window.open(url, "_blank", "noopener");
+  window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
+function downloadText(name: string, text: string) {
+  const url = URL.createObjectURL(new Blob([text], { type: "text/html" }));
+  const link = document.createElement("a");
+  link.href = url; link.download = /\.html?$/iu.test(name) ? name : `${name}.html`;
+  document.body.appendChild(link); link.click(); link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+}
+
 /** How long a page's saves gather before they go into the vault; a game can save on every answer. */
 const PAGE_DATA_SAVE_DELAY = 4_000;
 
 function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   const [html, setHtml] = useState<{ text: string; storage: Record<string, string> } | null>(null);
   const [height, setHeight] = useState<number | null>(null);
+  const [reloads, setReloads] = useState(0);
   const [marks, setMarks] = useState<Array<HtmlRect & { id: string }>>([]);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const growth = useRef({ count: 0, at: 0 });
@@ -693,7 +721,8 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   mediaRef.current = media;
   // The page follows the app's theme unless it was pinned to one. A page with no dark styles of its own stays white.
   const appTheme = useAppTheme();
-  const prefs = useMemo(() => loadHtmlPagePrefs(props.conversation.id), [props.conversation.id]);
+  const [prefs, setPrefs] = useHtmlPagePrefs(props.conversation.id);
+  const small = useSmallScreen();
   const theme = htmlPageTheme(prefs.theme, appTheme);
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -845,12 +874,33 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   }, []);
 
   const name = vaultFileTitle(props.file.path);
+  /** Starts the page again with what it last saved; its runtime state (an open tab, a half-played round) is dropped. */
+  const reload = () => {
+    flushPageData();
+    setHtml((current) => current && { ...current, storage: loadHtmlStorage(props.conversation.id)?.data ?? {} });
+    setHeight(null); setMarks([]);
+    setReloads((count) => count + 1);
+  };
+  const resetData = () => {
+    if (!window.confirm(`Clear everything “${name}” saved, such as progress in a game? This can’t be undone.`)) return;
+    if (unsaved.current) { window.clearTimeout(unsaved.current.timer); unsaved.current = null; }
+    const empty = { savedAt: Date.now(), data: {} };
+    saveHtmlStorage(props.conversation.id, empty);
+    void mediaRef.current?.writeText?.(htmlPageDataPath(props.file.path), encodeHtmlPageData(empty)).catch(() => undefined);
+    reload();
+  };
+  const menu = props.htmlBarStart && html ? createPortal(<HtmlPageMenu title={name} prefs={prefs} layoutFixed={small} onPrefs={setPrefs}
+    onOpenInTab={() => openHtmlPageInTab(name, htmlFrameDocument(html.text, loadHtmlStorage(props.conversation.id)?.data ?? {}, { theme }))}
+    onDownload={() => downloadText(name, html.text)}
+    onCopySource={() => { void navigator.clipboard?.writeText(html.text).catch(() => undefined); }}
+    onReload={reload} onResetData={resetData} />, props.htmlBarStart) : null;
   if (source === null) return <div className={`vault-file-status${layout === "fill" ? " is-fill" : ""}`} role="status">Opening {name}…</div>;
   const firstOfEach = new Set<string>();
   return <section className={`vault-file-viewer vault-file-html${layout === "fill" ? " is-fill" : ""}`} aria-label={`HTML page: ${props.file.path}`}>
+    {menu}
     <div className="vault-html-stage">
       {/* No same-origin access: the page's scripts run, but can't reach the app, its sign-in or its storage. */}
-      <iframe ref={frameRef} className="vault-html-frame" title={name} srcDoc={source} sandbox={HTML_FRAME_SANDBOX}
+      <iframe key={reloads} ref={frameRef} className="vault-html-frame" title={name} srcDoc={source} sandbox={HTML_FRAME_SANDBOX}
         allow="fullscreen; clipboard-write" referrerPolicy="no-referrer" style={{ colorScheme: theme, ...(height && layout !== "fill" ? { height } : {}) }} data-theme={theme}
         onLoad={() => {
           growth.current = { count: 0, at: 0 };
