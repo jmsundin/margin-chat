@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { HTML_FRAME_SANDBOX, MAX_HTML_STORAGE_CHARS, htmlFrameDocument, htmlTextForAI, readHtmlFrameMessage } from "../client/src/lib/htmlDocuments";
+import { HTML_FRAME_SANDBOX, MAX_HTML_STORAGE_CHARS, htmlFrameDocument, htmlTextForAI, htmlThemeMessage, readHtmlFrameMessage } from "../client/src/lib/htmlDocuments";
+import { htmlPageTheme, readHtmlPagePrefs } from "../client/src/lib/htmlPagePrefs";
 import { isVaultFileDocumentPath, vaultFileContentType, vaultFileKind } from "../client/src/lib/vaultFileDocuments";
 import { planVaultUpload } from "../client/src/lib/vaultUpload";
 import { validateVaultFileContext, vaultFileInstruction } from "../server/chat/fileContext.mjs";
@@ -29,11 +30,35 @@ describe("HTML pages open as documents", () => {
   test("the bridge goes first in the head, and never before the doctype", () => {
     const withHead = htmlFrameDocument("<!DOCTYPE html><html lang=\"en\"><head><title>T</title></head><body>x</body></html>");
     expect(withHead.startsWith("<!DOCTYPE html><html lang=\"en\"><head><script>(")).toBe(true);
-    expect(withHead).toContain("</script><title>T</title>");
+    expect(withHead).toContain(`</script><meta name="viewport" content="width=device-width,initial-scale=1"><title>T</title>`);
     expect(htmlFrameDocument("<!doctype html><p>Bare</p>").startsWith("<!doctype html><script>(")).toBe(true);
     expect(htmlFrameDocument("<p>Fragment</p>").startsWith("<script>(")).toBe(true);
     // A <header> element isn't the head.
     expect(htmlFrameDocument("<html><header>Top</header></html>").startsWith("<html><script>(")).toBe(true);
+  });
+
+  test("a viewport line is added only to a page that has none", () => {
+    const own = `<html><head><meta name="viewport" content="width=600"></head><body>x</body></html>`;
+    expect(htmlFrameDocument(own).match(/name="viewport"/gu)).toHaveLength(1);
+    expect(htmlFrameDocument(own)).toContain(`content="width=600"`);
+    expect(htmlFrameDocument(`<meta name=viewport content="width=1">`).match(/viewport/gu)).toHaveLength(1);
+    expect(htmlFrameDocument("<p>x</p>").match(/name="viewport"/gu)).toHaveLength(1);
+  });
+
+  test("the page starts in the theme it is given, and a change is a message, not a reload", () => {
+    expect(htmlFrameDocument("<p>x</p>")).toContain(`,"light");</script>`);
+    expect(htmlFrameDocument("<p>x</p>", {}, { theme: "dark" })).toContain(`,"dark");</script>`);
+    // Anything but the two themes falls back to light rather than reaching the page as script text.
+    expect(htmlFrameDocument("<p>x</p>", {}, { theme: `");alert(1);("` as never })).toContain(`,"light");</script>`);
+    expect(htmlThemeMessage("dark")).toEqual({ marginHtml: 1, type: "theme", theme: "dark" });
+  });
+
+  test("a page's look is remembered per page, and unknown values fall back", () => {
+    expect(readHtmlPagePrefs(null)).toEqual({ layout: "fill", theme: "auto" });
+    expect(readHtmlPagePrefs({ layout: "inline", theme: "dark" })).toEqual({ layout: "inline", theme: "dark" });
+    expect(readHtmlPagePrefs({ layout: "wide", theme: "sepia" })).toEqual({ layout: "fill", theme: "auto" });
+    expect(htmlPageTheme("auto", "dark")).toBe("dark");
+    expect(htmlPageTheme("light", "dark")).toBe("light");
   });
 
   test("only well-formed bridge messages are read", () => {

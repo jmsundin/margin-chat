@@ -106,7 +106,12 @@
 .chat-outline .vault-pdf-outline-empty { padding: 4px 6px; font-size: .72rem; }
 @media (pointer: coarse), (max-width: 600px) { .chat-outline .vault-pdf-outline-title { min-height: 40px; align-items: center; } .chat-outline .vault-pdf-outline-toggle { height: 40px; } }
 
-/* HTML pages: live in a sandboxed frame as tall as the page, so the document scrolls as one. Pages stay white like paper. */
-.vault-html-stage { position: relative; width: 100%; }
-.vault-html-frame { display: block; box-sizing: border-box; width: 100%; height: min(70vh, 640px); border: 1px solid var(--line); border-radius: 6px; background: #fff; color-scheme: light; }
+/*
+ * HTML pages: live in a sandboxed frame as tall as the page, so the document scrolls as one. The frame's
+ * color scheme (set on the element) is the app's theme, so a page with dark styles follows it. A page
+ * with none keeps the browser's white canvas, and behind a dark page the stage shows instead of a white flash.
+ */
+.vault-html-stage { position: relative; width: 100%; background: var(--bg); border-radius: 6px; }
+.vault-html-frame { display: block; box-sizing: border-box; width: 100%; height: min(70vh, 640px); border: 1px solid var(--line); border-radius: 6px; background: transparent; }
+.vault-html-frame[data-theme="light"] { background: #fff; }
 .vault-html-stage > .vault-file-highlights { inset: 1px; overflow: hidden; }

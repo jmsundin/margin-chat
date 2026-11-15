@@ -114,11 +114,23 @@ function readScreenMessage(message: Record<string, unknown>): HtmlFrameMessage |
  * Runs inside the frame, before the page's own scripts. It must stay
  * self-contained: it is sent to the frame as source text.
  */
-function bridge(savedStorage: Record<string, string>, hasAssets: boolean) {
+function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstTheme: string) {
   const SKIP = /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA|SELECT|OPTION)$/u;
   const parentWindow = window.parent;
   const post = (message: Record<string, unknown>) => parentWindow.postMessage({ marginHtml: 1, ...message }, "*");
   let anchors: Array<{ id: string; quote: string; start: number; end: number }> = [];
+
+  /*
+   * The app's theme. The frame's color scheme already makes the page's `prefers-color-scheme` rules
+   * follow it; pages that key their dark palette on `data-theme` get that too, unless the page set
+   * one itself (it has its own switch, which is left alone).
+   */
+  const root = document.documentElement;
+  const ownsTheme = root.hasAttribute("data-theme");
+  const setTheme = (theme: unknown) => {
+    if (!ownsTheme && (theme === "light" || theme === "dark")) root.setAttribute("data-theme", theme);
+  };
+  setTheme(firstTheme);
 
   /*
    * Without same-origin access the browser throws on any use of localStorage,
@@ -572,6 +584,7 @@ function bridge(savedStorage: Record<string, string>, hasAssets: boolean) {
       for (const listener of contentListeners) { try { listener(contentCopy()); } catch { /* A game's own mistake stays its own. */ } }
       return;
     }
+    if (event.data.type === "theme") { setTheme(event.data.theme); return; }
     if (event.data.type === "asset" && typeof event.data.id === "string") {
       const resolve = assetWaiters.get(event.data.id);
       assetWaiters.delete(event.data.id);
@@ -591,14 +604,32 @@ function bridge(savedStorage: Record<string, string>, hasAssets: boolean) {
   });
 }
 
+/** What `htmlFrameDocument` is told about the page beyond its text. */
+export interface HtmlFrameOptions {
+  /** Whether the page may ask for the files beside it. */
+  assets?: boolean;
+  /** The theme the page starts in; later changes are sent as `theme` messages, so the page isn't reloaded. */
+  theme?: "light" | "dark";
+}
+
+/** A change of theme, sent to the page's frame. */
+export function htmlThemeMessage(theme: "light" | "dark") {
+  return { marginHtml: 1 as const, type: "theme" as const, theme };
+}
+
+const VIEWPORT = /<meta\b[^>]*\bname\s*=\s*["']?viewport\b/iu;
+
 /**
  * The page as the frame loads it: the bridge goes first in the head, after any doctype so the page keeps its rendering mode.
- * `storage` is what the page last kept in its localStorage; `assets` is whether the page may ask for the files beside it.
+ * `storage` is what the page last kept in its localStorage. Nothing else is added to the page except a
+ * viewport line when it has none, so it fits a phone as it would opened by itself.
  */
-export function htmlFrameDocument(html: string, storage: Record<string, string> = {}, assets = false) {
+export function htmlFrameDocument(html: string, storage: Record<string, string> = {}, options: HtmlFrameOptions | boolean = {}) {
+  const { assets = false, theme = "light" } = typeof options === "boolean" ? { assets: options } : options;
   // Escaped so the page's saved text can't close the script early.
   const saved = JSON.stringify(readStorageData(storage) ?? {}).replace(/</gu, "\\u003c").replace(/\u2028/gu, "\\u2028").replace(/\u2029/gu, "\\u2029");
-  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"});</script>`;
+  const viewport = VIEWPORT.test(html) ? "" : `<meta name="viewport" content="width=device-width,initial-scale=1">`;
+  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"},"${theme === "dark" ? "dark" : "light"}");</script>${viewport}`;
   const head = /<head(?:\s[^>]*)?>/iu.exec(html);
   if (head) return html.slice(0, head.index + head[0].length) + script + html.slice(head.index + head[0].length);
   const root = /<html(?:\s[^>]*)?>/iu.exec(html);
