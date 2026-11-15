@@ -54,6 +54,17 @@ export function saveDocumentModePick(id: string, mode: PickedMode) {
   listeners.forEach((listener) => listener());
 }
 
+/** Forgets the pick for one document, so it opens in the mode its content chooses again. */
+export function clearDocumentModePick(id: string) {
+  const picks = readDocumentModePicks();
+  if (!(id in picks)) return;
+  const { [id]: _previous, ...rest } = picks;
+  const raw = JSON.stringify(rest);
+  try { localStorage.setItem(PICKS_KEY, raw); } catch { /* Private windows keep it until reload. */ }
+  cached = { raw, picks: parsePicks(raw) };
+  listeners.forEach((listener) => listener());
+}
+
 export function subscribeDocumentModes(listener: () => void): () => void {
   listeners.add(listener);
   const onStorage = (event: StorageEvent) => { if (event.key === PICKS_KEY) listener(); };
@@ -79,6 +90,19 @@ export function documentModeOf(document: { id: string; nodeType?: string; langua
   if (picked && (picked !== "code" || code.cells > 0)) return picked;
   if (code.mostlyCode) return "code";
   return deviceView === "reading" ? "read" : "write";
+}
+
+/**
+ * Why the document chose its mode by itself, said once the first time a page opens that way
+ * ("Opened in Code because this page is mostly code"). Null when the mode is a pick or plain Write/Read.
+ */
+export function automaticModeReason(document: { id: string; nodeType?: string; languageLearning?: unknown },
+  picks: Readonly<Record<string, PickedMode>>, code: CodeShare = NO_CODE, languageName?: string): { mode: "code" | "language" | "board"; reason: string } | null {
+  if (document.nodeType === "board") return { mode: "board", reason: "this page is a board" };
+  if (document.languageLearning) return { mode: "language", reason: languageName ? `this page is for learning ${languageName}` : "this page is for learning a language" };
+  if (picks[document.id] && (picks[document.id] !== "code" || code.cells > 0)) return null;
+  if (code.mostlyCode) return { mode: "code", reason: "this page is mostly code" };
+  return null;
 }
 
 export interface CodeShare { cells: number; mostlyCode: boolean }

@@ -131,6 +131,8 @@ export interface DocumentPanelProps {
   /** Write or Read for this document; see lib/documentModes.ts. */
   pageMode?: "write" | "read";
   onPageModeChange?: (mode: "write" | "read") => void;
+  /** Greyed examples of what the page can hold, shown while it is blank. */
+  emptyExamples?: ReadonlyArray<string>;
   onStop: () => void;
   onSelection: (selection: SelectionDraft) => void;
   onClearSelection?: () => void;
@@ -676,7 +678,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {!showEditor ? null : editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={editorBlocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
         resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram} languageLearning={props.languageLearning}
-        pageMode={props.pageMode} onPageModeChange={props.onPageModeChange}
+        pageMode={props.pageMode} onPageModeChange={props.onPageModeChange} emptyExamples={props.emptyExamples}
         authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
         compactModes={Boolean(props.pageBar || props.quiet)}
         toolbarStart={props.pageBar || historyPrompts.length || (authorship?.summary.totalLines && authorshipShown) ? <>

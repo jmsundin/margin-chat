@@ -133,6 +133,8 @@ export interface RichDocumentEditorProps {
   languageLearning?: DocumentLanguageLearning;
   /** Write or Read for this document (Live Preview editor only); without it the device's page view applies. */
   pageMode?: "write" | "read";
+  /** Greyed examples under a blank page (Live Preview editor only), gone once the page holds text. */
+  emptyExamples?: ReadonlyArray<string>;
   /** ⌘E and the view buttons switch Write and Read through this when the document has its own mode. */
   onPageModeChange?: (mode: "write" | "read") => void;
   /** One "Live Preview ▾" menu instead of three view buttons, for the quiet page's single row above the text. */

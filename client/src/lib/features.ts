@@ -171,7 +171,8 @@ function readDismissedHints(): ReadonlySet<string> {
   return hintsCache.ids;
 }
 const hintListeners = new Set<() => void>();
-export function dismissFeatureHint(id: FeatureId) {
+/** Ends one hint on every device: a feature id, a "mode:code"-style hint or a "mode-note:code" first-open note. */
+export function dismissFeatureHint(id: FeatureId | `mode:${string}` | `mode-note:${string}`) {
   const next = [...new Set([...readDismissedHints(), id])];
   writeSyncedSetting(FEATURE_HINTS_KEY, JSON.stringify(next));
   hintListeners.forEach((listener) => listener());

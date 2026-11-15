@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { codeShareOf, documentModeOf, editorViewFor, readDocumentModePicks, saveDocumentModePick } from "../client/src/lib/documentModes";
+import { automaticModeReason, clearDocumentModePick, codeShareOf, documentModeOf, editorViewFor, readDocumentModePicks, saveDocumentModePick } from "../client/src/lib/documentModes";
+import { guessTextLanguage } from "../client/src/lib/languageLearning";
 import { FEATURES, FEATURE_PRESETS, parseFeatures } from "../client/src/lib/features";
 
 const store = new Map<string, string>();
@@ -69,5 +70,39 @@ describe("Language learning is an opt-in feature", () => {
     expect(parseFeatures(null).language).toBe(false);
     expect(FEATURE_PRESETS.find((preset) => preset.id === "simple")!.features).not.toContain("language");
     expect(FEATURE_PRESETS.find((preset) => preset.id === "student")!.features).toContain("language");
+  });
+});
+
+describe("saying when a mode was chosen automatically", () => {
+  beforeEach(() => store.clear());
+  const code = { cells: 2, mostlyCode: true };
+  test("names why a board, a language page or a page of code opened as it did", () => {
+    expect(automaticModeReason({ id: "a", nodeType: "board" }, {})).toEqual({ mode: "board", reason: "this page is a board" });
+    expect(automaticModeReason({ id: "a", languageLearning: { target: "es", base: "en" } }, {}, undefined, "Spanish")?.reason).toBe("this page is for learning Spanish");
+    expect(automaticModeReason({ id: "a" }, {}, code)).toEqual({ mode: "code", reason: "this page is mostly code" });
+  });
+  test("says nothing for a pick or a plain page", () => {
+    expect(automaticModeReason({ id: "a" }, { a: "write" }, code)).toBeNull();
+    expect(automaticModeReason({ id: "a" }, {})).toBeNull();
+  });
+  test("Back to automatic forgets only that document's pick", () => {
+    saveDocumentModePick("a", "write");
+    saveDocumentModePick("b", "read");
+    clearDocumentModePick("a");
+    expect(readDocumentModePicks()).toEqual({ b: "read" });
+    expect(documentModeOf({ id: "a" }, readDocumentModePicks(), "live", code)).toBe("code");
+  });
+});
+
+describe("guessing a page's language for the Language hint", () => {
+  test("knows common languages by their small words or script", () => {
+    expect(guessTextLanguage("El perro de mi vecino es muy grande y le gusta correr por el parque con los niños. Pero no se lleva bien con los gatos de la casa, que son muy pequeños y están siempre en la ventana.")).toBe("es");
+    expect(guessTextLanguage("Le chat de ma voisine est très grand et il aime courir dans le jardin avec les enfants. Mais il ne sort pas quand il pleut, et il reste sur la fenêtre pour regarder les oiseaux.")).toBe("fr");
+    expect(guessTextLanguage("The results of the trial were published last week, and they show that the drug is safe for most people who took it over the full year of the study, with few side effects.")).toBe("en");
+    expect(guessTextLanguage("Мы долго гуляли по парку, а потом пошли домой пить чай с бабушкой и смотреть старые фотографии из её детства.")).toBe("ru");
+  });
+  test("stays quiet on short or mixed text", () => {
+    expect(guessTextLanguage("Hola, ¿qué tal?")).toBeNull();
+    expect(guessTextLanguage("")).toBeNull();
   });
 });

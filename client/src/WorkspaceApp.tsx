@@ -85,7 +85,7 @@ import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
 import DocumentMenu from "./components/DocumentMenu";
 import DocumentModeSwitch from "./components/DocumentModeSwitch";
-import { codeShareOf, documentModeOf, saveDocumentModePick, useDocumentModePicks, type DocumentMode } from "./lib/documentModes";
+import { DOCUMENT_MODE_LABELS, automaticModeReason, clearDocumentModePick, codeShareOf, documentModeOf, saveDocumentModePick, useDocumentModePicks, type DocumentMode } from "./lib/documentModes";
 import { RUN_ALL_CELLS_EVENT } from "./lib/codeRunner/codeCellScope";
 import { readDocumentViewMode, subscribeDocumentEditorPreference } from "./lib/documentEditorPreference";
 import DocumentViewsMenu from "./components/DocumentViewsMenu";
@@ -207,7 +207,7 @@ import {
   loadStoredState,
 } from "./lib/appState";
 import { getConversationRequestPayload } from "./lib/chatContext";
-import { buildLookupMessages, defaultLanguagePair, rememberLanguagePair, meaningCardLine, parseLookupReply, savedMeaningIn, wordsDeckTitle, type LanguagePair, type LookupAnswer, type LookupRequest, type SavedMeaning } from "./lib/languageLearning";
+import { buildLookupMessages, defaultLanguagePair, guessTextLanguage, languageName, plainReadingText, rememberLanguagePair, meaningCardLine, parseLookupReply, savedMeaningIn, wordsDeckTitle, type LanguagePair, type LookupAnswer, type LookupRequest, type SavedMeaning } from "./lib/languageLearning";
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
@@ -293,6 +293,28 @@ import type {
 const KnowledgeGraphWorkspace = lazy(() => import("./components/KnowledgeGraphWorkspace"));
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
+
+/** Shown greyed under a blank page, so a new page shows a few things it can hold. */
+const PAGE_EXAMPLES: ReadonlyArray<string> = [
+  "Question :: Answer on a line makes a flashcard",
+  "```python starts code you can run",
+  "[[ links another page",
+];
+
+const pageTexts = new WeakMap<object, { language: string | null; link: boolean }>();
+/** What a page's prose says about it for hints: the language it's written in, and whether it is little more than a pasted link. */
+function pageTextFacts(blocks: ReadonlyArray<{ kind?: string; content?: string }>) {
+  const known = pageTexts.get(blocks);
+  if (known) return known;
+  const markdown = blocks.filter((block) => block.kind === "markdown" && block.content).map((block) => block.content!).join("\n\n")
+    .replace(/```[\s\S]*?(?:```|$)/gu, " ");
+  const prose = plainReadingText(markdown.replace(/https?:\/\/\S+/gu, " "));
+  const facts = { language: guessTextLanguage(prose), link: /https?:\/\/\S+/u.test(markdown) && prose.length < 280 };
+  pageTexts.set(blocks, facts);
+  return facts;
+}
+const pageLanguageOf = (blocks: ReadonlyArray<{ kind?: string; content?: string }>) => pageTextFacts(blocks).language;
+const pastedLinkOf = (blocks: ReadonlyArray<{ kind?: string; content?: string }>) => pageTextFacts(blocks).link;
 /** Width of the margin when it holds only claim cards. */
 const CLAIM_MARGIN_WIDTH = 220;
 const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
@@ -1562,22 +1584,57 @@ function WorkspaceAppContent({
   const deviceDocumentView = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentViewMode, () => "live" as const);
   const dismissedFeatureHints = useDismissedFeatureHints();
   /**
-   * When a page uses a feature that is off (flashcard lines, a roadmap), one quiet line says so
-   * and offers to turn it on. Dismissing it ends the hint for that feature on every device.
+   * When a page's content could use something the app does (flashcard lines, a roadmap, a pasted link,
+   * text in another language, code cells), one quiet line says so and offers it. Only one shows at a
+   * time, and dismissing it ends that hint on every device.
    */
   function renderFeatureHint(conversation: Conversation) {
     if (guest) return undefined;
-    const hint: { id: FeatureId; text: string } | null =
-      !features.roadmaps && conversation.nodeType === "roadmap" ? { id: "roadmaps", text: "This page is a roadmap. Roadmaps shows its steps on the map and drafts more." }
-      : !features.flashcards && (flashcardCountByDoc.get(conversation.id) ?? 0) > 0 ? { id: "flashcards", text: "This page has flashcards (lines like Question :: Answer)." }
-      : null;
-    if (!hint || dismissedFeatureHints.has(hint.id)) return undefined;
-    const name = FEATURES.find((feature) => feature.id === hint.id)!.name;
+    const hint = featureHintFor(conversation);
+    if (!hint) return undefined;
     return <p className="feature-hint" role="status">
       <span>{hint.text}</span>
-      <button type="button" onClick={() => setFeature(hint.id, true)}>Turn on {name}</button>
-      <button type="button" className="feature-hint-dismiss" aria-label={`Dismiss: keep ${name} off`} onClick={() => dismissFeatureHint(hint.id)}>×</button>
+      <button type="button" onClick={() => { hint.act(); dismissFeatureHint(hint.id); }}>{hint.action}</button>
+      <button type="button" className="feature-hint-dismiss" aria-label={`Dismiss: ${hint.dismiss}`} onClick={() => dismissFeatureHint(hint.id)}>×</button>
     </p>;
+  }
+  function featureHintFor(conversation: Conversation): { id: Parameters<typeof dismissFeatureHint>[0]; text: string; action: string; dismiss: string; act: () => void } | null {
+    const turnOn = (id: FeatureId, text: string) => {
+      const name = FEATURES.find((feature) => feature.id === id)!.name;
+      return { id, text, action: `Turn on ${name}`, dismiss: `keep ${name} off`, act: () => setFeature(id, true) };
+    };
+    const blocks = getEditableDocument(conversation).blocks;
+    const modes = hasDocumentModes(conversation);
+    const mode = modes ? documentModeFor(conversation) : null;
+    const candidates = [
+      () => !features.roadmaps && conversation.nodeType === "roadmap" ? turnOn("roadmaps", "This page is a roadmap. Roadmaps shows its steps on the map and drafts more.") : null,
+      () => !features.flashcards && (flashcardCountByDoc.get(conversation.id) ?? 0) > 0 ? turnOn("flashcards", "This page has flashcards (lines like Question :: Answer).") : null,
+      () => {
+        const cells = mode === "write" ? codeShareOf(blocks).cells : 0;
+        return cells && !documentModePicks[conversation.id] ? { id: "mode:code" as const, text: `This page has ${cells === 1 ? "a code cell" : `${cells} code cells`} you can run. Code mode adds Run all, and AI that explains or fixes the code.`,
+          action: "Open in Code", dismiss: "stay in Write", act: () => handlePickDocumentMode(conversation, "code") } : null;
+      },
+      () => {
+        if (!modes || conversation.languageLearning || conversation.nodeType === "board") return null;
+        const language = pageLanguageOf(blocks);
+        const base = defaultLanguagePair().base;
+        if (!language || language === base) return null;
+        const name = languageName(language);
+        if (!features.language) return turnOn("language", `This page looks like ${name}. Language learning lets you tap any word to see what it means.`);
+        return { id: "mode:language" as const, text: `This page looks like ${name}. Open it in Language to tap any word for its meaning.`,
+          action: "Open in Language", dismiss: "keep it as a page", act: () => {
+            rememberLanguagePair({ target: language, base });
+            handleLanguageLearningChange(conversation.id, { target: language, base });
+          } };
+      },
+      () => !features.roadmaps && modes && conversation.nodeType !== "roadmap" && pastedLinkOf(blocks)
+        ? turnOn("roadmaps", "This page holds a link. Roadmaps can turn a link into a step-by-step course you learn from.") : null,
+    ];
+    for (const candidate of candidates) {
+      const hint = candidate();
+      if (hint && !dismissedFeatureHints.has(hint.id)) return hint;
+    }
+    return null;
   }
   /** "More features…" at the end of each ⋯ menu: Settings → Features. */
   const openFeatureSettings = () => { setProfileInitialTab("features"); setProfileModalOpen(true); };
@@ -6480,6 +6537,8 @@ function WorkspaceAppContent({
     if (current === "board") handleToggleBoard(conversation.id);
     if (current === "language") handleLanguageLearningChange(conversation.id, null);
     if (mode === "write" || mode === "read" || mode === "code") saveDocumentModePick(conversation.id, mode);
+    // Someone who picks a mode knows about it: the first-open note for it is not needed.
+    if (mode === "code" || mode === "language" || mode === "board") dismissFeatureHint(`mode-note:${mode}`);
     if (mode === "board") handleToggleBoard(conversation.id);
     if (mode === "language") {
       const pair = conversation.languageLearning ?? defaultLanguagePair();
@@ -6510,7 +6569,18 @@ function WorkspaceAppContent({
     const cards = [...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0);
     // A roadmap, or a step of one, opens as a course: one step at a time beside the page.
     const learnPathId = !features.roadmaps ? null : isPathDocument(conversation) ? conversation.id : roadmapSteps.get(conversation.id)?.[0]?.pathId ?? null;
-    return <DocumentModeSwitch title={conversation.title} mode={documentModeFor(conversation)}
+    const mode = documentModeFor(conversation);
+    const code = codeShareOf(getEditableDocument(conversation).blocks);
+    const automatic = documentModeOf(conversation, {}, deviceDocumentView, code);
+    const reason = automaticModeReason(conversation, documentModePicks, code, conversation.languageLearning ? languageName(conversation.languageLearning.target) : undefined);
+    const noteId = reason ? `mode-note:${reason.mode}` as const : null;
+    const firstNote = reason && noteId && !guest && reason.mode === mode && conversation.id === activeConversation.id && !dismissedFeatureHints.has(noteId) ? {
+      text: `Opened in ${DOCUMENT_MODE_LABELS[reason.mode]} because ${reason.reason}. You can switch modes here anytime.`,
+      onDone: () => dismissFeatureHint(noteId),
+      onKeepWrite: reason.mode === "code" ? () => { dismissFeatureHint(noteId); handlePickDocumentMode(conversation, "write"); } : undefined,
+    } : undefined;
+    return <DocumentModeSwitch title={conversation.title} mode={mode} automatic={automatic} firstNote={firstNote}
+      onAutomatic={documentModePicks[conversation.id] ? () => clearDocumentModePick(conversation.id) : undefined}
       offered={{ code: codeShareOf(getEditableDocument(conversation).blocks).cells > 0, language: features.language, board: features.boards }}
       onPick={(mode) => handlePickDocumentMode(conversation, mode)}
       onMap={() => handleShowOnMap(conversation.id)}
@@ -6680,6 +6750,7 @@ function WorkspaceAppContent({
       activeMarginNoteId={activeConversation.id}
       pageMode={modes && (mode === "write" || mode === "read" || mode === "code") ? mode === "code" ? "write" : mode : undefined}
       onPageModeChange={modes ? (next) => handlePickDocumentMode(conversation, next) : undefined}
+      emptyExamples={modes && writing && view === "chat" && !embedded && !inMargin && !guest ? PAGE_EXAMPLES : undefined}
       aiInstruction={writing && !conversation.vaultFile && !isCompactDocument(conversation) ? <>{renderAnswerSourcesLine(conversation)}<AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /></> : undefined}
       onWriteBack={(blockId, text) => handleWriteBack(conversation.id, blockId, text)}

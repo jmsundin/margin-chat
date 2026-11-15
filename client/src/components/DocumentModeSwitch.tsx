@@ -18,19 +18,45 @@ export interface DocumentModeSwitchProps {
   review?: { count: number; onOpen: () => void };
   /** Makes a new document to read in the language being learned. Offered with the Language learning feature. */
   onNewLesson?: () => void;
+  /** The mode this document opens in by itself, marked Automatic in the menu. */
+  automatic?: DocumentMode;
+  /** Forgets the pick so the document opens in its automatic mode again; offered only when they differ. */
+  onAutomatic?: () => void;
+  /**
+   * Said once, the first time any document opens in a mode it chose by itself
+   * ("Opened in Code because this page is mostly code"), under the button that switches it.
+   */
+  firstNote?: { text: string; onDone: () => void; onKeepWrite?: () => void };
 }
 
 /**
  * The button at the top of a document that names its mode and switches it. Each mode is a
  * different interface for the same document, so it lives here instead of among the ⋯ menu's settings.
  */
-export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap, onLearn, review, onNewLesson }: DocumentModeSwitchProps) {
+export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap, onLearn, review, onNewLesson, automatic, onAutomatic, firstNote }: DocumentModeSwitchProps) {
   const popupId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState({ left: 8, top: 8 });
   useOutsideDismiss(open, () => setOpen(false), popup, trigger);
+  const note = useRef<HTMLDivElement>(null);
+  const [notePosition, setNotePosition] = useState<{ left: number; top: number } | null>(null);
+  const showNote = Boolean(firstNote) && !open;
+
+  useLayoutEffect(() => {
+    if (!showNote) { setNotePosition(null); return; }
+    function place() {
+      const bounds = trigger.current?.getBoundingClientRect();
+      if (!bounds || (!bounds.width && !bounds.height)) { setNotePosition(null); return; }
+      const width = note.current?.offsetWidth || 280;
+      setNotePosition({ left: Math.max(8, Math.min(bounds.left + bounds.width / 2 - width / 2, window.innerWidth - width - 8)), top: bounds.bottom + 8 });
+    }
+    place();
+    window.addEventListener("resize", place);
+    window.addEventListener("scroll", place, true);
+    return () => { window.removeEventListener("resize", place); window.removeEventListener("scroll", place, true); };
+  }, [showNote]);
 
   function close(restoreFocus = false) {
     setOpen(false);
@@ -88,9 +114,17 @@ export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap
       {modes.map((candidate) => <button key={candidate} type="button" role="menuitemradio" aria-checked={candidate === mode}
         data-mode={candidate} onClick={() => { close(true); if (candidate !== mode) onPick(candidate); }}>
         <span className="document-mode-dot" aria-hidden="true" />
-        <span className="document-mode-name">{DOCUMENT_MODE_LABELS[candidate]}{candidate === "read" ? <kbd>⌘E</kbd> : null}</span>
+        <span className="document-mode-name">{DOCUMENT_MODE_LABELS[candidate]}
+          {candidate === automatic ? <span className="document-mode-auto" title="This page opens this way by itself">Automatic</span> : null}
+          {candidate === "read" ? <kbd>⌘E</kbd> : null}</span>
         <span className="document-mode-hint">{DOCUMENT_MODE_HINTS[candidate]}</span>
       </button>)}
+      {onAutomatic && automatic && automatic !== mode ? <button type="button" role="menuitem" data-mode={automatic} className="document-mode-reset"
+        onClick={() => { close(true); onAutomatic(); }}>
+        <span className="document-mode-dot" aria-hidden="true" />
+        <span className="document-mode-name">Back to automatic</span>
+        <span className="document-mode-hint">Open as {DOCUMENT_MODE_LABELS[automatic]} again, the way this page opens by itself</span>
+      </button> : null}
       {onMap || onLearn || onNewLesson || (review && review.count > 0) ? <div className="document-mode-separator" role="separator" /> : null}
       {onMap ? <button type="button" role="menuitem" data-mode="map" onClick={() => { close(); onMap(); }}>
         <span className="document-mode-dot" aria-hidden="true" />
@@ -112,6 +146,14 @@ export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap
         <span className="document-mode-name">New lesson…</span>
         <span className="document-mode-hint">Something new to read in the language you're learning</span>
       </button> : null}
+    </div>, document.body) : null}
+    {showNote && firstNote ? createPortal(<div ref={note} className="document-mode-note" role="status"
+      style={notePosition ?? { left: -9999, top: 0, visibility: "hidden" }} data-mode={mode}>
+      <p>{firstNote.text}</p>
+      <div className="document-mode-note-actions">
+        {firstNote.onKeepWrite ? <button type="button" onClick={firstNote.onKeepWrite}>Keep Write for this page</button> : null}
+        <button type="button" className="is-primary" onClick={firstNote.onDone}>Got it</button>
+      </div>
     </div>, document.body) : null}
   </div>;
 }
