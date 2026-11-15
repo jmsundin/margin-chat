@@ -139,6 +139,7 @@ import type { MapPathActions } from "./components/MapPaths";
 import { buildMapPath, createMapPath, isPathDocument, pathNameFromGoal } from "./lib/mapPaths";
 import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
+import { useLanguageTerms } from "./lib/languageTerms";
 import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
 import MakeCardsDialog, { type MakeCardsRequest } from "./components/MakeCardsDialog";
 import ClaimsPanel, { VerdictChip } from "./components/ClaimsPanel";
@@ -1089,6 +1090,8 @@ function WorkspaceAppContent({
     latestWidth: number;
     startClientX: number;
     direction: 1 | -1;
+    /** Pixels of width per pixel the pointer moves: 2 while the frame sits centered, so the grabbed edge stays under the pointer. */
+    scale: number;
     startScrollLeft: number;
     maxWidth: number;
     pointerId: number;
@@ -1534,6 +1537,7 @@ function WorkspaceAppContent({
   /** The document whose Ask about this note panel is open. */
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
   const flashcards = useFlashcards({ userId: user.id, conversations: state.conversations, enabled: vault.ready });
+  const languageTerms = useLanguageTerms({ userId: user.id, enabled: vault.ready });
   /** The open review: every card, or one document with its notes and side documents. */
   const [flashcardReview, setFlashcardReview] = useState<{ title: string; docIds?: ReadonlySet<string>; docId?: string } | null>(null);
   const flashcardCountByDoc = useMemo(() => {
@@ -2090,11 +2094,11 @@ function WorkspaceAppContent({
       event.preventDefault();
       const next = resizeChatPanel({
         width: resizeState.originWidth,
-        delta: (event.clientX - resizeState.startClientX) * resizeState.direction,
+        delta: (event.clientX - resizeState.startClientX) * resizeState.direction * resizeState.scale,
         maxWidth: resizeState.maxWidth,
       });
       resizeState.latestWidth = next.width;
-      resizeState.requestedWidth = resizeState.originWidth + (event.clientX - resizeState.startClientX) * resizeState.direction;
+      resizeState.requestedWidth = resizeState.originWidth + (event.clientX - resizeState.startClientX) * resizeState.direction * resizeState.scale;
       showNoteSnapHint(resizeState.conversationId, resizeState.requestedWidth, event.clientX, resizeState.direction === -1);
       // In a horizontal flow, compensate scrolling when moving the left edge
       // so the document's opposite edge stays in place where the canvas allows.
@@ -2899,9 +2903,13 @@ function WorkspaceAppContent({
     setState((current) => setDocumentWidth(current, conversation.id, undefined));
   }
 
+  /**
+   * `margin` is the line between the page and its margin: dragging it widens or narrows the page's text, and the
+   * margin moves with it, the same as the right edge does.
+   */
   function handleChatPanelResizePointerDown(
     conversationId: string,
-    edge: "left" | "right",
+    edge: "left" | "right" | "margin",
     event: ReactPointerEvent<HTMLDivElement>,
   ) {
     if (
@@ -2919,6 +2927,11 @@ function WorkspaceAppContent({
     if (!conversation) return;
     const info = getPanelResizeInfo(conversation);
     try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Window listeners also cover uncaptured pointers. */ }
+    // A frame centered in the canvas grows on both sides, so each edge moves half as far as the width changes.
+    const frame = event.currentTarget.closest(".conversation-tree-expanded")?.getBoundingClientRect();
+    const canvas = canvasRef.current?.getBoundingClientRect();
+    const centered = Boolean(frame && canvas && frame.left - canvas.left > 4 && canvas.right - frame.right > 4
+      && Math.abs((frame.left - canvas.left) - (canvas.right - frame.right)) < 4);
 
     panelResizeStateRef.current = {
       conversationId,
@@ -2927,6 +2940,7 @@ function WorkspaceAppContent({
       latestWidth: info.width,
       startClientX: event.clientX,
       direction: edge === "left" ? -1 : 1,
+      scale: centered ? 2 : 1,
       startScrollLeft: canvasRef.current?.scrollLeft ?? 0,
       maxWidth: info.maxWidth,
       pointerId: event.pointerId,
@@ -2942,7 +2956,7 @@ function WorkspaceAppContent({
 
   function handleChatPanelResizeKeyDown(
     conversation: Conversation,
-    edge: "left" | "right",
+    edge: "left" | "right" | "margin",
     event: ReactKeyboardEvent<HTMLDivElement>,
   ) {
     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -3361,8 +3375,14 @@ function WorkspaceAppContent({
       if (!conversation) return current;
       const blocks = getEditableDocument(conversation).blocks;
       const empty = blocks.length === 1 && !blocks[0].content.trim() ? blocks[0] : null;
+      // A meaning saved again for the same text replaces its card instead of adding a second one.
+      const wanted = line.slice(0, line.indexOf("**", 2) + 2).toLowerCase();
+      const had = blocks.find((item) => item.content.split("\n").some((row) => row.toLowerCase().startsWith(wanted)));
       const block = { id: createId("block"), kind: "markdown" as const, content: line, createdAt: now, updatedAt: now, authorship: "user" as const };
-      const withCard = empty
+      const withCard = had
+        ? { ...conversation, document: { ...getEditableDocument(conversation), blocks: blocks.map((item) => item.id === had.id
+          ? { ...item, content: item.content.split("\n").map((row) => row.toLowerCase().startsWith(wanted) ? line : row).join("\n"), updatedAt: now } : item) }, updatedAt: now }
+        : empty
         ? { ...conversation, document: { ...getEditableDocument(conversation), blocks: [{ ...empty, content: line, updatedAt: now }] }, updatedAt: now }
         : insertDocumentBlock(conversation, block, undefined, now);
       const next = { ...base, conversations: { ...base.conversations, [conversation.id]: withCard } };
@@ -3370,6 +3390,20 @@ function WorkspaceAppContent({
       return next;
     });
     return title;
+  }
+
+  /** Other documents whose text has this word or phrase, for a term's card. */
+  function documentsMentioning(text: string): Array<{ id: string; title: string }> {
+    const wanted = text.trim().toLocaleLowerCase();
+    if (wanted.length < 2) return [];
+    const found: Array<{ id: string; title: string }> = [];
+    for (const conversation of Object.values(currentStateRef.current.conversations)) {
+      if (!conversation.document || conversation.noteChat) continue;
+      if (!getEditableDocumentText(conversation).toLocaleLowerCase().includes(wanted)) continue;
+      found.push({ id: conversation.id, title: conversation.title || "Untitled" });
+      if (found.length >= 6) break;
+    }
+    return found;
   }
 
   function savedMeaningFor(text: string, pair: LanguagePair): string | null {
@@ -6544,6 +6578,8 @@ function WorkspaceAppContent({
         onChange: (pair) => handleLanguageLearningChange(conversation.id, pair),
         lookUp: (request, signal) => handleLookUpMeaning(conversation.id, request, signal),
         save: handleSaveMeaning, savedMeaning: savedMeaningFor,
+        docId: conversation.id, terms: languageTerms.terms, setTerm: languageTerms.setTerm, aiAllowed: !isHiddenFromAI(conversation),
+        mentions: documentsMentioning, openDocument: (id) => handleSelectConversation(id),
       }}
       onAskBoardNote={(request) => handleAskBoardNote(conversation.id, request)}
       onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); const diagram = isMermaidDiagramPassage(selection.quote); setSelectionResponseDestination(diagram ? "inline" : defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(diagram); }}
@@ -6733,6 +6769,7 @@ function WorkspaceAppContent({
     const resizeInfo = getPanelResizeInfo(conversation);
     const minimizedNodes = getMinimizedChildNodes(conversation);
     const nodesWidth = minimizedNodes ? getMinimizedChildNodesWidth(minimizedNodes.nodes, minimizedNodes.compact) : 0;
+    const marginSpace = getDocumentMarginSpace(conversation);
     const resizeMinimum = resizeChatPanel({ ...resizeInfo, delta: -resizeInfo.maxWidth }).width;
     const resizeMaximum = resizeChatPanel({ ...resizeInfo, delta: resizeInfo.maxWidth }).width;
     const isResizing =
@@ -6748,7 +6785,7 @@ function WorkspaceAppContent({
         onPointerDownCapture={() => handleFocusVisibleDocument(conversation.id)}
         onFocusCapture={() => handleFocusVisibleDocument(conversation.id)}
         key={conversation.id}
-        style={{ "--chat-panel-width": `${resizeInfo.width + getDocumentMarginSpace(conversation) + nodesWidth}px`,
+        style={{ "--chat-panel-width": `${resizeInfo.width + marginSpace + nodesWidth}px`,
           ...(minimizedNodes ? { "--minimized-child-nodes-width": `${nodesWidth}px` } : {}) } as CSSProperties}
       >
         {renderConversationChatPanel(conversation)}
@@ -6784,6 +6821,23 @@ function WorkspaceAppContent({
         >
           <span className="panel-resize-handle-grip" />
         </div>)}
+        {marginSpace > 0 && maximizedDocument?.id !== conversation.id ? <div
+          data-resize-edge="margin"
+          aria-label={`Resize ${conversation.title} page against its margin`}
+          aria-orientation="vertical"
+          aria-valuemax={resizeMaximum}
+          aria-valuemin={resizeMinimum}
+          aria-valuenow={Math.round(resizeInfo.width)}
+          aria-valuetext={`Page text ${Math.round(resizeInfo.width)} pixels wide`}
+          className="panel-margin-divider"
+          style={{ right: marginSpace + nodesWidth - 6 } as CSSProperties}
+          onDoubleClick={() => handleResetChatPanelWidth(conversation)}
+          onKeyDown={(event) => handleChatPanelResizeKeyDown(conversation, "margin", event)}
+          onPointerDown={(event) => handleChatPanelResizePointerDown(conversation.id, "margin", event)}
+          role="separator"
+          tabIndex={0}
+          title="Drag to make the page wider or narrower beside its margin. Double-click to reset."
+        /> : null}
       </div>
     );
   }

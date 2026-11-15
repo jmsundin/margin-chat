@@ -13,6 +13,8 @@ import { createTopicEmbeddingService } from "../documents/topics.mjs";
 import { createLandscapeService } from "../documents/landscape.mjs";
 import { createLibraryService } from "../library/index.mjs";
 import { FLASHCARD_SYNC_BODY_LIMIT, createFlashcardService } from "../flashcards/index.mjs";
+import { LANGUAGE_TERM_SYNC_BODY_LIMIT, createLanguageTermService } from "../languageTerms/index.mjs";
+import { createLanguageSpeechService } from "../languageTerms/speech.mjs";
 import { RATCHET_BODY_LIMIT, createRatchetService } from "../ratchet/index.mjs";
 import { INTERFACE_SETTINGS_BODY_LIMIT, createInterfaceSettingsService } from "../interfaceSettings/index.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
@@ -144,6 +146,7 @@ export function createApiHandler({
   dictationService,
   mcpService,
   chatRunService,
+  languageSpeechService,
   env = process.env,
   rateLimits,
   errorReporter = createErrorReporter({ env }),
@@ -160,6 +163,8 @@ export function createApiHandler({
   const landscape = createLandscapeService({ database });
   const library = createLibraryService({ database, env });
   const flashcards = createFlashcardService({ database });
+  const languageTerms = createLanguageTermService({ database });
+  const languageSpeech = languageSpeechService ?? createLanguageSpeechService({ env });
   const ratchet = createRatchetService({ database });
   const interfaceSettings = createInterfaceSettingsService({ database });
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
@@ -798,6 +803,34 @@ export function createApiHandler({
         }
         const body = await readJsonBody(request, INTERFACE_SETTINGS_BODY_LIMIT);
         sendJson(response, 200, await interfaceSettings.save({ userId: authContext.user.id, body }), { "Cache-Control": "private, no-store" });
+        return;
+      }
+
+      if (route?.id === "languageTermsSync") {
+        // Like flashcards: any signed-in account keeps the words it is learning.
+        requireExpectedVaultAccount(request, authContext.user);
+        if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+            !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+          throw new HttpError(403, "Sync language terms from Margin Chat.");
+        }
+        const body = await readJsonBody(request, LANGUAGE_TERM_SYNC_BODY_LIMIT);
+        sendJson(response, 200, await languageTerms.sync({ userId: authContext.user.id, body }), { "Cache-Control": "private, no-store" });
+        return;
+      }
+
+      if (route?.id === "languageSpeech") {
+        requireExpectedVaultAccount(request, authContext.user);
+        if (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "Listen from Margin Chat.");
+        const { audio } = await languageSpeech.speak({
+          userId: authContext.user.id, text: url.searchParams.get("text") ?? "", language: url.searchParams.get("language") ?? "",
+          slow: url.searchParams.get("slow") === "1",
+        });
+        // The same sentence in the same voice never changes, so each device keeps its copy and pays for it once.
+        response.writeHead(200, {
+          "Cache-Control": "private, max-age=31536000, immutable", "Content-Type": "audio/mpeg", "Content-Length": audio.length,
+          "X-Content-Type-Options": "nosniff", Vary: "Cookie, Authorization",
+        });
+        response.end(audio);
         return;
       }
 
