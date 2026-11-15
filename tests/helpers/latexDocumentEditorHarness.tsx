@@ -5,7 +5,7 @@ import { blockEditor, documentEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://latex-document.test" });
 // These checks cover the classic rich-text document editor.
-browser.localStorage.setItem("margin-chat:document-editor", "classic");
+browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: browser.localStorage });
 browser.document.write("<!doctype html><html><head></head><body></body></html>");
 // happy-dom does not expose compatMode; KaTeX requires a standards-mode document.

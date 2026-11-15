@@ -1,26 +1,20 @@
 import type { LivePreviewMode } from "./livePreviewMarkdown";
 
 /**
- * Documents open in the Live Preview editor, which types like Obsidian. The
- * classic rich-text editor stays available from Settings. Both choices are
- * saved per device.
+ * Documents open in the Live Preview editor, which types like Obsidian. Its
+ * view mode (Live, Source or Reading) is saved per device. The earlier block
+ * editor is no longer offered; only tests that still cover it can open it.
  */
-import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
-
-const EDITOR_KEY = "margin-chat:document-editor";
+const TEST_CLASSIC_KEY = "margin-chat:test-classic-editor";
 const MODE_KEY = "margin-chat:document-view-mode";
 const listeners = new Set<() => void>();
 
 export type DocumentEditorKind = "live" | "classic";
 
+/** Always Live Preview for people; the old editor only for tests that set the test flag. */
 export function readDocumentEditorKind(): DocumentEditorKind {
-  try { return localStorage.getItem(EDITOR_KEY) === "classic" ? "classic" : "live"; }
+  try { return localStorage.getItem(TEST_CLASSIC_KEY) === "1" ? "classic" : "live"; }
   catch { return "live"; }
-}
-
-export function saveDocumentEditorKind(kind: DocumentEditorKind) {
-  writeSyncedSetting(EDITOR_KEY, kind);
-  listeners.forEach((listener) => listener());
 }
 
 export function readDocumentViewMode(): LivePreviewMode {
@@ -38,6 +32,5 @@ export function saveDocumentViewMode(mode: LivePreviewMode) {
 
 export function subscribeDocumentEditorPreference(listener: () => void): () => void {
   listeners.add(listener);
-  const stop = onSyncedSettingChange([EDITOR_KEY], listener);
-  return () => { listeners.delete(listener); stop(); };
+  return () => { listeners.delete(listener); };
 }

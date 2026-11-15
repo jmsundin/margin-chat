@@ -7677,8 +7677,6 @@ function WorkspaceAppContent({
             user={user}
             theme={theme}
             onSetTheme={onSetTheme}
-            mainViewMode={mainViewMode}
-            onSetMainViewMode={handleSetMainViewMode}
             jevEnabled={jevEnabled}
             jevStatus={jev.status}
             onSetJevEnabled={setJevEnabled}

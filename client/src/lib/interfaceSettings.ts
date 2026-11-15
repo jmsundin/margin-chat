@@ -18,7 +18,6 @@ export const SYNCED_SETTINGS = [
   "margin-chat-theme",
   "margin-chat:notebook",
   "margin-chat:quiet-page",
-  "margin-chat:document-editor",
   "margin-chat:dictation-button",
   "margin-chat:dictation-hold-space",
   "margin-chat:feature-hints-dismissed",
