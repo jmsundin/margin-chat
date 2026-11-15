@@ -1611,6 +1611,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     const offset = codeCells.findIndex((cell) => cell.blockId === id && cell.start >= partFrom);
     return {
       cells: codeCellList,
+      documentId: props.conversationId,
       offset: offset < 0 ? codeCellList.length : offset,
       save: readOnly ? undefined : (index, previous, next) => {
         const current = latest.current.blocks.find((block) => block.id === id);

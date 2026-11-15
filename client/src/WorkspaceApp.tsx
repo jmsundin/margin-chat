@@ -1890,6 +1890,14 @@ function WorkspaceAppContent({
     // Each page's choice is read once; later changes are made here and written through.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playPages]);
+  // A small game written in a note (a live HTML block) asks for that note's own questions.
+  const playNoteId = activeConversation.vaultFile ? null : activeConversation.id;
+  useEffect(() => {
+    if (!playNoteId) return;
+    const family = new Set(documentFamilyIds(playNoteId));
+    setPlayContent(playNoteId, playQuestions(flashcards.scheduled.filter(({ card }) => family.has(card.docId)).map(({ card }) => card),
+      (docId) => state.conversations[docId]?.title));
+  }, [playNoteId, flashcards.scheduled, state.conversations, documentFamilyIds]);
   useEffect(() => {
     if (!playPages.length) return;
     const counts: Record<string, number> = {};

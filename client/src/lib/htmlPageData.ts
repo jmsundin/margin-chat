@@ -49,3 +49,16 @@ export function sameHtmlPageData(a: Record<string, string>, b: Record<string, st
   const keys = Object.keys(a);
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
 }
+
+/** Where this device keeps what a page saved in its localStorage, per page document. */
+const htmlStorageKey = (documentId: string) => `margin-chat:html-page-storage:${documentId}`;
+
+/** This device's copy of what a page saved: read at once when the page opens, and the copy that works offline. */
+export function loadHtmlStorage(documentId: string): HtmlPageData | null {
+  try { return decodeHtmlPageData(localStorage.getItem(htmlStorageKey(documentId))); } catch { return null; }
+}
+
+export function saveHtmlStorage(documentId: string, value: HtmlPageData) {
+  try { localStorage.setItem(htmlStorageKey(documentId), encodeHtmlPageData(value)); }
+  catch { /* Without room here the vault's copy still holds it. */ }
+}
