@@ -7,7 +7,7 @@ import { blockEditor } from "./blockEditor";
 
 const browser = new Window({ url: "http://document-links.test" });
 // These checks cover the classic rich-text document editor.
-browser.localStorage.setItem("margin-chat:document-editor", "classic");
+browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "HTMLDivElement", "HTMLInputElement", "HTMLTextAreaElement", "Element", "Node", "Text", "NodeFilter", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "ShadowRoot"]) {
   const value = name === "window" ? browser : (browser as any)[name];

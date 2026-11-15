@@ -1,10 +1,8 @@
 import { useSyncExternalStore } from "react";
 import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, readHoldSpacePreference, saveDictationButtonPreference, saveHoldSpacePreference, subscribeDictationButtonPreference } from "../lib/dictation";
-import { readDocumentEditorKind, saveDocumentEditorKind, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import { readQuietPage, saveQuietPage, subscribeQuietPage } from "../lib/quietPage";
 import { setFeature, useFeature } from "../lib/features";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "../lib/notebookPrefs";
-import type { MainViewMode } from "../types";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
 import { VAULT_SEARCH_DISCLOSURE, type VaultPassageIndex } from "../lib/useVaultPassageIndex";
 
@@ -40,14 +38,11 @@ function OptionGroup<T extends string>({ label, options, value, onChange }: {
   );
 }
 
-/** Theme, the main view and the document editor. */
-export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme, theme }: {
-  mainViewMode?: MainViewMode;
-  onSetMainViewMode?: (mode: MainViewMode) => void;
+/** Theme, the page and how the AI joins in. */
+export function AppearanceSettings({ onSetTheme, theme }: {
   onSetTheme?: (theme: ThemeMode) => void;
   theme?: ThemeMode;
 }) {
-  const documentEditor = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentEditorKind, () => "live" as const);
   const quietPage = useSyncExternalStore(subscribeQuietPage, readQuietPage, () => true);
   const notebook = useSyncExternalStore(subscribeNotebookPrefs, readNotebookPrefs, () => DEFAULT_NOTEBOOK_PREFS);
   return (
@@ -58,14 +53,6 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
           <p className="app-settings-description">Choose the workspace theme, or use the quick toggle in the sidebar footer.</p>
         </div>
         <OptionGroup label="Theme" onChange={onSetTheme} options={[["dark", "Dark"], ["light", "Light"]]} value={theme} />
-      </div> : null}
-
-      {mainViewMode && onSetMainViewMode ? <div className="app-settings-section">
-        <div className="app-settings-copy">
-          <span className="app-settings-label">Main view</span>
-          <p className="app-settings-description">Pick whether the main workspace opens in focused chat panels, a thread gallery, or the full graph canvas.</p>
-        </div>
-        <OptionGroup label="Main view" onChange={onSetMainViewMode} options={[["chat", "Chat"], ["tiles", "Tiles"]]} value={mainViewMode} />
       </div> : null}
 
       <div className="app-settings-section app-settings-switch-section">
@@ -106,16 +93,6 @@ export function AppearanceSettings({ mainViewMode, onSetMainViewMode, onSetTheme
           options={[["right", "Right margin"], ["marks", "Marks only"]]} value={notebook.marginMode} />
       </div>
 
-      <div className="app-settings-section app-settings-switch-section">
-        <div className="app-settings-copy">
-          <label className="app-settings-label" htmlFor="classic-document-editor">Classic document editor</label>
-          <p className="app-settings-description" id="classic-document-editor-disclosure">
-            Documents open in Live Preview, which shows Markdown only on the line you&apos;re editing, like Obsidian. Turn this on for the earlier editor with a grip and toolbar on each block.
-          </p>
-        </div>
-        <input id="classic-document-editor" type="checkbox" role="switch" aria-describedby="classic-document-editor-disclosure"
-          checked={documentEditor === "classic"} onChange={(event) => saveDocumentEditorKind(event.target.checked ? "classic" : "live")} />
-      </div>
     </div>
   );
 }

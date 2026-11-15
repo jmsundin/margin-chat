@@ -8,7 +8,7 @@ const browser = new Window({ url: "http://map-document-zoom.test/" });
 // The full map ⋯ menu is the "More map tools" feature (Settings → Features); these tests use it switched on.
 browser.localStorage.setItem("margin-chat:features", JSON.stringify({ mapTools: true }));
 // These checks cover the classic rich-text document editor.
-browser.localStorage.setItem("margin-chat:document-editor", "classic");
+browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 startMapsInGroupedView(browser.localStorage as unknown as Storage);
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", "ShadowRoot"]) {
   const value = name === "window" ? browser : (browser as any)[name];

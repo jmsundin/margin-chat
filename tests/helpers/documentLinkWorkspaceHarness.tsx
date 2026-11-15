@@ -7,7 +7,7 @@ import { billingUser } from "./billingFixture";
 
 const browser = new Window({ url: "http://document-links.test" });
 // These checks cover the classic rich-text document editor.
-browser.localStorage.setItem("margin-chat:document-editor", "classic");
+browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 // These cover the full toolbars; the quiet page (on by default) hides some of them until hovered.
 browser.localStorage.setItem("margin-chat:quiet-page", "false");
 const mobileSelectionTest = process.env.TEST_MOBILE_SELECTION === "1";
