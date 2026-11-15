@@ -5,6 +5,7 @@ import { loadMigrations, migrateDatabase } from "../server/db/migrations.mjs";
 import * as repository from "../server/db/interfaceSettingsRepository.mjs";
 import { createInterfaceSettingsService } from "../server/interfaceSettings/index.mjs";
 import { setApiTransport } from "../client/src/lib/apiTransport";
+import { readDocumentEditorKind } from "../client/src/lib/documentEditorPreference";
 import { onSyncedSettingChange, startInterfaceSettingsSync, writeSyncedSetting } from "../client/src/lib/interfaceSettings";
 import {
   FEATURES_KEY, applyFeaturePreset, featuresFromUsage, hasFeatureChoices, matchingPreset, parseFeatures, readFeatures, matchFeatures, saveFeatures, setFeature, unchosenFeatures,
@@ -124,6 +125,14 @@ describe("interface settings sync on a device", () => {
     writeSyncedSetting("margin-chat-theme", "dark");
     await settle(700);
     expect(browser.sent.length).toBe(before);
+  });
+
+  test("documents open in Live Preview even where the classic editor was chosen before", async () => {
+    browser = fakeBrowser({ "margin-chat:document-editor": "classic" });
+    browser.store.set("margin-chat:document-editor", "classic");
+    stop = startInterfaceSettingsSync("u1");
+    await settle();
+    expect(readDocumentEditorKind()).toBe("live");
   });
 });
 

@@ -3,7 +3,7 @@ import { Window } from "happy-dom";
 import type { Conversation } from "../../client/src/types";
 
 const browser = new Window({ url: "http://agent-follow-up.test" });
-browser.localStorage.setItem("margin-chat:document-editor", "classic");
+browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 Object.defineProperty(globalThis, "localStorage", { configurable: true, value: browser.localStorage });
 for (const name of ["window", "document", "navigator", "HTMLElement", "Element", "Node", "Text", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "HTMLInputElement", "HTMLTextAreaElement", "ShadowRoot"]) {
   const value = name === "window" ? browser : (browser as any)[name];

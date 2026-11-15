@@ -6,7 +6,7 @@ import "./LazyRichDocumentEditor.css";
 /** Each editor and its libraries load in their own chunk. */
 export const loadClassicDocumentEditor = () => import("./RichDocumentEditor");
 export const loadLiveDocumentEditor = () => import("./LiveDocumentEditor");
-/** Loads whichever document editor this device uses. */
+/** Loads the document editor (Live Preview; the old editor only under the test flag). */
 export const loadRichDocumentEditor = () => readDocumentEditorKind() === "classic" ? loadClassicDocumentEditor() : loadLiveDocumentEditor();
 const ClassicDocumentEditor = lazy(loadClassicDocumentEditor);
 const LiveDocumentEditor = lazy(loadLiveDocumentEditor);

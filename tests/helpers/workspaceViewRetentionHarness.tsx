@@ -6,7 +6,7 @@ import { billingUser } from "./billingFixture";
 
 const browser = new Window({ url: "http://workspace-view-retention.test" });
 // These checks cover the classic rich-text document editor.
-browser.localStorage.setItem("margin-chat:document-editor", "classic");
+browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 // Tile view is an opt-in feature (Settings → Features); this test switches between Document and Tiles.
 browser.localStorage.setItem("margin-chat:features", JSON.stringify({ tiles: true }));
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
