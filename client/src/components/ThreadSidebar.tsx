@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useProgressiveList } from "../lib/useProgressiveList";
 import { useSuggestedDocumentTitle } from "../lib/documentTitleSuggestion";
 import { ConversationGroupSelect } from "./ConversationGroupControls";
@@ -1359,7 +1360,9 @@ export default function ThreadSidebar({
         </button>
       </div>
 
-      {openMenuState ? (
+      {/* The menu and dialogs render at the page level: inside the sidebar's layer, the Map or a
+          roadmap beside it would cover them. */}
+      {openMenuState ? createPortal(
         <div
           aria-label="Thread actions"
           className="thread-item-menu"
@@ -1434,9 +1437,9 @@ export default function ThreadSidebar({
               </div>
             ))}
         </div>
-      ) : null}
+      , document.body) : null}
 
-      {renameTarget ? (
+      {renameTarget ? createPortal(
         <div
           className="thread-dialog-backdrop"
           onClick={() => setRenameTarget(null)}
@@ -1496,9 +1499,9 @@ export default function ThreadSidebar({
             </form>
           </section>
         </div>
-      ) : null}
+      , document.body) : null}
 
-      {deleteTarget ? (
+      {deleteTarget ? createPortal(
         <div
           className="thread-dialog-backdrop"
           onClick={() => setDeleteTarget(null)}
@@ -1545,7 +1548,7 @@ export default function ThreadSidebar({
             </div>
           </section>
         </div>
-      ) : null}
+      , document.body) : null}
     </aside>
   );
 }

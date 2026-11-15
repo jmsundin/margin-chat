@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { Conversation, RoadmapNode, RoadmapStatus } from "../types";
 import { getEditableDocument } from "../lib/editableDocument";
 import {
@@ -435,7 +436,8 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
         const nodeId = newRoadmapId("node");
         if (changeIn(adding.roadmapId, { kind: "add-node", stageId: adding.stageId, target, nodeId })) setAdding(null);
       }} onCancel={() => setAdding(null)} /> : null}
-    {relinking ? <div className="roadmap-picker" role="dialog" aria-modal="true" aria-label="Relink step"
+    {/* Pickers render at the page level, so the Map pane or the sidebar can't cover them. */}
+    {relinking ? createPortal(<div className="roadmap-picker" role="dialog" aria-modal="true" aria-label="Relink step"
       onPointerDown={(event) => { if (event.target === event.currentTarget) setRelinking(null); }}>
       <div className="roadmap-picker-card">
         <DocumentLinkPicker conversations={conversations} sourceConversationId={relinking.roadmapId} heading="Point this step at another document"
@@ -445,7 +447,7 @@ export default function RoadmapView({ conversation, conversations, onChange, onO
             setRelinking(null);
           }} />
       </div>
-    </div> : null}
+    </div>, document.body) : null}
   </section>;
 }
 
@@ -454,7 +456,7 @@ function AddStepDialog({ adding, conversations, roadmapId, stageTitle, onCreate,
   onCreate?: (title: string) => void; onPick: (target: RoadmapNode["target"]) => void; onCancel: () => void;
 }) {
   const [title, setTitle] = useState("");
-  return <div className="roadmap-picker" role="dialog" aria-modal="true" aria-label={`Add a step to ${stageTitle}`}
+  return createPortal(<div className="roadmap-picker" role="dialog" aria-modal="true" aria-label={`Add a step to ${stageTitle}`}
     onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel(); }}>
     <div className="roadmap-picker-card" data-stage={adding.stageId}>
       {onCreate ? <form className="roadmap-new-step" onSubmit={(event) => { event.preventDefault(); if (title.trim()) onCreate(title.trim()); }}>
@@ -470,7 +472,7 @@ function AddStepDialog({ adding, conversations, roadmapId, stageTitle, onCreate,
         heading={onCreate ? "Use a document or block" : "Add a document or block as a step"} onCancel={onCancel}
         onSelect={(target) => onPick({ docId: target.conversationId, ...(target.blockId ? { blockId: target.blockId } : {}) })} />
     </div>
-  </div>;
+  </div>, document.body);
 }
 
 /** What a document says, read here when it can't be opened beside the roadmap. */

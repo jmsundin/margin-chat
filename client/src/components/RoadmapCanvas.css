@@ -34,7 +34,7 @@
 .roadmap .roadmap-canvas-stage-more:hover { background: color-mix(in srgb, var(--ink) 8%, transparent); color: var(--ink); }
 .roadmap-canvas-menu {
   background: var(--panel-strong, var(--bg)); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow, 0 10px 30px rgba(0, 0, 0, .14));
-  cursor: auto; display: flex; flex-direction: column; min-width: 150px; padding: 4px; position: absolute; right: 8px; top: 36px; z-index: 950;
+  cursor: auto; display: flex; flex-direction: column; min-width: 150px; padding: 4px; position: absolute; right: 8px; top: 36px; z-index: 11;
 }
 .roadmap .roadmap-canvas-menu button { background: transparent; border: 0; border-radius: 7px; color: var(--ink); cursor: pointer; font-size: .78rem; padding: 7px 10px; text-align: left; }
 .roadmap .roadmap-canvas-menu button:hover:not(:disabled) { background: var(--accent-soft); }
@@ -115,7 +115,7 @@ span.roadmap-canvas-mark { cursor: default; font-size: .8rem; }
 /* The Map view's controls, kept clear of the open document. */
 .roadmap-canvas-controls {
   background: var(--panel-strong, var(--bg)); border: 1px solid var(--line); border-radius: 10px; bottom: calc(12px + var(--roadmap-cover-bottom, 0px)); box-shadow: 0 4px 14px rgba(0, 0, 0, .08);
-  display: flex; gap: 2px; padding: 3px; position: absolute; right: calc(12px + var(--roadmap-cover-right, 0px)); z-index: 960;
+  display: flex; gap: 2px; padding: 3px; position: absolute; right: calc(12px + var(--roadmap-cover-right, 0px)); z-index: 12;
 }
 .roadmap .roadmap-canvas-controls button { background: transparent; border: 0; border-radius: 7px; color: var(--ink); cursor: pointer; font-size: .8rem; height: 30px; min-width: 32px; padding: 0 8px; }
 .roadmap .roadmap-canvas-controls button:hover { background: var(--accent-soft); }

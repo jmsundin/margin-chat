@@ -1,4 +1,4 @@
-.ai-access-backdrop { position: fixed; inset: 0; z-index: 5000; background: #0006; display: grid; place-items: center; padding: 20px; }
+.ai-access-backdrop { position: fixed; inset: 0; z-index: var(--z-alert); background: #0006; display: grid; place-items: center; padding: 20px; }
 .ai-access-dialog { width: min(460px, 100%); max-height: calc(100dvh - 40px); overflow: auto; padding: 20px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel-strong); color: var(--ink); box-shadow: 0 18px 60px #0005; display: grid; gap: 12px; }
 .ai-access-dialog header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .ai-access-dialog header strong { font-size: 1.1rem; }

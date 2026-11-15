@@ -16,7 +16,7 @@
 [data-mode="review"] > .document-mode-dot { background: #b4483a; }
 
 .document-mode-menu {
-  position: fixed; z-index: 200; box-sizing: border-box; width: min(290px, calc(100vw - 16px));
+  position: fixed; z-index: var(--z-popover); box-sizing: border-box; width: min(290px, calc(100vw - 16px));
   max-height: calc(100dvh - 16px); overflow: auto; padding: 5px;
   border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink);
   box-shadow: 0 8px 24px #0003; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
