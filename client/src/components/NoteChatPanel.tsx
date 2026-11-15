@@ -3,7 +3,7 @@ import { createPortal } from "react-dom";
 import type { Message } from "../types";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
 import { renderMermaidBlocksIn } from "../lib/mermaidDiagrams";
-import { splitTryNext, TRY_NEXT_HEADING } from "../lib/noteChat";
+import { PLAY_STARTERS, splitTryNext, TRY_NEXT_HEADING } from "../lib/noteChat";
 import { loadTextDraft, saveTextDraft } from "../lib/textDrafts";
 import "./NoteChatPanel.css";
 
@@ -21,6 +21,8 @@ export interface NoteChatPanelProps {
   draftKey?: string;
   /** How the AI works in this note (Tell the AI, how it joins in), under the title. */
   settings?: ReactNode;
+  /** Play: asking about a game or exercise on screen, so the panel offers a tutor's questions and the AI sees the screen. */
+  play?: boolean;
 }
 
 function Answer({ content }: { content: string }) {
@@ -43,7 +45,7 @@ function TryNext({ items, onPick, label = TRY_NEXT_HEADING }: { items: string[];
  * Ask: a quiet panel at the right of the page. Answers use the whole note, quote
  * the passages they lean on, and end with a short "Try next" list; picking one puts it in the box.
  */
-export default function NoteChatPanel({ open, title, messages, pending, onAsk, onStop, onClose, draftKey, settings }: NoteChatPanelProps) {
+export default function NoteChatPanel({ open, title, messages, pending, onAsk, onStop, onClose, draftKey, settings, play = false }: NoteChatPanelProps) {
   const [draft, setDraftText] = useState(() => draftKey ? loadTextDraft(draftKey) : "");
   const setDraft = (text: string) => {
     setDraftText(text);
@@ -106,14 +108,20 @@ export default function NoteChatPanel({ open, title, messages, pending, onAsk, o
       {turns.length ? turns.map((message) => message.role === "user"
         ? <p key={message.id} className="note-chat-question">{message.content}</p>
         : <Answer key={message.id} content={message.content} />) : <>
-        <p className="note-chat-intro">Ask anything about this note. Answers use the whole note and quote the passages they lean on.</p>
-        <TryNext items={STARTERS} onPick={pick} label="Start with" />
+        {play ? <>
+          <p className="note-chat-intro">Ask about what's on screen. The AI sees the page as it looks now, what you typed into it and your notes on it.</p>
+          {/* A tutor's questions are asked straight away: a hint is wanted now, not edited first. */}
+          <TryNext items={PLAY_STARTERS} onPick={(item) => { if (!pending) onAsk(item); }} label="Start with" />
+        </> : <>
+          <p className="note-chat-intro">Ask anything about this note. Answers use the whole note and quote the passages they lean on.</p>
+          <TryNext items={STARTERS} onPick={pick} label="Start with" />
+        </>}
       </>}
-      {waiting ? <p className="note-chat-thinking" role="status">Reading the note…</p> : null}
+      {waiting ? <p className="note-chat-thinking" role="status">{play ? "Looking at the screen…" : "Reading the note…"}</p> : null}
       <TryNext items={lastAnswer} onPick={pick} />
     </div>
     <form className="note-chat-form" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-      <textarea ref={inputRef} rows={2} value={draft} placeholder="Ask about this note…" aria-label="Ask about this note"
+      <textarea ref={inputRef} rows={2} value={draft} placeholder={play ? "Ask about what's on screen…" : "Ask about this note…"} aria-label={play ? "Ask about what's on screen" : "Ask about this note"}
         onChange={(event) => setDraft(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit(); }

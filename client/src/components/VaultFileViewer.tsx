@@ -7,7 +7,8 @@ import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
 import { publishPdfNavigation } from "../lib/pdfNavigation";
 import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
-import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect } from "../lib/htmlDocuments";
+import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
+import { registerHtmlScreen } from "../lib/htmlScreens";
 import {
   imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, pdfPageFromSourceId, pdfPageSourceId, pdfPageText, vaultFileTitle,
   type ImageArea,
@@ -715,6 +716,19 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   const sendAnchors = () => frameRef.current?.contentWindow?.postMessage({ marginHtml: 1, type: "anchors", anchors: anchorsRef.current }, "*");
   useEffect(sendAnchors, [anchors]);
 
+  // Play asks what the page shows now: the part of the frame inside the window, read by the bridge.
+  const screenRequests = useRef(new Map<string, (screen: HtmlScreen | null) => void>());
+  useEffect(() => registerHtmlScreen(props.conversation.id, () => new Promise((resolve) => {
+    const frame = frameRef.current;
+    if (!frame?.contentWindow) { resolve(null); return; }
+    const box = frame.getBoundingClientRect();
+    const requestId = `screen-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const timeout = window.setTimeout(() => { screenRequests.current.delete(requestId); resolve(null); }, 1_500);
+    screenRequests.current.set(requestId, (screen) => { window.clearTimeout(timeout); resolve(screen); });
+    frame.contentWindow.postMessage({ marginHtml: 1, type: "read-screen", requestId,
+      top: Math.max(0, -box.top), bottom: Math.max(0, Math.min(box.height, window.innerHeight - box.top)) }, "*");
+  })), [props.conversation.id]);
+
   useEffect(() => {
     function receive(event: MessageEvent) {
       const frame = frameRef.current;
@@ -738,6 +752,10 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
         setMarks(message.marks.filter((mark) => anchorsRef.current.some((anchor) => anchor.id === mark.id)));
       } else if (message.type === "open") {
         if (anchorsRef.current.some((anchor) => anchor.id === message.id)) current.onOpenBranch(message.id);
+      } else if (message.type === "screen") {
+        const answer = screenRequests.current.get(message.requestId);
+        screenRequests.current.delete(message.requestId);
+        answer?.(message.screen);
       } else if (message.type === "storage") {
         saveHtmlStorage(current.conversation.id, message.data);
       } else if (message.type === "clear") {

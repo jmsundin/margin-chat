@@ -44,3 +44,10 @@
   .document-mode-menu button { min-height: 48px; }
   .document-mode-name kbd { display: none; }
 }
+
+/* Play: the bar above an HTML page (a game, quiz or exercise). It stays in reach while the page scrolls. */
+.play-bar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; padding: 6px 0; font-size: 12.5px; color: var(--muted); background: var(--bg); }
+.play-bar button { padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--button-surface); color: var(--ink); font: inherit; cursor: pointer; }
+.play-bar button.is-primary { border-color: transparent; background: var(--sage); color: var(--bg); font-weight: 600; }
+.play-bar button:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+.play-bar-label { margin-right: 4px; font-weight: 600; color: var(--sage); letter-spacing: 0.02em; }
