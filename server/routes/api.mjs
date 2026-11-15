@@ -5,6 +5,7 @@ import {
   readRawBody,
   sendJson,
 } from "../http/json.mjs";
+import { buildAccountExport } from "../account/accountExport.mjs";
 import { createRateLimiter, createSharedRateLimiter, getClientAddress } from "../http/rateLimit.mjs";
 import { createNdjsonResponse, sendStreamingJson } from "../http/streamingJson.mjs";
 import { createChatExecutionService } from "../chat/execution.mjs";
@@ -570,6 +571,15 @@ export function createApiHandler({
           "Cache-Control": "no-store",
           "Set-Cookie": result.cookie,
         });
+        return;
+      }
+
+      if (route?.id === "accountExport") {
+        // The account's own data, for Download vault; only from Margin Chat itself, never an extension or app token.
+        if (workspaceCredential || request.headers["sec-fetch-site"] === "cross-site") {
+          throw new HttpError(403, "Download your data from Margin Chat.");
+        }
+        sendJson(response, 200, await buildAccountExport({ database, user: authContext.user }), { "Cache-Control": "private, no-store" });
         return;
       }
 

@@ -2,7 +2,8 @@ import { apiFetch } from "./apiTransport";
 import { isAppUpdateLocked, useAppUpdateGuard } from "./appUpdateSafety";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { AppState, AuthenticatedUser } from "../types";
-import type { StateUploadProgress } from "./api";
+import { requestAccountExport, type StateUploadProgress } from "./api";
+import { GUEST_USER_ID } from "./guestMode";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
 import { createVaultTransport } from "./vaultApi";
 import { FolderChangingError } from "./fileSnapshot";
@@ -1266,7 +1267,12 @@ export function useMarkdownVault(args: {
         await cacheAttachments();
         const local = await engine.read();
         const snapshot = enabledRef.current ? local : { ...local, files: await withCloudOnlyFiles(local.files) };
-        const blob = new Blob([new Uint8Array(exportVault(snapshot)).buffer], { type: "application/zip" });
+        // What the account keeps outside the vault (flashcard reviews, language words, billing history) goes in too.
+        const account = user.id === GUEST_USER_ID ? undefined : await requestAccountExport().then(
+          (data) => data ?? undefined,
+          (error) => ({ schemaVersion: 1, missing: ["all"], error: error instanceof Error && error.message ? error.message : "Your account data couldn't be read; try Download vault again." }),
+        );
+        const blob = new Blob([new Uint8Array(exportVault(snapshot, account)).buffer], { type: "application/zip" });
         const url = URL.createObjectURL(blob);
         const link = document.createElement("a");
         link.href = url; link.download = `margin-chat-vault-${new Date().toISOString().slice(0, 10)}.zip`;

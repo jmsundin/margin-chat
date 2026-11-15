@@ -761,9 +761,13 @@ export function createVaultStoreWithMemoryFallback(saved: VaultStore, fallBack: 
   };
 }
 
-export function exportVault(snapshot: VaultSnapshot): Uint8Array {
+/** Account data kept outside the vault, written beside it in a download and never imported back as a vault file. */
+export const ACCOUNT_EXPORT_FILE = "margin-chat-account.json";
+
+export function exportVault(snapshot: VaultSnapshot, account?: unknown): Uint8Array {
   const files: Record<string, Uint8Array> = {};
   for (const [path, file] of Object.entries(snapshot.files)) files[path] = vaultFileBytes(file);
+  if (account !== undefined) files[ACCOUNT_EXPORT_FILE] = strToU8(JSON.stringify(account, null, 2));
   const info = {
     schemaVersion: 1,
     exportedAt: new Date().toISOString(),
@@ -787,7 +791,7 @@ export function importVault(bytes: Uint8Array, include: (path: string) => boolea
   const info = archive["vault-export.json"] ? JSON.parse(new TextDecoder().decode(archive["vault-export.json"])) : { files: {} };
   const files: Record<string, VaultFile> = {};
   for (const [path, data] of Object.entries(archive)) {
-    if (path === "vault-export.json") continue;
+    if (path === "vault-export.json" || path === ACCOUNT_EXPORT_FILE) continue;
     const metadata = info.files?.[path] ?? {};
     const binary = metadata.encoding === "base64" || !/\.(md|markdown|json|txt)$/iu.test(path);
     files[path] = { content: binary ? bytesToBase64(data) : new TextDecoder("utf-8", { fatal: true }).decode(data),

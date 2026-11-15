@@ -36,6 +36,7 @@ export const API_ROUTES = Object.freeze([
   { id: "authProfile", methods: ["PUT"], path: "/api/auth/profile" },
   { id: "passwordChange", methods: ["POST"], path: "/api/auth/password/change" },
   { id: "accountDelete", methods: ["POST"], path: "/api/auth/account/delete" },
+  { id: "accountExport", methods: ["GET"], path: "/api/auth/account/export" },
   { id: "apiKeysRead", methods: ["GET"], path: "/api/settings/api-keys" },
   { id: "apiKeysWrite", methods: ["PUT"], path: "/api/settings/api-keys" },
   { id: "flashcardsSync", methods: ["POST"], path: "/api/flashcards/sync" },
