@@ -966,10 +966,10 @@ export default function ThreadSidebar({
         <div className="sidebar-secondary-row">
           <button
             aria-label="Search documents"
-            aria-keyshortcuts="Meta+O Control+O Meta+K Control+K"
+            aria-keyshortcuts="Meta+K Control+K"
             className="sidebar-search-button"
             onClick={onOpenSearch}
-            title="Search documents (⌘O / Ctrl+O)"
+            title="Search your vault (⌘K / Ctrl+K). Open or create a document by title: ⌘O / Ctrl+O"
             type="button"
           >
             <SearchIcon />

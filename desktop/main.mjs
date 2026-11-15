@@ -248,6 +248,11 @@ function vaultMenuAction(window, action) {
   );
 }
 
+/** Cmd+O: the page's title-only switcher, which makes the document when no title matches. */
+function openQuickSwitcher(window) {
+  void window?.webContents.executeJavaScript(`window.dispatchEvent(new CustomEvent("margin:quick-switcher"))`);
+}
+
 function buildAppMenu() {
   const isMac = process.platform === "darwin";
   const vaultItems = NATIVE_VAULT ? [
@@ -257,7 +262,11 @@ function buildAppMenu() {
   ] : [];
   const template = [
     ...(isMac ? [{ role: "appMenu" }] : []),
-    { label: "File", submenu: [...vaultItems, isMac ? { role: "close" } : { role: "quit" }] },
+    { label: "File", submenu: [
+      { label: "Open or Create Document…", accelerator: "CmdOrCtrl+O", click: (_item, window) => openQuickSwitcher(window) },
+      { type: "separator" },
+      ...vaultItems, isMac ? { role: "close" } : { role: "quit" },
+    ] },
     { role: "editMenu" },
     {
       label: "View",
