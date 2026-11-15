@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReference } from "../types";
 import { useVaultMedia } from "../lib/vaultMedia";
+import { htmlAssetContentType, htmlAssetPath, htmlPageHasAssets, inlineHtmlAssets } from "../lib/htmlAssets";
 import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
 import { publishPdfNavigation } from "../lib/pdfNavigation";
@@ -711,6 +712,14 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
     void mediaRef.current?.writeText?.(pending.path, encodeHtmlPageData(pending.value)).catch(() => undefined);
   };
 
+  /** A file beside the page, from the page's own folder in the vault; null when there is none or the page may not have it. */
+  const readAsset = async (pagePath: string, relative: string) => {
+    const path = htmlAssetPath(pagePath, relative);
+    const found = path ? await mediaRef.current?.read(path).catch(() => null) : null;
+    // Only the exact file: an embed's looser matching by name would reach outside the folder.
+    return found && found.path === path ? new Blob([found.blob], { type: htmlAssetContentType(path) }) : null;
+  };
+
   useEffect(() => {
     let cancelled = false;
     setHtml(null); setHeight(null); setMarks([]);
@@ -719,7 +728,11 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
     const local = loadHtmlStorage(documentId);
     // The copy saved last wins: this device's, or the one another device put in the vault.
     const fromVault = Promise.resolve(mediaRef.current?.readText?.(dataPath)).then(decodeHtmlPageData, () => null);
-    Promise.all([props.blob.text().catch(() => ""), fromVault]).then(([text, vault]) => {
+    const pagePath = props.file.path;
+    // Scripts and stylesheets the page's markup names are read from its folder before it starts.
+    const page = props.blob.text().catch(() => "").then((text) => htmlPageHasAssets(pagePath)
+      ? inlineHtmlAssets(text, async (relative) => (await readAsset(pagePath, relative))?.text() ?? null).catch(() => text) : text);
+    Promise.all([page, fromVault]).then(([text, vault]) => {
       if (cancelled) return;
       const saved = newerHtmlPageData(local, vault);
       if (saved && saved !== local) saveHtmlStorage(documentId, saved);
@@ -734,7 +747,7 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   }, [props.blob, props.conversation.id, props.file.path]);
 
   // The page's saved storage is read once as it opens; later saves don't reload the frame.
-  const source = useMemo(() => html === null ? null : htmlFrameDocument(html.text, html.storage), [html]);
+  const source = useMemo(() => html === null ? null : htmlFrameDocument(html.text, html.storage, htmlPageHasAssets(props.file.path)), [html]);
   const anchors = useMemo<HtmlAnchor[]>(() => props.anchors.filter((link) => link.anchor.sourceMessageId === HTML_SOURCE_ID)
     .map((link) => ({ id: link.branchConversationId, quote: link.anchor.quote, start: link.anchor.startOffset, end: link.anchor.endOffset })), [props.anchors]);
   const anchorsRef = useRef(anchors);
@@ -788,6 +801,11 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
         if (anchorsRef.current.some((anchor) => anchor.id === message.id)) current.onOpenBranch(message.id);
       } else if (message.type === "content-request") {
         sendContent();
+      } else if (message.type === "asset-request") {
+        const { id } = message;
+        void readAsset(current.file.path, message.path).catch(() => null).then((blob) => {
+          if (frameRef.current === frame) frame.contentWindow?.postMessage({ marginHtml: 1, type: "asset", id, blob }, "*");
+        });
       } else if (message.type === "screen") {
         const answer = screenRequests.current.get(message.requestId);
         screenRequests.current.delete(message.requestId);

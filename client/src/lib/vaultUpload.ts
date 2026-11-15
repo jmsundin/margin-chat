@@ -29,6 +29,7 @@ export interface VaultUploadPlan {
 
 const MARKDOWN = /\.(?:md|markdown|txt)$/iu;
 const ZIP = /\.zip$/iu;
+const HTML_PAGE = /\.html?$/iu;
 /** Zips made by macOS carry resource forks and Finder files that aren't notes. */
 const ZIP_JUNK = /(?:^|\/)(?:__MACOSX|\.DS_Store$|\._)/u;
 
@@ -51,6 +52,23 @@ function withoutSharedFolder(files: Record<string, VaultFile>) {
   return Object.fromEntries(paths.map((path) => [path.slice(top.length + 1), files[path]!]));
 }
 
+/**
+ * A zip of a web page and the files it loads (a game with its scripts and engines) stays together in
+ * a folder named after the zip, where the page can reach them; `index.html` takes the zip's name so
+ * the sidebar says what it is. Null for a zip of notes, which keeps its own layout.
+ */
+function pageBundle(files: Record<string, VaultFile>, zipName: string, taken: Set<string>) {
+  const paths = Object.keys(files);
+  if (files["vault-export.json"] || files["workspace.json"] || paths.some((path) => MARKDOWN.test(path))) return null;
+  const pages = paths.filter((path) => HTML_PAGE.test(path) && !path.includes("/"));
+  if (!pages.length || !paths.some((path) => !isVaultFileDocumentPath(path) || path.includes("/"))) return null;
+  const name = fileBase(zipName);
+  let folder = name;
+  for (let copy = 2; [...taken].some((path) => path.startsWith(`${folder.toLowerCase()}/`)); copy += 1) folder = `${name} ${copy}`;
+  const main = paths.includes(`${name}.html`) ? undefined : pages.find((path) => /^index\.html?$/iu.test(path));
+  return Object.fromEntries(paths.map((path) => [`${folder}/${path === main ? `${name}.html` : path}`, files[path]!]));
+}
+
 export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<string>, now = Date.now()): VaultUploadPlan {
   const taken = new Set([...existingPaths].map((path) => path.toLowerCase()));
   const plan: VaultUploadPlan = { files: {}, createdAtByPath: {}, added: [], skipped: [] };
@@ -67,7 +85,7 @@ export function planVaultUpload(uploads: VaultUpload[], existingPaths: Iterable<
           continue;
         }
         // A zip keeps no dates we can read, so its notes count from the upload (a note's own `created` still wins).
-        for (const [path, file] of Object.entries(files)) {
+        for (const [path, file] of Object.entries(pageBundle(files, upload.name, taken) ?? files)) {
           plan.files[path] = file; plan.createdAtByPath[path] = createdAt(0); taken.add(path.toLowerCase());
         }
         plan.added.push(upload.name);
