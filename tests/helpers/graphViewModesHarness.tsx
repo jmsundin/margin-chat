@@ -4,6 +4,8 @@ import type { GraphEvidenceRef } from "../../client/src/lib/graphExploration";
 import type { GraphNodeLayout } from "../../client/src/types";
 
 const browser = new Window({ url: "http://graph-view-modes.test/" });
+// The full map ⋯ menu is the "More map tools" feature (Settings → Features); these tests use it switched on.
+browser.localStorage.setItem("margin-chat:features", JSON.stringify({ mapTools: true }));
 // ELK, behind Auto-arrange, reads JavaScript built-ins such as Error and Math from the window,
 // which older Bun runtimes leave off happy-dom's window.
 for (const name of Object.getOwnPropertyNames(globalThis)) {

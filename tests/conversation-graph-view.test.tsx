@@ -471,7 +471,9 @@ describe("conversation graph view", () => {
 
     expect(markup).toContain("Click a chat for a preview");
     expect(markup).not.toContain('aria-label="Select multiple chats"');
-    expect(markup).toContain('aria-label="Map view"');
+    // The view tabs are part of More map tools (off by default); the scope switch is always there.
+    expect(markup).toContain('aria-label="How much of the map"');
+    expect(markup).not.toContain('aria-label="Map view"');
     expect(markup).not.toContain('aria-label="Clusters view"');
     expect(markup).toContain('aria-pressed="false"');
     expect(markup).not.toContain("conversation-graph-header");

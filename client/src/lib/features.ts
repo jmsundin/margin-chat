@@ -11,11 +11,11 @@ import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
  *   as they are, and a board still opens as a board.
  * The choices are saved to the account (see interfaceSettings.ts), so every device matches.
  */
-export type FeatureId = "flashcards" | "roadmaps" | "boards" | "claims" | "voice";
+export type FeatureId = "flashcards" | "roadmaps" | "boards" | "claims" | "voice" | "groups" | "spaces" | "outline" | "tiles" | "mapTools";
 
 export interface FeatureInfo {
   id: FeatureId;
-  group: "Think" | "Learn" | "Capture";
+  group: "Think" | "Learn" | "Capture" | "Organize";
   name: string;
   description: string;
   /** Where its controls appear when it is on, in the words the app uses. */
@@ -33,22 +33,32 @@ export const FEATURES: readonly FeatureInfo[] = [
     adds: "Quiz on the selection menu, “Make flashcards…” and “Review cards” in a document's ⋯ menu, Review in the sidebar" },
   { id: "voice", group: "Capture", name: "Voice typing", description: "Talk instead of typing in any text field.",
     adds: "The mic button in text fields and Hold Space to talk" },
+  { id: "groups", group: "Organize", name: "Groups", description: "Collect documents into named groups.",
+    adds: "A Groups tab in the sidebar, “New group” in the sidebar's ⋯ menu, “Group” in a document's ⋯ menu" },
+  { id: "spaces", group: "Organize", name: "Spaces", description: "Save a set of open documents to come back to.",
+    adds: "A Spaces tab in the sidebar, “Add to space” in a document's ⋯ menu" },
+  { id: "outline", group: "Organize", name: "Outline", description: "The open document's headings, to jump between.",
+    adds: "An Outline tab in the sidebar" },
+  { id: "tiles", group: "Organize", name: "Tile view", description: "Every open document side by side as tiles.",
+    adds: "The page and tiles switch at the top of the sidebar" },
+  { id: "mapTools", group: "Think", name: "More map tools", description: "Other ways to look at the map: themes, evidence, colours, line filters and the explorer.",
+    adds: "“Explore groups and sources”, views, colours and lines in the map's ⋯ menu" },
 ];
 
-export const FEATURE_GROUPS = ["Think", "Learn", "Capture"] as const;
+export const FEATURE_GROUPS = ["Think", "Learn", "Capture", "Organize"] as const;
 
 export type FeaturePreset = "simple" | "researcher" | "student" | "everything";
 export const FEATURE_PRESETS: readonly { id: FeaturePreset; name: string; features: readonly FeatureId[] }[] = [
   { id: "simple", name: "Simple", features: [] },
-  { id: "researcher", name: "Researcher", features: ["roadmaps", "claims"] },
-  { id: "student", name: "Student", features: ["flashcards", "voice"] },
+  { id: "researcher", name: "Researcher", features: ["roadmaps", "claims", "mapTools", "outline"] },
+  { id: "student", name: "Student", features: ["flashcards", "voice", "outline"] },
   { id: "everything", name: "Everything", features: FEATURES.map((feature) => feature.id) },
 ];
 
 export type FeatureSet = Readonly<Record<FeatureId, boolean>>;
 
 export const FEATURES_KEY = "margin-chat:features";
-const ALL_OFF: FeatureSet = { flashcards: false, roadmaps: false, boards: false, claims: false, voice: false };
+const ALL_OFF = Object.fromEntries(FEATURES.map(({ id }) => [id, false])) as unknown as FeatureSet;
 const listeners = new Set<() => void>();
 let cached: { raw: string | null; features: FeatureSet } | null = null;
 
@@ -73,6 +83,18 @@ export function readFeatures(): FeatureSet {
 /** Whether this device or the account has ever saved a choice (new accounts and existing ones differ here). */
 export function hasFeatureChoices(): boolean {
   return readRaw() !== null;
+}
+
+/**
+ * Features this device or account has never chosen for, because they were added after the
+ * choice was saved (or nothing was saved yet). Each one starts from what the person already uses.
+ */
+export function unchosenFeatures(): FeatureId[] {
+  const raw = readRaw();
+  let value: unknown = null;
+  try { value = raw ? JSON.parse(raw) : null; } catch { value = null; }
+  const chosen = value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+  return FEATURES.map(({ id }) => id).filter((id) => typeof chosen[id] !== "boolean");
 }
 
 export function saveFeatures(features: Partial<Record<FeatureId, boolean>>) {
@@ -113,9 +135,9 @@ export function useFeature(id: FeatureId): boolean {
 
 /**
  * Accounts that used Margin Chat before features existed keep what they already use on:
- * a roadmap means Roadmaps, a board means Boards, any flashcards mean Flashcards, and voice
- * typing stays on for anyone who had it. New accounts have none of these and start on Simple.
+ * a roadmap means Roadmaps, a board means Boards, any flashcards mean Flashcards, a group
+ * means Groups, a space means Spaces. New accounts have none of these and start on Simple.
  */
-export function featuresFromUsage(usage: { roadmaps: boolean; boards: boolean; flashcards: boolean; claims: boolean; voice: boolean }): FeatureSet {
+export function featuresFromUsage(usage: Partial<Record<FeatureId, boolean>>): FeatureSet {
   return { ...ALL_OFF, ...usage };
 }

@@ -1,3 +1,4 @@
+import { useFeature } from "../lib/features";
 import DismissibleDetails from "./DismissibleDetails";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
 import ConversationGraphView, { type ConversationGraphViewProps } from "./ConversationGraphView";
@@ -62,6 +63,7 @@ const hostname = (url: string) => { try { return new URL(url).hostname.replace(/
 const editable = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")));
 
 export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, pathRequest, ...personalProps }: Props) {
+  const mapTools = useFeature("mapTools");
   const [sourcesFor, setSourcesFor] = useState<string | "add" | null>(null);
   const [addedTopicId, setAddedTopicId] = useState<string | null>(null);
   const [personalFocus, setPersonalFocus] = useState<Props["focusRequest"]>(null);
@@ -435,7 +437,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
 
   // The map's ⋯ menu holds these, so its bar keeps only search, the scope and Roadmaps.
   const closeMenu = (element: HTMLElement) => element.closest("details")?.removeAttribute("open");
-  const menuActions = <>
+  // Bringing in sources and exploring topics come with More map tools; a plain map just adds notes.
+  const menuActions = !mapTools ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onCreateMapNote({}); }}>New note</button> : <>
     <span className="graph-map-menu-label">Add and explore</span>
     <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onCreateMapNote({}); }}>New note</button>
     {onAddTopicConnections && publicMapAccount ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); openSources("add"); }}>Add from Wikipedia</button> : null}

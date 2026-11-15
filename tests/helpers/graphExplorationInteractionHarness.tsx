@@ -6,6 +6,8 @@ import type { GraphEvidenceRef } from "../../client/src/lib/graphExploration";
 import { mapFamilySize } from "../../client/src/lib/graphFamilies";
 
 const browser = new Window({ url: "http://graph-exploration.test/" });
+// The full map ⋯ menu is the "More map tools" feature (Settings → Features); these tests use it switched on.
+browser.localStorage.setItem("margin-chat:features", JSON.stringify({ mapTools: true }));
 startMapsInGroupedView(browser.localStorage as unknown as Storage);
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "ResizeObserver", "DOMRect"]) {
   const value = name === "window" ? browser : (browser as any)[name];
