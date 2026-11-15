@@ -111,9 +111,33 @@ export interface LookupAnswer {
   partOfSpeech: string;
   /** Other common meanings of the word or phrase, shortest first. */
   others: string[];
+  /** The whole sentence in the reader's language, when a sentence came with the text. */
+  sentenceTranslation: string;
 }
 
-export interface LookupRequest { text: string; sentence: string; pair: LanguagePair }
+export interface LookupRequest {
+  text: string; sentence: string; pair: LanguagePair;
+  /** Dictionary senses already found for the text, so the AI picks the one that fits instead of inventing one. */
+  senses?: string[];
+}
+
+/** What has arrived of an answer still being written. */
+export interface PartialLookup { meaning: string; sentenceTranslation: string }
+
+/** Dictionary senses and a machine translation for a tapped word or phrase: the sources that answer at once. */
+export interface DictionarySense { pos: string; glosses: string[]; examples: Array<{ text: string; translation: string }>; formOf?: string }
+export interface DictionaryLookup {
+  term: string;
+  /** The spelling the dictionary has: `Und` at the start of a sentence is `und`. */
+  resolvedTerm: string;
+  lemma?: string;
+  wiktionary: { senses: DictionarySense[]; url: string; lemma: { term: string; senses: DictionarySense[]; url: string } | null } | null;
+  machine: { provider: "google" | "deepl"; term: string; sentence: string } | null;
+  /** False when this server has no machine translator set up. */
+  machineAvailable: boolean;
+  /** Sources that didn't answer this time. */
+  failed: string[];
+}
 
 /** A meaning the reader keeps: `from` is the language the looked-up text is in. */
 export interface SavedMeaning { text: string; meaning: string; sentence: string; pair: LanguagePair; from: string }
@@ -124,7 +148,9 @@ export interface DocumentLanguageLearning {
   pair: LanguagePair | null;
   /** Turns the mode on (with a pair) or off. Saved on the document, so it opens this way next time. */
   onChange: (pair: LanguagePair | null) => void;
-  lookUp: (request: LookupRequest, signal: AbortSignal) => Promise<LookupAnswer>;
+  lookUp: (request: LookupRequest, signal: AbortSignal, onPartial?: (partial: PartialLookup) => void) => Promise<LookupAnswer>;
+  /** Dictionary senses and a machine translation, without waiting for the AI. */
+  dictionary?: (request: { term: string; sentence: string; pair: LanguagePair }, signal: AbortSignal) => Promise<DictionaryLookup>;
   /** Keeps the meaning as a flashcard; returns the title of the document it went in. */
   save: (saved: SavedMeaning) => string;
   /** The meaning already saved for this text, if any. */
@@ -150,7 +176,9 @@ const LOOKUP_INSTRUCTION = [
   "The text is normally in the language being learned: give its meaning in the learner's own language.",
   "If the text is instead in the learner's own language, give how to say it in the language being learned.",
   "Answer with one JSON object and nothing else:",
-  '{"from":"<language code the text is in>","to":"<language code of your meaning>","meaning":"<the meaning, as short as a dictionary gloss; a full translation for a sentence>","note":"<one or two short sentences on how it is used in this sentence, in the learner\'s own language; empty for a plain word>","lemma":"<dictionary form if different from the text, else empty>","partOfSpeech":"<noun, verb, phrase, sentence…>","others":["<up to 3 other common meanings>"]}',
+  "When dictionary senses are given, choose the one that fits this sentence and say it in the learner's language; don't invent a sense the dictionary lacks unless none fits.",
+  "Write the fields in this order, so the meaning arrives first:",
+  '{"meaning":"<the meaning, as short as a dictionary gloss; a full translation for a sentence>","sentenceTranslation":"<the whole sentence in the learner\'s own language; empty when no sentence is given>","from":"<language code the text is in>","to":"<language code of your meaning>","note":"<one or two short sentences on how it is used in this sentence, in the learner\'s own language; empty for a plain word>","lemma":"<dictionary form if different from the text, else empty>","partOfSpeech":"<noun, verb, phrase, sentence…>","others":["<up to 3 other common meanings>"]}',
 ].join("\n");
 
 export function buildLookupMessages(request: LookupRequest, createId: (prefix: string) => string, now = new Date().toISOString()): Message[] {
@@ -163,6 +191,7 @@ export function buildLookupMessages(request: LookupRequest, createId: (prefix: s
         learnerLanguage: { code: request.pair.base, name: languageName(request.pair.base) },
         selected: request.text.slice(0, 2000),
         sentence: request.sentence,
+        ...(request.senses?.length ? { dictionarySenses: request.senses.slice(0, 8).map((sense) => sense.slice(0, 200)) } : {}),
       }),
     ].join("\n") },
   ];
@@ -170,7 +199,7 @@ export function buildLookupMessages(request: LookupRequest, createId: (prefix: s
 
 /** Reads the AI's JSON, tolerating code fences or a sentence around it. A reply that isn't JSON becomes the meaning. */
 export function parseLookupReply(reply: string, pair: LanguagePair): LookupAnswer {
-  const fallback: LookupAnswer = { from: pair.target, to: pair.base, meaning: reply.trim(), note: "", lemma: "", partOfSpeech: "", others: [] };
+  const fallback: LookupAnswer = { from: pair.target, to: pair.base, meaning: reply.trim(), note: "", lemma: "", partOfSpeech: "", others: [], sentenceTranslation: "" };
   const start = reply.indexOf("{");
   const end = reply.lastIndexOf("}");
   if (start < 0 || end <= start) return fallback;
@@ -182,43 +211,29 @@ export function parseLookupReply(reply: string, pair: LanguagePair): LookupAnswe
     if (!meaning) return fallback;
     return {
       from, to: from === pair.base ? pair.target : pair.base, meaning, note: text("note"), lemma: text("lemma"), partOfSpeech: text("partOfSpeech"),
+      sentenceTranslation: text("sentenceTranslation"),
       others: Array.isArray(value.others) ? value.others.filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
         .map((item) => item.trim()).filter((item) => item.toLowerCase() !== meaning.toLowerCase()).slice(0, 3) : [],
     };
   } catch { return fallback; }
 }
 
-export interface WiktionarySense { partOfSpeech: string; definitions: string[] }
-
-const stripHtml = (html: string) => {
-  if (typeof DOMParser !== "undefined") return (new DOMParser().parseFromString(html, "text/html").body.textContent ?? "").replace(/\s+/gu, " ").trim();
-  return html.replace(/<[^>]+>/gu, "").replace(/\s+/gu, " ").trim();
-};
-
-/** English Wiktionary's definitions of one word in one language. Empty when it has none. */
-export async function fetchWiktionary(word: string, language: string, signal?: AbortSignal): Promise<WiktionarySense[]> {
-  const term = word.trim();
-  if (!term || term.length > 60) return [];
-  const response = await fetch(`https://en.wiktionary.org/api/rest_v1/page/definition/${encodeURIComponent(term.replaceAll(" ", "_"))}`, { signal, headers: { accept: "application/json" } });
-  if (response.status === 404) return term !== term.toLowerCase() ? fetchWiktionary(term.toLowerCase(), language, signal) : [];
-  if (!response.ok) throw new Error("Wiktionary didn't answer.");
-  return readWiktionary(await response.json(), language);
+/** One string field of a JSON reply that is still arriving: what has been written of it so far. */
+function partialField(reply: string, field: string): string {
+  const match = reply.match(new RegExp(`"${field}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`, "u"));
+  if (!match) return "";
+  const body = match[1].replace(/\\(?:u[0-9a-fA-F]{0,3})?$/u, "");
+  try { return JSON.parse(`"${body}"`) as string; } catch { return body; }
 }
 
-export function readWiktionary(body: unknown, language: string): WiktionarySense[] {
-  if (!body || typeof body !== "object") return [];
-  const entries = (body as Record<string, unknown>)[language.split("-")[0]];
-  if (!Array.isArray(entries)) return [];
-  return entries.flatMap((entry) => {
-    if (!entry || typeof entry !== "object") return [];
-    const { partOfSpeech, definitions } = entry as { partOfSpeech?: unknown; definitions?: unknown };
-    const lines = Array.isArray(definitions) ? definitions.flatMap((item) => {
-      const html = item && typeof item === "object" ? (item as { definition?: unknown }).definition : null;
-      const text = typeof html === "string" ? stripHtml(html) : "";
-      return text ? [text] : [];
-    }).slice(0, 4) : [];
-    return lines.length ? [{ partOfSpeech: typeof partOfSpeech === "string" ? partOfSpeech : "", definitions: lines }] : [];
-  }).slice(0, 4);
+/** The meaning and the sentence's translation as far as a streamed reply has got. */
+export function partialLookupReply(reply: string): PartialLookup {
+  return { meaning: partialField(reply, "meaning"), sentenceTranslation: partialField(reply, "sentenceTranslation") };
+}
+
+/** A Wiktionary page as it fits a narrow pane: the site's phone layout, at the language's section. */
+export function wiktionaryFrameUrl(word: string, language: string): string {
+  return `https://en.wiktionary.org/wiki/${encodeURIComponent(word.trim().replaceAll(" ", "_"))}?useskin=minerva#${encodeURIComponent(languageName(language).replaceAll(" ", "_"))}`;
 }
 
 export function wiktionaryUrl(word: string, language: string): string {

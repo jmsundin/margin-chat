@@ -199,6 +199,7 @@ import {
   requestChatReply,
   requestDictationTranscript,
   requestLessonPage,
+  requestLanguageLookup,
   requestChatTitle,
   requestDocumentTitle,
   requestUploadDocument,
@@ -213,7 +214,7 @@ import {
   loadStoredState,
 } from "./lib/appState";
 import { getConversationRequestPayload } from "./lib/chatContext";
-import { buildLookupMessages, defaultLanguagePair, guessTextLanguage, languageName, plainReadingText, rememberLanguagePair, meaningCardLine, parseLookupReply, savedMeaningIn, wordsDeckTitle, type LanguagePair, type LookupAnswer, type LookupRequest, type SavedMeaning } from "./lib/languageLearning";
+import { buildLookupMessages, defaultLanguagePair, guessTextLanguage, languageName, plainReadingText, rememberLanguagePair, meaningCardLine, parseLookupReply, partialLookupReply, savedMeaningIn, wordsDeckTitle, type LanguagePair, type LookupAnswer, type LookupRequest, type PartialLookup, type SavedMeaning } from "./lib/languageLearning";
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
@@ -3474,18 +3475,20 @@ function WorkspaceAppContent({
   }
 
   /** What tapped or selected text means: one short model call with only the text and its sentence, nothing else from the vault. */
-  async function handleLookUpMeaning(conversationId: string, request: LookupRequest, signal: AbortSignal): Promise<LookupAnswer> {
+  async function handleLookUpMeaning(conversationId: string, request: LookupRequest, signal: AbortSignal, onPartial?: (partial: PartialLookup) => void): Promise<LookupAnswer> {
     const conversation = currentStateRef.current.conversations[conversationId];
     if (!conversation) throw new Error("This document is no longer open.");
     if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
     const lookup = createMainConversation({ id: createId("conversation"), createdAt: new Date().toISOString(), serviceId: conversation.serviceId, modelId: conversation.modelId });
     lookup.title = "Look up a meaning";
+    let written = "";
     try {
       const { reply } = await requestChatReply({
         ai: { ...normalizeAISettings(conversation.ai), mode: "fast", contextScope: "conversation", agent: false, agentAuto: false, selectedConversationIds: [] },
         workspaceContext: [], workspaceContextTruncated: false, expectedUserId: user.id,
         conversation: getConversationRequestPayload({}, lookup), messages: buildLookupMessages(request, createId),
         modelId: conversation.modelId, serviceId: conversation.serviceId, signal,
+        ...(onPartial ? { onDelta: (delta: string) => { written += delta; onPartial(partialLookupReply(written)); } } : {}),
       });
       return parseLookupReply(reply, request.pair);
     } catch (error) {
@@ -7001,7 +7004,9 @@ function WorkspaceAppContent({
       languageLearning={conversation.vaultFile ? undefined : {
         pair: conversation.languageLearning ?? null,
         onChange: (pair) => handleLanguageLearningChange(conversation.id, pair),
-        lookUp: (request, signal) => handleLookUpMeaning(conversation.id, request, signal),
+        lookUp: (request, signal, onPartial) => handleLookUpMeaning(conversation.id, request, signal, onPartial),
+        // A document hidden from AI sends only the word itself to the dictionary and the translator, never its sentence.
+        dictionary: (request, signal) => requestLanguageLookup({ term: request.term, sentence: isHiddenFromAI(conversation) ? "" : request.sentence, src: request.pair.target, tgt: request.pair.base, expectedUserId: user.id, signal }),
         save: handleSaveMeaning, savedMeaning: savedMeaningFor,
         docId: conversation.id, terms: languageTerms.terms, setTerm: languageTerms.setTerm, aiAllowed: !isHiddenFromAI(conversation),
         mentions: documentsMentioning, openDocument: (id) => handleSelectConversation(id),

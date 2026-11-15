@@ -22,6 +22,7 @@ import { readJsonBody, sendJson } from "../server/http/json.mjs";
 import { validateWorkspaceAnalysis } from "../server/semantic/index.mjs";
 import { readImportPage } from "../server/chat/agent/webImport.mjs";
 import { createProposalTools, describeProposalStep, documentInPrompt } from "../server/chat/agent/proposalTools.mjs";
+import { createLanguageLookupService } from "../server/languageTerms/lookup.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
@@ -126,7 +127,8 @@ function syntheticLookupReply(messages) {
     ? { from: "es", to: "en", meaning: known[0], lemma: known[1], partOfSpeech: known[2], note: known[3], others: known[4] }
     : fromBase ? { from: "en", to: "es", meaning: `[es] ${text}`, lemma: "", partOfSpeech: "phrase", note: "", others: [] }
     : { from: "es", to: "en", meaning: text.split(/\s+/u).length > 3 ? "When she gets home, the bag weighs more." : `[en] ${text}`, lemma: "", partOfSpeech: text.includes(" ") ? "phrase" : "word", note: "", others: [] };
-  return JSON.stringify(answer);
+  // The meaning first, as the real prompt asks, so a streamed reply shows it early.
+  return JSON.stringify({ meaning: answer.meaning, sentenceTranslation: request.sentence ? `[${request.learnerLanguage?.code ?? "en"}] ${request.sentence}` : "", ...answer });
 }
 
 function syntheticRatchetReply(asked) {
@@ -287,7 +289,44 @@ const semanticService = {
 };
 const coldStart = process.env.PREVIEW_COLD === "1";
 const currentVaultService = new Proxy({}, { get: (_, name) => vaultService[name] });
+/**
+ * Language lookups run the real service against made-up Wikimedia and Google answers, so no request
+ * leaves the machine. `Und` and `Frühstück` test spelling, `macht` and `pesa` a form's dictionary form.
+ */
+const formOf = (lang, lemma, text) => `<span class="form-of-definition use-with-mention">${text} <span class="form-of-definition-link"><i class="Latn mention" lang="${lang}"><a href="/wiki/${lemma}#x" title="${lemma}">${lemma}</a></i></span></span>`;
+const wiktionaryPages = {
+  "Frühstück": { de: [{ partOfSpeech: "Noun", language: "German", definitions: [{ definition: '<a href="/wiki/breakfast">breakfast</a>', parsedExamples: [{ example: "Gewöhnlich essen sie ihr <b>Frühstück</b> im Bett.", translation: "They usually have their <b>breakfast</b> in bed." }] }] }] },
+  und: { de: [{ partOfSpeech: "Conjunction", language: "German", definitions: [{ definition: '<a href="/wiki/and">and</a>' }] }] },
+  macht: { de: [{ partOfSpeech: "Verb", language: "German", definitions: [{ definition: formOf("de", "machen", "inflection of") + ":" }] }] },
+  machen: { de: [{ partOfSpeech: "Verb", language: "German", definitions: [{ definition: "to <a>make</a>, to <a>do</a>" }, { definition: "to <a>produce</a>, to <a>create</a>" }] }] },
+  pesa: { es: [{ partOfSpeech: "Verb", language: "Spanish", definitions: [{ definition: formOf("es", "pesar", "third-person singular present indicative of") }] }] },
+  pesar: { es: [{ partOfSpeech: "Verb", language: "Spanish", definitions: [{ definition: "to <a>weigh</a>" }, { definition: "to <a>grieve</a>, to cause <a>regret</a>" }] }] },
+  bolsa: { es: [{ partOfSpeech: "Noun", language: "Spanish", definitions: [{ definition: '<a href="/wiki/bag">bag</a>', parsedExamples: [{ example: "Llevo una <b>bolsa</b> de tela.", translation: "I carry a cloth <b>bag</b>." }] }, { definition: "<a>stock exchange</a>" }, { definition: "<a>purse</a>, <a>handbag</a>" }] }] },
+  mercado: { es: [{ partOfSpeech: "Noun", language: "Spanish", definitions: [{ definition: "<a>market</a>" }] }] },
+};
+const lookupCacheRows = new Map();
+const lookupFetch = async (input, init = {}) => {
+  const url = new URL(String(input));
+  requestCounts.lookupOutbound = (requestCounts.lookupOutbound ?? 0) + 1;
+  if (url.hostname === "translation.googleapis.com") {
+    const { q, target } = JSON.parse(init.body);
+    return Response.json({ data: { translations: q.map((text) => ({ translatedText: `[${target}] ${text}` })) } });
+  }
+  if (url.hostname === "en.wiktionary.org") {
+    const page = wiktionaryPages[decodeURIComponent(url.pathname.split("/").at(-1))];
+    return page ? Response.json(page) : new Response("{}", { status: 404 });
+  }
+  return new Response("", { status: 404 });
+};
+const languageLookupService = createLanguageLookupService({
+  env: { GOOGLE_TRANSLATE_API_KEY: "fixture" }, fetchImpl: lookupFetch,
+  database: {
+    readLookupCache: async (key) => lookupCacheRows.get(JSON.stringify([key.source, key.srcLang, key.tgtLang, key.term])) ?? null,
+    saveLookupCache: async ({ payload, fetchedAt, ...key }) => { lookupCacheRows.set(JSON.stringify([key.source, key.srcLang, key.tgtLang, key.term]), { payload, fetchedAt }); },
+  },
+});
 const handler = createApiHandler({
+  languageLookupService,
   authService, database, documentService, vaultService: currentVaultService, semanticService,
   apiKeyService: { getDecryptedKeys: async () => ({}), getSummaries: async () => noKeys },
   captureService: { list: async () => ({ captures: [], nextCursor: null }) },

@@ -690,6 +690,18 @@ export async function requestLessonPage(url: string, args: { expectedUserId?: st
   return { url: typeof payload.url === "string" ? payload.url : url, title: typeof payload.title === "string" ? payload.title : "", text: payload.text, truncated: payload.truncated === true };
 }
 
+/** Dictionary senses and a machine translation for a word or phrase being read. Quick; the AI's reading is asked for separately. */
+export async function requestLanguageLookup(args: { term: string; sentence: string; src: string; tgt: string; expectedUserId?: string; signal?: AbortSignal }): Promise<import("./languageLearning").DictionaryLookup> {
+  const query = new URLSearchParams({ term: args.term, src: args.src, tgt: args.tgt, ...(args.sentence ? { sentence: args.sentence.slice(0, 600) } : {}) });
+  const response = await apiFetch(`/api/language-lookup?${query}`, {
+    credentials: "same-origin", signal: args.signal, headers: args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {},
+  });
+  const payload = (await readJson(response)) as import("./languageLearning").DictionaryLookup | ErrorPayload | null;
+  ensureOk(response, payload, "The dictionary couldn't be reached.");
+  if (!payload || typeof payload !== "object" || !("resolvedTerm" in payload)) throw new Error("Backend returned an invalid lookup.");
+  return payload;
+}
+
 /** Sends one voice-typing recording and returns its transcript. */
 export async function requestDictationTranscript(audio: Blob, args: { expectedUserId?: string; signal?: AbortSignal; prompt?: string; /** Two-letter code of the language spoken, when known. */ language?: string } = {}): Promise<string> {
   const response = await apiFetch(`/api/dictation/transcribe${args.language && /^[a-z]{2,3}$/u.test(args.language) ? `?language=${args.language}` : ""}`, {

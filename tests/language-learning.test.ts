@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { createMarkdownWorkspace, discoverMarkdownWorkspace, normalizeLanguageLearning, parseMarkdownWorkspace } from "@margin-chat/workspace-contracts";
 import { createEmptyState } from "../client/src/initialState";
 import {
-  buildLookupMessages, meaningCardLine, parseLookupReply, plainReadingText, readWiktionary, savedMeaningIn, sentenceAround, snapToWords, wordAt, wordsDeckTitle,
+  buildLookupMessages, meaningCardLine, parseLookupReply, plainReadingText, savedMeaningIn, sentenceAround, snapToWords, wordAt, wordsDeckTitle,
 } from "../client/src/lib/languageLearning";
 import { parseFlashcards } from "../client/src/lib/flashcards";
 
@@ -76,12 +76,6 @@ describe("looking up what text means", () => {
     const reverse = parseLookupReply('{"from":"en","to":"es","meaning":"la bolsa"}', pair);
     expect(reverse).toMatchObject({ from: "en", to: "es" });
     expect(parseLookupReply("weighs", pair)).toMatchObject({ meaning: "weighs", from: "es", to: "en" });
-  });
-
-  test("reads Wiktionary's definitions for the language being learned only", () => {
-    const body = { es: [{ partOfSpeech: "Verb", definitions: [{ definition: "<i>third-person singular</i> of <a>pesar</a>" }] }], en: [{ partOfSpeech: "Noun", definitions: [{ definition: "other" }] }] };
-    expect(readWiktionary(body, "es")).toEqual([{ partOfSpeech: "Verb", definitions: ["third-person singular of pesar"] }]);
-    expect(readWiktionary(body, "fr")).toEqual([]);
   });
 });
 
