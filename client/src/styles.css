@@ -1,4 +1,4 @@
-.app-version-toast-host { align-items: center; display: flex; flex-direction: column; gap: 10px; left: 50%; max-width: calc(100vw - 32px); pointer-events: none; position: fixed; top: max(16px, env(safe-area-inset-top)); transform: translateX(-50%); width: 480px; z-index: 80; }
+.app-version-toast-host { align-items: center; display: flex; flex-direction: column; gap: 10px; left: 50%; max-width: calc(100vw - 32px); pointer-events: none; position: fixed; top: max(16px, env(safe-area-inset-top)); transform: translateX(-50%); width: 480px; z-index: var(--z-toast); }
 .app-version-toast-host > .notification-toast { pointer-events: auto; }
 
 /* Web captures remain in a cloud Inbox, independent of workspace snapshots. */
@@ -43,6 +43,16 @@
 }
 
 :root {
+  /* One stacking scale for everything that floats. Views and panels keep small numbers (under 100)
+     inside their own area; anything that has to sit over every view uses these, and renders at the
+     page level (a portal to <body>), so no panel's layer can hold it underneath another view.
+     Dialogs and their backdrops, then menus and hover cards (a menu opened inside a dialog stays
+     above it), then toasts, the guided tour, and consent prompts that must never be covered. */
+  --z-modal: 1000;
+  --z-popover: 1100;
+  --z-toast: 1200;
+  --z-tour: 2000;
+  --z-alert: 3000;
   font-family: "Avenir Next", "Segoe UI", sans-serif;
   color: #ecf4ef;
   background: #091015;
@@ -1640,7 +1650,7 @@ button {
   padding: 8px;
   position: fixed;
   width: min(calc(100vw - 24px), 204px);
-  z-index: 30;
+  z-index: var(--z-popover);
 }
 
 .thread-item-menu-group {
@@ -1698,7 +1708,7 @@ button {
   justify-content: center;
   padding: 18px;
   position: fixed;
-  z-index: 23;
+  z-index: var(--z-modal);
 }
 
 /* The workspace shows at once while the device's files are read; their places stay empty until they arrive. */
@@ -4143,7 +4153,7 @@ button {
 .message-content.is-markdown .diagram-stage-enlarge { margin-left: auto; flex: none; }
 .diagram-overlay {
   align-items: center; backdrop-filter: blur(14px); background: rgba(4, 7, 9, 0.72); display: flex; inset: 0;
-  justify-content: center; padding: clamp(0.75rem, 3vw, 2.5rem); position: fixed; z-index: 1000;
+  justify-content: center; padding: clamp(0.75rem, 3vw, 2.5rem); position: fixed; z-index: var(--z-modal);
 }
 .diagram-overlay-frame {
   background: var(--bg); border: 1px solid var(--line); border-radius: 14px; display: flex; flex-direction: column;
@@ -4215,7 +4225,7 @@ button {
   inset: 0;
   padding: 0;
   position: fixed;
-  z-index: 34;
+  z-index: var(--z-modal);
 }
 
 .mermaid-viewer {
@@ -5416,7 +5426,7 @@ button {
   justify-content: center;
   padding: min(12vh, 92px) 18px 18px;
   position: fixed;
-  z-index: 18;
+  z-index: var(--z-modal);
 }
 
 .search-modal {
@@ -5569,7 +5579,7 @@ button {
   padding: min(10vh, 76px) 18px 18px;
   position: fixed;
   /* Above the phone Ask AI box (60) and keyboard button (65) that open it. */
-  z-index: 70;
+  z-index: var(--z-modal);
 }
 
 .service-picker-modal {
@@ -7308,8 +7318,9 @@ button {
       transform 220ms ease,
       opacity 220ms ease;
     width: min(88vw, 360px);
-    /* Above the document header (45), so the open sidebar covers it. */
-    z-index: 47;
+    /* Above the document header (45) and the page's own floating parts on phones (the map sheet's
+       handle, keyboard bar and + menu, 60–67), so the open sidebar covers them. */
+    z-index: 80;
   }
 
   .thread-sidebar:not(.is-collapsed) {
@@ -7352,7 +7363,7 @@ button {
     inset: 0;
     padding: 0;
     position: fixed;
-    z-index: 46;
+    z-index: 79;
   }
 
   .workspace-mobile-shell {

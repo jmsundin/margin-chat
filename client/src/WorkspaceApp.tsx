@@ -63,6 +63,7 @@ import { DocumentCompass, DocumentKeepReading, DocumentMapButton, DocumentSheetP
 import { PAGE_SHEET, SHEET_NARROW_MAP, fitDocumentSheet, getDefaultDocumentSheet, getDocumentSheetEdge, getDocumentSheetMapBox, loadLastDocumentSheet, saveLastDocumentSheet, settleDocumentSheet, type DocumentSheet, type DocumentSheetEdge } from "./lib/documentSheet";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
+import { useFloatingHeaderClearance } from "./lib/floatingHeader";
 import { QUIET_SIDEBAR_KEY, readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
 import { createDocumentLinkResolver, getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
@@ -1858,6 +1859,9 @@ function WorkspaceAppContent({
   const quietHeader = quietPage && !isMobileViewport;
   const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
   const headerOpen = isMobileViewport ? mobileHeaderOpen : desktopHeaderOpen;
+  const workspaceHeaderRef = useRef<HTMLElement | null>(null);
+  const floatingHeader = quietHeader && quietHeaderFloats();
+  useFloatingHeaderClearance(workspaceHeaderRef, floatingHeader);
   useEffect(() => { setMobileHeaderOpen(false); }, [state.activeConversationId, isMobileViewport, mainViewMode]);
   // Links in text change as you type; the navigator can catch up a moment later.
   const deferredConversations = useDeferredValue(state.conversations);
@@ -6504,6 +6508,11 @@ function WorkspaceAppContent({
   }
 
   /** The quiet page hides a lone tab, so its document's menu takes over the ×. */
+  /** With no tabs to show, the quiet header's buttons float over the top of the page instead of taking a row. */
+  function quietHeaderFloats() {
+    return quietTabsHidden() && !showSpaceStart && !maximizedDocument;
+  }
+
   function quietTabsHidden() {
     return quietHeader && !showsQuietTabs(spaceTabDocuments.length, Boolean(activeSpace));
   }
@@ -7427,7 +7436,7 @@ function WorkspaceAppContent({
               </WorkspaceView>
               <WorkspaceView mode="chat" active={!isTileView && !isGraphView}>
                 <div className="chat-tree-workspace document-workspace" data-from-map={mapReturnId ? "true" : undefined}>
-                  <header className={`document-workspace-header${headerOpen && !quietHeader ? " is-open" : ""}${quietHeader ? " is-quiet" : ""}`}
+                  <header ref={workspaceHeaderRef} className={`document-workspace-header${headerOpen && !quietHeader ? " is-open" : ""}${quietHeader ? " is-quiet" : ""}${floatingHeader ? " is-floating" : ""}`}
                     aria-label="Document navigation" onKeyDown={(event) => {
                       if (event.key === "Escape" && isMobileViewport && mobileHeaderOpen) { event.stopPropagation(); setMobileHeaderOpen(false); }
                     }}>

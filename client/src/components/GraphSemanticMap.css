@@ -96,7 +96,7 @@
 .conversation-graph-dock-drop.is-top { inset: 0 0 auto 0; height: var(--drop-size); }
 .conversation-graph-dock-drop.is-bottom { inset: auto 0 0 0; height: var(--drop-size); }
 .conversation-graph-dock-drop span { padding: 6px 10px; border-radius: 6px; color: var(--ink); background: var(--panel-strong); font-size: 12px; }
-.conversation-graph-dock-move { position: fixed; z-index: 120; width: 240px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); box-shadow: 0 12px 32px #0003; font-size: 12px; }
+.conversation-graph-dock-move { position: fixed; z-index: var(--z-popover); width: 240px; padding: 10px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--panel-strong); box-shadow: 0 12px 32px #0003; font-size: 12px; }
 .conversation-graph-dock-move p { margin: 0 0 8px; color: var(--muted); }
 .conversation-graph-dock-move-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .conversation-graph-dock-move-actions button { padding: 7px 8px; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--ink); font: inherit; cursor: pointer; }

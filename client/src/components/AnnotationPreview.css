@@ -1,6 +1,6 @@
 .annotation-preview {
   position: fixed;
-  z-index: 180;
+  z-index: var(--z-popover);
   width: min(360px, calc(100vw - 24px));
   max-height: min(520px, calc(100dvh - 24px));
   overflow: auto;

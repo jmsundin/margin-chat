@@ -39,7 +39,7 @@
   top: 16px;
   transform: translateX(-50%);
   width: 480px;
-  z-index: 80;
+  z-index: var(--z-toast);
 }
 
 .workspace-notifications > .notification-toast { pointer-events: auto; }

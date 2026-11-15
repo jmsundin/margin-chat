@@ -1,4 +1,4 @@
-.make-cards-backdrop { align-items: flex-start; background: rgba(0, 0, 0, .35); display: flex; inset: 0; justify-content: center; padding: 8vh 16px 16px; position: fixed; z-index: 95; }
+.make-cards-backdrop { align-items: flex-start; background: rgba(0, 0, 0, .35); display: flex; inset: 0; justify-content: center; padding: 8vh 16px 16px; position: fixed; z-index: var(--z-modal); }
 .make-cards {
   background: var(--panel-strong, var(--bg)); border: 1px solid var(--line-strong); border-radius: 14px; box-shadow: var(--shadow);
   color: var(--ink); display: flex; flex-direction: column; gap: 12px; max-height: 84vh; max-width: 640px; padding: 16px 18px; width: 100%;
