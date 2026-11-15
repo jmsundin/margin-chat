@@ -16,13 +16,15 @@ export interface DocumentModeSwitchProps {
   onLearn?: () => void;
   /** This document's flashcards, in their own full-screen review. */
   review?: { count: number; onOpen: () => void };
+  /** Makes a new document to read in the language being learned. Offered with the Language learning feature. */
+  onNewLesson?: () => void;
 }
 
 /**
  * The button at the top of a document that names its mode and switches it. Each mode is a
  * different interface for the same document, so it lives here instead of among the ⋯ menu's settings.
  */
-export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap, onLearn, review }: DocumentModeSwitchProps) {
+export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap, onLearn, review, onNewLesson }: DocumentModeSwitchProps) {
   const popupId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
@@ -89,7 +91,7 @@ export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap
         <span className="document-mode-name">{DOCUMENT_MODE_LABELS[candidate]}{candidate === "read" ? <kbd>⌘E</kbd> : null}</span>
         <span className="document-mode-hint">{DOCUMENT_MODE_HINTS[candidate]}</span>
       </button>)}
-      {onMap || onLearn || (review && review.count > 0) ? <div className="document-mode-separator" role="separator" /> : null}
+      {onMap || onLearn || onNewLesson || (review && review.count > 0) ? <div className="document-mode-separator" role="separator" /> : null}
       {onMap ? <button type="button" role="menuitem" data-mode="map" onClick={() => { close(); onMap(); }}>
         <span className="document-mode-dot" aria-hidden="true" />
         <span className="document-mode-name">Map<kbd>⌘G</kbd></span>
@@ -104,6 +106,11 @@ export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap
         <span className="document-mode-dot" aria-hidden="true" />
         <span className="document-mode-name">Review<span className="document-mode-count">{review.count}</span></span>
         <span className="document-mode-hint">This document's flashcards, one at a time</span>
+      </button> : null}
+      {onNewLesson ? <button type="button" role="menuitem" data-mode="lesson" onClick={() => { close(); onNewLesson(); }}>
+        <span className="document-mode-dot" aria-hidden="true" />
+        <span className="document-mode-name">New lesson…</span>
+        <span className="document-mode-hint">Something new to read in the language you're learning</span>
       </button> : null}
     </div>, document.body) : null}
   </div>;

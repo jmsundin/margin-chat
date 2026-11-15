@@ -140,6 +140,8 @@ export interface DocumentLanguageLearning {
   /** Other documents whose text has this word or phrase. */
   mentions: (text: string) => Array<{ id: string; title: string }>;
   openDocument: (id: string) => void;
+  /** Opens "New lesson": a new document to read, from the AI, a web page, a recording or this document. */
+  newLesson?: () => void;
 }
 
 const LOOKUP_INSTRUCTION = [

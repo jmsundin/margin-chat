@@ -1,0 +1,24 @@
+.language-lesson-dialog {
+  width: min(520px, calc(100vw - 28px)); max-height: calc(100dvh - 40px); padding: 0; border: 1px solid var(--line-strong, #8885); border-radius: 18px;
+  background: var(--panel-strong, #fff); color: var(--ink); font: .92rem/1.45 var(--ui-font, system-ui, sans-serif);
+}
+.language-lesson-dialog::backdrop { background: #10121bb3; }
+.language-lesson-dialog form { display: flex; flex-direction: column; max-height: calc(100dvh - 42px); }
+.language-lesson-dialog header { padding: 16px 20px 0; }
+.language-lesson-dialog h2 { margin: 0; font-size: 1.15rem; }
+.language-lesson-body { overflow-y: auto; padding: 12px 20px 4px; display: flex; flex-direction: column; gap: 12px; }
+.language-lesson-pair { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; color: var(--muted); }
+.language-lesson-pair select, .language-lesson-field select, .language-lesson-field input[type="text"], .language-lesson-field input[type="url"] {
+  font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.language-lesson-choices { display: flex; flex-direction: column; gap: 6px; }
+.language-lesson-choice { display: flex; gap: 10px; align-items: flex-start; padding: 9px 11px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+.language-lesson-choice.is-on { border-color: var(--sage, #5a7); background: var(--sage-soft, #5a71); }
+.language-lesson-choice input { margin-top: 3px; }
+.language-lesson-choice span { display: flex; flex-direction: column; min-width: 0; }
+.language-lesson-choice small, .language-lesson-field small { color: var(--muted); }
+.language-lesson-field { display: flex; flex-direction: column; gap: 5px; color: var(--muted); font-size: .85rem; }
+.language-lesson-field input[type="text"], .language-lesson-field input[type="url"] { font-size: 1rem; }
+.language-lesson-file { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--ink); overflow-wrap: anywhere; }
+.language-lesson-error { margin: 0; color: var(--danger, #b3261e); }
+.language-lesson-status { margin: 0; color: var(--muted); }
+.language-lesson-dialog footer { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 20px 16px; }

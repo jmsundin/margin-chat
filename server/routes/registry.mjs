@@ -42,6 +42,7 @@ export const API_ROUTES = Object.freeze([
   { id: "interfaceSettings", methods: ["GET", "POST"], path: "/api/interface-settings" },
   { id: "languageTermsSync", methods: ["POST"], path: "/api/language-terms/sync" },
   { id: "languageSpeech", methods: ["GET"], path: "/api/language-speech" },
+  { id: "languageLessonPage", methods: ["POST"], path: "/api/language-lessons/page" },
   { id: "ratchetClaims", methods: ["GET", "PUT"], path: "/api/ratchet/claims" },
   { id: "vaultStatus", methods: ["GET"], path: "/api/vault" },
   { id: "vaultIndex", methods: ["GET"], path: "/api/vault/index" },

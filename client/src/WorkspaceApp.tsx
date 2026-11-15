@@ -159,6 +159,8 @@ import { ConversationGroupPickerContext } from "./components/ConversationGroupCo
 import MainChatTileView from "./components/MainChatTileView";
 import SettingsPage, { type SettingsSection } from "./components/SettingsPage";
 import ChatHistoryImport from "./components/ChatHistoryImport";
+import { LanguageLessonDialog, type LessonRequest } from "./components/LanguageLessonDialog";
+import { LESSON_AUDIO_RATE, buildLessonMessages, decodeLessonAudio, lessonMarkdown, pageLessonText, parseLessonReply, transcribeLesson } from "./lib/languageLessons";
 import ViewIntro from "./components/ViewIntro";
 import AIAccessDialog from "./components/AIAccessDialog";
 import GuidedTour, { DESKTOP_TOUR, PHONE_TOUR, TourPill } from "./components/GuidedTour";
@@ -189,6 +191,8 @@ import {
   ApiError,
   requestDeleteDocument,
   requestChatReply,
+  requestDictationTranscript,
+  requestLessonPage,
   requestChatTitle,
   requestDocumentTitle,
   requestUploadDocument,
@@ -3330,6 +3334,8 @@ function WorkspaceAppContent({
       (conversation, prompt) => buildBoardNoteMessage(conversation, prompt, request, documentAIInstruction(currentStateRef.current.conversations, conversation)));
   }
 
+  const [lessonDialog, setLessonDialog] = useState<{ fromId: string | null } | null>(null);
+
   /** Language learning mode: the document's pair of languages is saved on it, so it opens this way next time. */
   function handleLanguageLearningChange(conversationId: string, pair: LanguagePair | null) {
     setState((current) => {
@@ -3366,6 +3372,73 @@ function WorkspaceAppContent({
     } finally {
       void onRefreshBilling();
     }
+  }
+
+  /**
+   * Makes a document to read in Language learning mode and opens it: written by the AI, retold from
+   * the open document, taken from a web page, or written down from a recording line by line.
+   */
+  async function handleCreateLesson(fromId: string | null, request: LessonRequest, { signal, onProgress }: { signal: AbortSignal; onProgress: (text: string) => void }) {
+    const pair = request.pair;
+    let title = "";
+    let content = "";
+    try {
+      if (request.kind === "link") {
+        onProgress("Reading the page…");
+        const page = await requestLessonPage(request.url, { expectedUserId: user.id, signal });
+        title = page.title;
+        content = pageLessonText(page);
+      } else if (request.kind === "audio") {
+        onProgress("Opening the recording…");
+        const samples = await decodeLessonAudio(request.file);
+        signal.throwIfAborted();
+        const segments = await transcribeLesson(samples, LESSON_AUDIO_RATE,
+          (wav, pieceSignal) => requestDictationTranscript(new Blob([wav as BlobPart], { type: "audio/wav" }), { expectedUserId: user.id, signal: pieceSignal, language: pair.target }),
+          { signal, onProgress: (done, total) => onProgress(`Writing down what it says… ${done} of ${total}`) });
+        if (!segments.length) throw new Error("No speech was found in that recording.");
+        signal.throwIfAborted();
+        onProgress("Saving the recording…");
+        // Saved only once it has been written down, so a failed try leaves nothing behind.
+        const embed = await vault.media.save(request.file);
+        title = request.file.name.replace(/\.[a-z0-9]{2,5}$/iu, "").replace(/[_-]+/gu, " ").trim();
+        content = lessonMarkdown(embed, segments);
+      } else {
+        const from = fromId ? currentStateRef.current.conversations[fromId] : undefined;
+        if (request.kind === "document" && (!from || isHiddenFromAI(from))) throw new Error(from ? HIDDEN_FROM_AI_MESSAGE : "That document is no longer open.");
+        const settings = from ?? currentStateRef.current.conversations[currentStateRef.current.activeConversationId];
+        const serviceId = settings?.serviceId ?? currentStateRef.current.defaultServiceId;
+        const modelId = settings?.modelId ?? currentStateRef.current.defaultModelId;
+        const ask = createMainConversation({ id: createId("conversation"), createdAt: new Date().toISOString(), serviceId, modelId });
+        ask.title = "Write a language lesson";
+        onProgress(request.kind === "ai" ? "Writing your lesson…" : "Retelling your document…");
+        const { reply } = await requestChatReply({
+          ai: { ...normalizeAISettings(settings?.ai), mode: "fast", contextScope: "conversation", agent: false, agentAuto: false, selectedConversationIds: [] },
+          workspaceContext: [], workspaceContextTruncated: false, expectedUserId: user.id,
+          conversation: getConversationRequestPayload({}, ask), modelId, serviceId, signal,
+          messages: buildLessonMessages(request.kind === "ai" ? { kind: "ai", topic: request.topic, level: request.level }
+            : { kind: "document", title: from!.title || "Untitled", text: getEditableDocumentText(from!), level: request.level }, pair, createId),
+        });
+        ({ title, text: content } = parseLessonReply(reply));
+      }
+    } catch (error) {
+      if (isApiErrorStatus(error, 401)) onAuthExpired();
+      else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
+      throw error;
+    } finally {
+      if (request.kind !== "link") void onRefreshBilling();
+    }
+    signal.throwIfAborted();
+    rememberLanguagePair(pair);
+    const note = { id: createId("note-conversation"), noteId: createId("note"), createdAt: new Date().toISOString(), title: (title || "Lesson").slice(0, 100), content };
+    setState((current) => {
+      const made = createMapNote(current, note);
+      const lesson = made.conversations[note.id];
+      if (!lesson) return current;
+      const next = { ...made, conversations: { ...made.conversations, [note.id]: { ...lesson, languageLearning: pair } } };
+      currentStateRef.current = next;
+      return next;
+    });
+    handleSelectConversation(note.id);
   }
 
   /** The document a language's saved meanings go in ("Spanish words"), if there is one. */
@@ -6445,6 +6518,7 @@ function WorkspaceAppContent({
         if (conversation.id !== activeConversation.id) handleSelectConversation(conversation.id, { nextViewMode: "chat" });
         showRoadmapOnMap(learnPathId, true);
       } : undefined}
+      onNewLesson={features.language || conversation.languageLearning ? () => setLessonDialog({ fromId: conversation.id }) : undefined}
       review={features.flashcards && cards ? { count: cards, onOpen: () => setFlashcardReview({ title: conversation.title || "Untitled", docIds: documentFamilyIds(conversation.id), docId: conversation.id }) } : undefined} />;
   }
 
@@ -6667,6 +6741,7 @@ function WorkspaceAppContent({
         save: handleSaveMeaning, savedMeaning: savedMeaningFor,
         docId: conversation.id, terms: languageTerms.terms, setTerm: languageTerms.setTerm, aiAllowed: !isHiddenFromAI(conversation),
         mentions: documentsMentioning, openDocument: (id) => handleSelectConversation(id),
+        newLesson: () => setLessonDialog({ fromId: conversation.id }),
       }}
       onAskBoardNote={(request) => handleAskBoardNote(conversation.id, request)}
       onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); const diagram = isMermaidDiagramPassage(selection.quote); setSelectionResponseDestination(diagram ? "inline" : defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(diagram); }}
@@ -7716,6 +7791,13 @@ function WorkspaceAppContent({
             onUseOwnKey={() => { setAIAccessOpen(false); openApiKeySettings(); }}
             onAddMoney={() => { setAIAccessOpen(false); void onAddMoney(500); }}
             onSubscribe={() => { setAIAccessOpen(false); void onStartSubscription("plus"); }} />}
+          {lessonDialog ? (() => {
+            const from = lessonDialog.fromId ? state.conversations[lessonDialog.fromId] : undefined;
+            // A lesson is retold from a page of your own writing, not from another lesson or a document the AI may not read.
+            const retell = from && !from.vaultFile && !from.languageLearning && !isHiddenFromAI(from) && getEditableDocumentText(from).trim().length > 40;
+            return <LanguageLessonDialog pair={from?.languageLearning ?? defaultLanguagePair()} document={retell ? { title: from.title || "Untitled" } : null}
+              onCreate={(request, options) => handleCreateLesson(lessonDialog.fromId, request, options)} onClose={() => setLessonDialog(null)} />;
+          })() : null}
           {historyImportOpen && <ChatHistoryImport
             existingIds={Object.keys(state.conversations)} cloudSyncEnabled={cloudSyncEnabled}
             onImport={async (chats) => {
