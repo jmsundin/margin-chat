@@ -25,6 +25,7 @@ import RichDocumentEditor, { RichDocumentPlaceholder } from "./LazyRichDocumentE
 import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
 import VaultFileViewer from "./VaultFileViewer";
+import { loadHtmlPagePrefs, useHtmlPageLayout } from "../lib/htmlPagePrefs";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
 import MobileAIComposer from "./MobileAIComposer";
@@ -206,6 +207,14 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   // A board shows its drawing as the page; the editor below gets only the document's other text.
   const board = isBoardDocument(conversation) ? findBoardBlock(document.blocks) : undefined;
   const editorBlocks = board ? document.blocks.filter((block) => block.id !== board.id) : document.blocks;
+  // An HTML page is an app, not paper: it fills the panel and scrolls inside its own frame, unless the person chose inline.
+  const htmlPage = conversation.vaultFile?.kind === "html";
+  const htmlPrefs = useMemo(() => loadHtmlPagePrefs(conversation.id), [conversation.id]);
+  const htmlLayout = useHtmlPageLayout(htmlPrefs.layout);
+  const htmlFill = htmlPage && htmlLayout === "fill";
+  const [htmlViewFor, setHtmlViewFor] = useState<{ id: string; view: "page" | "notes" }>({ id: conversation.id, view: "page" });
+  const htmlView = htmlViewFor.id === conversation.id ? htmlViewFor.view : "page";
+  const setHtmlView = (view: "page" | "notes") => setHtmlViewFor({ id: conversation.id, view });
   const showEditor = !board || editorBlocks.some((block) => block.content.trim());
   const bodyRef = useRef<HTMLDivElement>(null);
   const [marginHeight, setMarginHeight] = useState(0);
@@ -662,11 +671,19 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </header> : null}
     {props.roadmapFill && props.roadmap ? <div className="document-roadmap-fill">{props.roadmap}</div> : <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
       style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
-    <div className={`panel-body document-body${board ? " is-board" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+    <div className={`panel-body document-body${board ? " is-board" : ""}${htmlFill ? " is-html-page" : ""}`} data-html-view={htmlFill ? htmlView : undefined} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
-        {props.fileBar}
+        {htmlFill ? <div className="html-page-bar">
+          {props.fileBar}
+          {/* The page has the whole panel, so its notes are a second view instead of a strip below it. */}
+          <div className="html-page-views" role="group" aria-label="Show">
+            <button type="button" aria-pressed={htmlView === "page"} onClick={() => setHtmlView("page")}>Page</button>
+            <button type="button" aria-pressed={htmlView === "notes"} onClick={() => setHtmlView("notes")}>Notes</button>
+          </div>
+        </div> : props.fileBar}
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
-          onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
+          onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}
+          htmlLayout={htmlPage ? htmlLayout : undefined}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
       {props.notice}

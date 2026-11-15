@@ -114,7 +114,7 @@ function readScreenMessage(message: Record<string, unknown>): HtmlFrameMessage |
  * Runs inside the frame, before the page's own scripts. It must stay
  * self-contained: it is sent to the frame as source text.
  */
-function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstTheme: string) {
+function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstTheme: string, firstLayout: string) {
   const SKIP = /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA|SELECT|OPTION)$/u;
   const parentWindow = window.parent;
   const post = (message: Record<string, unknown>) => parentWindow.postMessage({ marginHtml: 1, ...message }, "*");
@@ -429,6 +429,37 @@ function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstT
       }
     }
     post({ type: "marks", marks });
+    drawMarks(marks);
+  }
+
+  /*
+   * When the page fills its panel it scrolls inside the frame, where the app can't follow it. The marks
+   * are then drawn here, in a layer of the page's own that scrolls with the text. The layer takes no
+   * clicks; a click on a marked passage is found by where it landed, below.
+   */
+  let fills = firstLayout === "fill";
+  let layer: HTMLElement | null = null;
+  let drawn = "";
+  function drawMarks(marks: Array<Record<string, unknown>>) {
+    if (!fills || !marks.length) { layer?.remove(); layer = null; drawn = ""; return; }
+    const next = marks.map((mark) => `${mark.left},${mark.top},${mark.width},${mark.height}`).join(";");
+    if (layer?.isConnected && next === drawn) return;
+    drawn = next;
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.setAttribute("data-margin-highlight", "layer");
+      layer.setAttribute("aria-hidden", "true");
+      layer.style.cssText = "position:absolute;top:0;left:0;width:0;height:0;margin:0;padding:0;border:0;pointer-events:none;z-index:2147483646;";
+    }
+    layer.replaceChildren(...marks.map((mark) => {
+      const piece = document.createElement("span");
+      piece.setAttribute("data-margin-highlight", String(mark.id));
+      piece.style.cssText = `position:absolute;left:${mark.left}px;top:${mark.top}px;width:${mark.width}px;height:${mark.height}px;`
+        + "background:rgba(240,176,0,.26);border-bottom:1.5px solid rgba(214,150,0,.8);border-radius:2px;pointer-events:none;";
+      return piece;
+    }));
+    // Beside the body, not in it: the page's own scripts and its text are left as they were.
+    if (layer.parentNode !== document.documentElement) document.documentElement.appendChild(layer);
   }
 
   let lastHeight = -1;
@@ -585,6 +616,7 @@ function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstT
       return;
     }
     if (event.data.type === "theme") { setTheme(event.data.theme); return; }
+    if (event.data.type === "layout") { fills = event.data.layout === "fill"; reportMarks(); return; }
     if (event.data.type === "asset" && typeof event.data.id === "string") {
       const resolve = assetWaiters.get(event.data.id);
       assetWaiters.delete(event.data.id);
@@ -592,8 +624,11 @@ function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstT
       return;
     }
     if (event.data.type === "read-screen" && typeof event.data.requestId === "string") {
-      const top = Number(event.data.top) || 0;
-      const bottom = Number.isFinite(Number(event.data.bottom)) ? Number(event.data.bottom) : Number.POSITIVE_INFINITY;
+      // A page that scrolls inside its frame shows what is in the frame's own window.
+      const self = event.data.mode === "self";
+      const top = self ? window.scrollY : Number(event.data.top) || 0;
+      const bottom = self ? window.scrollY + window.innerHeight
+        : Number.isFinite(Number(event.data.bottom)) ? Number(event.data.bottom) : Number.POSITIVE_INFINITY;
       let screen;
       try { screen = readScreen(top, bottom); } catch { screen = { visible: "", fields: [], page: "" }; }
       post({ type: "screen", requestId: event.data.requestId, screen });
@@ -610,6 +645,13 @@ export interface HtmlFrameOptions {
   assets?: boolean;
   /** The theme the page starts in; later changes are sent as `theme` messages, so the page isn't reloaded. */
   theme?: "light" | "dark";
+  /** "fill" when the page scrolls inside its frame, so it draws its own highlight marks. */
+  layout?: "fill" | "inline";
+}
+
+/** A change of layout, sent to the page's frame. */
+export function htmlLayoutMessage(layout: "fill" | "inline") {
+  return { marginHtml: 1 as const, type: "layout" as const, layout };
 }
 
 /** A change of theme, sent to the page's frame. */
@@ -625,11 +667,11 @@ const VIEWPORT = /<meta\b[^>]*\bname\s*=\s*["']?viewport\b/iu;
  * viewport line when it has none, so it fits a phone as it would opened by itself.
  */
 export function htmlFrameDocument(html: string, storage: Record<string, string> = {}, options: HtmlFrameOptions | boolean = {}) {
-  const { assets = false, theme = "light" } = typeof options === "boolean" ? { assets: options } : options;
+  const { assets = false, theme = "light", layout = "inline" }: HtmlFrameOptions = typeof options === "boolean" ? { assets: options } : options;
   // Escaped so the page's saved text can't close the script early.
   const saved = JSON.stringify(readStorageData(storage) ?? {}).replace(/</gu, "\\u003c").replace(/\u2028/gu, "\\u2028").replace(/\u2029/gu, "\\u2029");
   const viewport = VIEWPORT.test(html) ? "" : `<meta name="viewport" content="width=device-width,initial-scale=1">`;
-  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"},"${theme === "dark" ? "dark" : "light"}");</script>${viewport}`;
+  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"},"${theme === "dark" ? "dark" : "light"}","${layout === "fill" ? "fill" : "inline"}");</script>${viewport}`;
   const head = /<head(?:\s[^>]*)?>/iu.exec(html);
   if (head) return html.slice(0, head.index + head[0].length) + script + html.slice(head.index + head[0].length);
   const root = /<html(?:\s[^>]*)?>/iu.exec(html);
