@@ -16,7 +16,7 @@
 [data-mode="review"] > .document-mode-dot { background: #b4483a; }
 
 .document-mode-menu {
-  position: fixed; z-index: 200; box-sizing: border-box; width: min(290px, calc(100vw - 16px));
+  position: fixed; z-index: var(--z-popover); box-sizing: border-box; width: min(290px, calc(100vw - 16px));
   max-height: calc(100dvh - 16px); overflow: auto; padding: 5px;
   border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink);
   box-shadow: 0 8px 24px #0003; backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
@@ -44,6 +44,22 @@
   .document-mode-menu button { min-height: 48px; }
   .document-mode-name kbd { display: none; }
 }
+.document-mode-auto { margin-left: auto; padding: 1px 6px; border-radius: 999px; background: var(--button-surface); color: var(--muted); font-size: 11px; font-weight: 500; }
+.document-mode-auto + kbd { margin-left: 8px; }
+.document-mode-reset .document-mode-name { font-weight: 500; }
+.document-mode-note {
+  position: fixed; z-index: 190; box-sizing: border-box; width: min(280px, calc(100vw - 16px)); padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink);
+  box-shadow: 0 8px 24px #0002; font-size: 13px; line-height: 1.4; animation: document-mode-note-in .18s ease-out;
+}
+.document-mode-note p { margin: 0 0 8px; }
+.document-mode-note-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.document-mode-note-actions button { padding: 4px 10px; border: 1px solid var(--line); border-radius: 7px; background: var(--button-surface); color: var(--ink); font: inherit; font-size: 12.5px; cursor: pointer; }
+.document-mode-note-actions button.is-primary { border-color: transparent; background: var(--ink); color: var(--bg); font-weight: 600; }
+.document-mode-note-actions button:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+@keyframes document-mode-note-in { from { opacity: 0; transform: translateY(-4px); } }
+@media (prefers-reduced-motion: reduce) { .document-mode-note { animation: none; } }
+@media (pointer: coarse) { .document-mode-note-actions button { min-height: 36px; } }
 
 /* Play: the bar above an HTML page (a game, quiz or exercise). It stays in reach while the page scrolls. */
 .play-bar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 8px; padding: 6px 0; font-size: 12.5px; color: var(--muted); background: var(--bg); }

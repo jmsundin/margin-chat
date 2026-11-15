@@ -3,7 +3,7 @@ import DismissibleDetails from "./DismissibleDetails";
 import StatusMark, { ROADMAP_STATUSES } from "./RoadmapStatusMark";
 import type { MapOverlayContext } from "./ConversationGraphView";
 import { ROADMAP_STATUS_LABELS, roadmapDraftLink, type RoadmapChange } from "../lib/roadmap";
-import { waitingPathDraft, type MapPath, type MapPathSummary } from "../lib/mapPaths";
+import { waitingPathDraft, type MapPath, type MapPathStep, type MapPathSummary } from "../lib/mapPaths";
 import type { AgentProgress } from "../lib/useChatStreams";
 import type { AgentRoadmapProposal, Conversation, RoadmapStatus } from "../types";
 import "./MapPaths.css";
@@ -173,7 +173,7 @@ export function MapPathPickBanner({ count, onCancel, onDone }: { count: number; 
  * The path bar at the bottom of the map: progress, ‹ step ›, Map | List and ✕,
  * with the current step's strip above it (status, needs first, unlocks, AI).
  */
-export function MapPathBar({ path, trail, conversations, currentDocId, actions, message, inCourse = false, onStep, onClose, onOpenNote, onOpenStep, onGoIn, onGoTo, onMessage }: {
+export function MapPathBar({ path, trail, conversations, currentDocId, actions, message, inCourse = false, stepHidden = false, onStep, onClose, onOpenNote, onOpenStep, onGoIn, onGoTo, onMessage, onHideStep }: {
   path: MapPath;
   /** Paths this one was gone into from, outermost first. */
   trail: MapPathSummary[];
@@ -181,8 +181,10 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
   currentDocId: string | null;
   actions: MapPathActions;
   message: string | null;
-  /** Learn shows the name, progress and every lesson itself, so only the step card and messages float. */
+  /** Learn shows the name, progress, every lesson and the step strip itself (docked in its header), so only messages float. */
   inCourse?: boolean;
+  /** The step strip was closed for the current step. */
+  stepHidden?: boolean;
   onStep(docId: string): void;
   onClose(): void;
   onOpenNote(): void;
@@ -190,6 +192,7 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
   onGoIn(pathId: string): void;
   onGoTo(pathId: string): void;
   onMessage(text: string | null): void;
+  onHideStep(): void;
 }) {
   const step = path.steps.find((item) => item.docId === currentDocId) ?? null;
   const index = step ? path.steps.indexOf(step) : -1;
@@ -198,14 +201,10 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
   const progress = actions.progress[path.id];
   const draft = useMemo(() => pathNote ? waitingPathDraft(pathNote) : null, [pathNote]);
   const drafting = Boolean(actions.writingIds[path.id]);
-  const writing = step ? Boolean(actions.writingIds[step.docId]) : false;
-  const stepIsPath = step && step.docId !== path.id && conversations[step.docId]?.nodeType === "roadmap";
   const percent = path.total ? Math.round((path.finished / path.total) * 100) : 0;
-  const titleOf = (docId: string) => path.steps.find((item) => item.docId === docId)?.title ?? conversations[docId]?.title ?? "Untitled";
-  const run = (reason: string | null) => onMessage(reason);
 
   return <div className="map-path-dock" data-graph-ui="true">
-    {drafting || draft ? <div className="map-path-draft" role="status" aria-live="polite">
+    {!inCourse && (drafting || draft) ? <div className="map-path-draft" role="status" aria-live="polite">
       {draft && !drafting ? <>
         <span className="map-path-spinner" aria-hidden="true" />
         <span>Adding {draftSize(draft.proposal)} to “{path.name}”…</span>
@@ -215,29 +214,8 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
         <button type="button" onClick={() => actions.onStopDraft(path.id)}>Stop</button>
       </>}
     </div> : null}
-    {step ? <section className="map-path-step" aria-label={`Step ${index + 1}: ${step.title}`}>
-      <header>
-        <StatusMark status={step.status} />
-        <strong>{index + 1}. {step.title}</strong>
-        <em>{step.stageTitle}</em>
-        <select aria-label="Status" value={step.status} onChange={(event) => run(actions.onChange(path.id, { kind: "status", nodeId: step.nodeId, status: event.target.value as RoadmapStatus }))}>
-          {ROADMAP_STATUSES.map((status) => <option key={status} value={status}>{ROADMAP_STATUS_LABELS[status]}</option>)}
-        </select>
-        <label className="map-path-optional" title="Optional lessons are drawn dashed and never marked next">
-          <input type="checkbox" checked={step.optional} onChange={(event) => run(actions.onChange(path.id, { kind: "optional", nodeId: step.nodeId, optional: event.target.checked }))} /> Optional
-        </label>
-      </header>
-      {step.needs.length || step.unlocks.length ? <div className="map-path-links">
-        {step.needs.length ? <span>Needs first {step.needs.map((id) => <button key={id} type="button" onClick={() => onStep(id)}>{titleOf(id)}</button>)}</span> : null}
-        {step.unlocks.length ? <span>Unlocks {step.unlocks.map((id) => <button key={id} type="button" onClick={() => onStep(id)}>{titleOf(id)}</button>)}</span> : null}
-      </div> : null}
-      <div className="map-path-actions">
-        <button type="button" onClick={() => onOpenStep(step.docId)}>Open</button>
-        <button type="button" disabled={writing} onClick={() => run(actions.onStepAI(path.id, step.docId, "explain"))}>{writing ? "AI is writing…" : "✦ Explain"}</button>
-        {stepIsPath ? <button type="button" onClick={() => onGoIn(step.docId)}>Go into its path ›</button>
-          : <button type="button" onClick={() => { const reason = actions.onStepAI(path.id, step.docId, "deeper"); run(reason ?? "AI is breaking this step into a path of its own. When it's done, Go into its path."); }}>↘ Dive deeper</button>}
-      </div>
-    </section> : null}
+    {step && !inCourse && !stepHidden ? <MapPathStepStrip path={path} step={step} conversations={conversations} actions={actions}
+      onStep={onStep} onOpenStep={onOpenStep} onGoIn={onGoIn} onMessage={onMessage} onHide={onHideStep} /> : null}
     {message ? <p className="map-path-message" role="status">{message}<button type="button" aria-label="Dismiss" onClick={() => onMessage(null)}>×</button></p> : null}
     {inCourse ? null : <div className="map-path-bar" role="toolbar" aria-label={`Path: ${path.name}`}>
       <span className="map-path-name">
@@ -257,6 +235,63 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
       <button type="button" className="map-path-close" aria-label="Turn the path off" title="Turn the path off" onClick={onClose}>×</button>
     </div>}
   </div>;
+}
+
+/**
+ * The lesson you're on: its status, what it needs first and unlocks, and AI. In Learn it is docked in
+ * the course's header, so it never covers a lesson; on the map it sits above the path bar. × puts it away.
+ */
+export function MapPathStepStrip({ path, step, conversations, actions, docked = false, onStep, onOpenStep, onGoIn, onMessage, onHide }: {
+  path: MapPath;
+  step: MapPathStep;
+  conversations: Record<string, Conversation>;
+  actions: MapPathActions;
+  /** Docked in the course header: the lesson is already open beside, so there is no Open. */
+  docked?: boolean;
+  onStep(docId: string): void;
+  onOpenStep(docId: string): void;
+  onGoIn(pathId: string): void;
+  onMessage(text: string | null): void;
+  onHide(): void;
+}) {
+  const writing = Boolean(actions.writingIds[step.docId]);
+  const stepIsPath = step.docId !== path.id && conversations[step.docId]?.nodeType === "roadmap";
+  const titleOf = (docId: string) => path.steps.find((item) => item.docId === docId)?.title ?? conversations[docId]?.title ?? "Untitled";
+  const run = (reason: string | null) => onMessage(reason);
+  const stepActions = <div className="map-path-actions">
+    {docked ? null : <button type="button" onClick={() => onOpenStep(step.docId)}>Open</button>}
+    <button type="button" disabled={writing} onClick={() => run(actions.onStepAI(path.id, step.docId, "explain"))}>{writing ? "AI is writing…" : "✦ Explain"}</button>
+    {stepIsPath ? <button type="button" onClick={() => onGoIn(step.docId)}>Go into its path ›</button>
+      : <button type="button" onClick={() => { const reason = actions.onStepAI(path.id, step.docId, "deeper"); run(reason ?? "AI is breaking this step into a path of its own. When it's done, Go into its path."); }}>↘ Dive deeper</button>}
+  </div>;
+  return <section className={`map-path-step${docked ? " is-docked" : ""}`} aria-label={`Step ${step.number}: ${step.title}`} data-graph-ui="true">
+    <header>
+      <StatusMark status={step.status} />
+      <strong title={step.title}>{step.number}. {step.title}</strong>
+      {docked ? null : <em>{step.stageTitle}</em>}
+      <select aria-label="Status" value={step.status} onChange={(event) => run(actions.onChange(path.id, { kind: "status", nodeId: step.nodeId, status: event.target.value as RoadmapStatus }))}>
+        {ROADMAP_STATUSES.map((status) => <option key={status} value={status}>{ROADMAP_STATUS_LABELS[status]}</option>)}
+      </select>
+      <label className="map-path-optional" title="Optional lessons are drawn dashed and never marked next">
+        <input type="checkbox" checked={step.optional} onChange={(event) => run(actions.onChange(path.id, { kind: "optional", nodeId: step.nodeId, optional: event.target.checked }))} /> Optional
+      </label>
+      {docked ? stepActions : null}
+      <button type="button" className="map-path-step-close" aria-label="Hide the step details" title="Hide the step details" onClick={onHide}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 10l4-4 4 4" /></svg></button>
+    </header>
+    {step.needs.length || step.unlocks.length ? <div className="map-path-links">
+      {step.needs.length ? <span><i className="is-needs" aria-hidden="true" />Needs first {step.needs.map((id) => <button key={id} type="button" onClick={() => onStep(id)}>{titleOf(id)}</button>)}</span> : null}
+      {step.unlocks.length ? <span><i className="is-unlocks" aria-hidden="true" />Unlocks {step.unlocks.map((id) => <button key={id} type="button" onClick={() => onStep(id)}>{titleOf(id)}</button>)}</span> : null}
+    </div> : null}
+    {docked ? null : stepActions}
+  </section>;
+}
+
+/** What the course header says while AI drafts a roadmap: how many lessons have streamed in so far. */
+export function draftingLabel(progress: AgentProgress | undefined, path: MapPath): string {
+  const streamed = path.steps.filter((step) => step.drafting).length;
+  if (streamed) return `AI is adding lessons: ${streamed} so far…`;
+  return progress?.label || "AI is drafting this roadmap…";
 }
 
 function draftSize(proposal: AgentRoadmapProposal) {

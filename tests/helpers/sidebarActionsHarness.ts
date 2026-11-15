@@ -124,7 +124,8 @@ try {
   await drag("dragend", ".thread-item-main");
   assert.equal(container.querySelector('[data-thread-drop-target="pinned"]'), null);
   // Reveal in Finder: only with the desktop app's vault folder, and only for documents with a file there.
-  const menuItem = (label: string) => [...container.querySelectorAll('.thread-item-menu [role="menuitem"]')]
+  // The menu renders at the page level (so a docked Map or roadmap cannot cover it), not inside the sidebar.
+  const menuItem = (label: string) => [...browser.document.querySelectorAll('.thread-item-menu [role="menuitem"]')]
     .find((node) => node.textContent?.trim() === label) as any;
   await click('[aria-label="Open actions for Research"]');
   assert(menuItem("Rename"), "The document menu opens.");
@@ -138,7 +139,7 @@ try {
   await click('[aria-label="Open actions for Research"]');
   await act(async () => { menuItem("Reveal in Finder").click(); });
   assert.equal(events.at(-1), "reveal:chat");
-  assert.equal(container.querySelector(".thread-item-menu"), null, "The menu closes after revealing.");
+  assert.equal(browser.document.querySelector(".thread-item-menu"), null, "The menu closes after revealing.");
 
   await renderSidebar(true);
   assert.equal(container.querySelector('[aria-label="New side document"]'), null);

@@ -107,7 +107,7 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
 
 .language-term-card { position: absolute; z-index: 40; width: min(350px, calc(100% - 16px)); display: flex; flex-direction: column; background: var(--lr-card); color: var(--lr-ink);
   border: 1px solid var(--lr-line); border-radius: 14px; box-shadow: 0 14px 40px rgba(0, 0, 0, .2); font: .84rem/1.4 var(--ui-font, system-ui, sans-serif); outline: none; }
-.language-term-card.is-sheet { position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto; max-height: 72dvh; border-radius: 16px 16px 0 0; z-index: 2000; padding-bottom: env(safe-area-inset-bottom, 0px); }
+.language-term-card.is-sheet { position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto; max-height: 72dvh; border-radius: 16px 16px 0 0; z-index: var(--z-popover); padding-bottom: env(safe-area-inset-bottom, 0px); }
 .language-term-card.is-sheet::before { content: ""; width: 38px; height: 4px; border-radius: 2px; background: var(--lr-line); margin: 8px auto 0; flex: none; }
 .language-term-scroll { display: flex; flex-direction: column; gap: 8px; padding: 12px 13px 8px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 .language-term-head { display: flex; align-items: center; gap: 8px; }

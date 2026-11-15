@@ -1,4 +1,4 @@
-.vault-search-backdrop { align-items: flex-start; background: #0008; display: flex; inset: 0; justify-content: center; padding: min(10dvh, 80px) 24px 24px; position: fixed; z-index: 185; }
+.vault-search-backdrop { align-items: flex-start; background: #0008; display: flex; inset: 0; justify-content: center; padding: min(10dvh, 80px) 24px 24px; position: fixed; z-index: var(--z-modal); }
 .vault-search { background: var(--panel-strong); border: 1px solid var(--line-strong); border-radius: 18px; box-shadow: 0 24px 90px #0005; color: var(--ink); display: flex; flex-direction: column; height: min(78dvh, 720px); max-width: 1040px; overflow: hidden; width: 100%; }
 .vault-search *, .vault-search *::before, .vault-search *::after { box-sizing: border-box; }
 .vault-search button { cursor: pointer; font: inherit; }

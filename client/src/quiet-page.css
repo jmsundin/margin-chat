@@ -20,6 +20,19 @@
 .is-quiet-page .document-workspace-header.is-quiet .document-tab { flex: 0 1 200px; min-height: 32px; border: 0; border-radius: 8px; background: transparent; box-shadow: none; }
 .is-quiet-page .document-workspace-header.is-quiet .document-tab.is-active { background: var(--button-active-surface); box-shadow: none; }
 .is-quiet-page .document-workspace-header.is-quiet .document-workspace-actions { margin-left: auto; padding-left: 0; border-left: 0; }
+/* With no tabs, the row held only the sidebar button, Map and Ask, so it floats over the top of the
+   page and the page starts at the top of the screen. The page's own header keeps clear of the
+   buttons (lib/floatingHeader.ts widens its padding where they would meet). */
+.is-quiet-page .document-workspace-header.is-floating { position: absolute; top: 0; right: 0; left: 0; z-index: 30; pointer-events: none; }
+/* Nudged down a little so the buttons line up with the page's title row beside them. */
+.is-quiet-page .document-workspace-header.is-floating > .document-workspace-toolbar { min-height: 48px; margin-top: 9px; }
+/* The docked Map has its own sidebar button in the same corner; the hook marks when they meet. */
+.is-quiet-page .document-workspace-header.is-floating[data-under-map-toggle] .workspace-menu-button { visibility: hidden; }
+.is-quiet-page .document-workspace-header.is-floating > .document-workspace-toolbar > *,
+.is-quiet-page .document-workspace-header.is-floating .document-workspace-actions > * { pointer-events: auto; }
+.is-quiet-page .document-workspace-header.is-floating .document-workspace-actions { pointer-events: none; }
+/* Text scrolls under the buttons, so each has the page's colour behind it. */
+.is-quiet-page .document-workspace-header.is-floating :is(.workspace-menu-button, .document-map-button):not([aria-pressed="true"], :hover) { background: color-mix(in srgb, var(--bg) 88%, transparent); }
 
 @media (hover: hover) {
   /* Compass, local graph, outline and keep reading: there when you reach for them. */

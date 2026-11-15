@@ -1711,6 +1711,10 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     {languagePair && learning ? <LanguageReader blocks={props.blocks} pair={languagePair} learning={learning} onAskInMargin={props.onSelectionChange ? askInMargin : undefined} /> : null}
     {/* Its mics are beside Ask AI and in the pane's corner, so voice typing doesn't float one over the text. */}
     <div ref={hostRef} className="live-document-host" data-dictation-button="own" />
+    {props.emptyExamples?.length && editable && mode !== "reading" && !languagePair && props.blocks.every((block) => !block.content.trim())
+      ? <ul className="live-document-examples" aria-label="Things a page can hold">
+        {props.emptyExamples.map((example) => <li key={example}>{example}</li>)}
+      </ul> : null}
     {askShown && askButton && <div className="live-document-ask-group" style={{ top: askButton.top, left: askButton.left }}>
         {props.onInvokeAI && <button type="button" className="live-document-ask"
           aria-label="Ask AI here" title="Ask AI here (or press Space on an empty line)"

@@ -78,3 +78,25 @@ describe("Learn: a roadmap as a course", () => {
     expect(buildMapPath(state.conversations.path, state.conversations).nextUpDocId).toBe("docker");
   });
 });
+
+describe("Learn: a roadmap AI is drafting streams in", () => {
+  test("streamed lessons join the course in order, without repeating ones already on it", async () => {
+    const { withDraftPreview } = await import("../client/src/lib/mapPaths");
+    const state = course();
+    const path = buildMapPath(state.conversations.path, state.conversations);
+    const preview = withDraftPreview(path, { goal: "FastAPI", stages: [
+      { title: "Start here", steps: [{ documentId: "web-concepts" }, { title: "HTTP verbs" }] },
+      { title: "Go further", steps: [{ title: "Websockets" }, { title: "Python Basics" }] },
+    ] }, state.conversations);
+    expect(preview.steps.map((step) => step.title)).toEqual(["Python Basics", "Web Concepts", "Path Operations", "HTTP verbs", "SQL Databases", "Docker", "Websockets"]);
+    expect(preview.steps.map((step) => step.number)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(preview.steps.filter((step) => step.drafting).map((step) => step.title)).toEqual(["HTTP verbs", "Websockets"]);
+    expect(preview.steps.find((step) => step.title === "HTTP verbs")?.stageId).toBe("s1");
+    expect(preview.total).toBe(7);
+    // Nothing streamed yet: the path is unchanged.
+    expect(withDraftPreview(path, null, state.conversations)).toBe(path);
+    // The course lays streamed lessons out like any other.
+    const layout = layoutCourse(preview, 900);
+    expect(layout.lessons).toHaveLength(7);
+  });
+});

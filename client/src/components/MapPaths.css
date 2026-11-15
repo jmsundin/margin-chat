@@ -166,3 +166,20 @@
 .map-roadmap-flag span { overflow: hidden; text-overflow: ellipsis; }
 .map-roadmap-flag em { font-style: normal; font-weight: 500; opacity: .7; }
 .map-path-optional { display: inline-flex; align-items: center; gap: 4px; font-size: .76rem; color: var(--muted); white-space: nowrap; }
+
+/* The step strip's × puts it away until another step is picked. */
+.map-path-step-close { flex: 0 0 auto; display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 7px; background: none; color: var(--muted); cursor: pointer; }
+.map-path-step-close svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.map-path-step-close:hover { background: var(--button-surface, var(--accent-soft)); color: var(--ink); }
+.map-path-step header .map-path-optional { margin-right: 0; }
+.map-path-links i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 2px; }
+.map-path-links i.is-needs { background: var(--path-needs, #d08a2c); }
+.map-path-links i.is-unlocks { background: var(--path-unlocks, #3a8fd6); }
+/* Docked in Learn's header: flat, part of the page, never floating over a lesson. */
+.map-path-step.is-docked { max-width: none; padding: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; gap: 6px; display: flex; flex-wrap: wrap; align-items: center; column-gap: 14px; }
+.map-path-step.is-docked header { flex: 1 1 100%; }
+.map-path-step.is-docked header strong { margin-right: auto; }
+.map-path-step.is-docked header { flex-wrap: wrap; row-gap: 6px; }
+.map-path-step.is-docked .map-path-links { flex: 1 1 100%; }
+.map-path-step.is-docked .map-path-actions { flex: 0 0 auto; flex-wrap: nowrap; }
+.map-path-step.is-docked .map-path-actions button { min-height: 28px; padding: 3px 10px; }

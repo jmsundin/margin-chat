@@ -264,3 +264,36 @@ export function savedMeaningIn(markdown: string, text: string): string | null {
   }
   return null;
 }
+
+const SCRIPTS: ReadonlyArray<[string, RegExp]> = [
+  ["ja", /[぀-ヿ]/gu], ["ko", /[가-힯]/gu], ["zh", /[一-鿿]/gu], ["ru", /[Ѐ-ӿ]/gu],
+  ["ar", /[؀-ۿ]/gu], ["he", /[֐-׿]/gu], ["el", /[Ͱ-Ͽ]/gu], ["hi", /[ऀ-ॿ]/gu], ["th", /[฀-๿]/gu],
+];
+const COMMON_WORDS: Readonly<Record<string, ReadonlySet<string>>> = Object.fromEntries(Object.entries({
+  en: "the and of to is in that it for was with you this are on have be not but they his her what",
+  es: "el la los las de que y en un una es por con para no se lo del al pero como más está son muy",
+  fr: "le la les de des et est un une que qui dans pour pas ne sur avec il elle sont au du ce mais",
+  de: "der die das und ist nicht ein eine ich zu den mit sich auf für von dem auch es sie wir aber",
+  it: "il la di che e è un una per non sono del della con gli le si lo ma come anche nel più questo",
+  pt: "o a os as de que e é um uma não em do da para com por se mais mas como está são muito",
+  nl: "de het een en van is dat niet ik je op te zijn met voor die er maar ook als bij wat",
+}).map(([code, words]) => [code, new Set(words.split(" "))]));
+
+/**
+ * The language a page is mostly written in, from its script or its most common small words, or null
+ * when the page is too short to tell. Cheap enough to run while the page renders; a hint, not a verdict.
+ */
+export function guessTextLanguage(text: string): string | null {
+  const letters = text.replace(/[\s\d\p{P}\p{S}]/gu, "").length;
+  if (letters < 80) return null;
+  for (const [code, pattern] of SCRIPTS) {
+    // Japanese mixes kana with Chinese characters, so a fifth of kana is enough.
+    if ((text.match(pattern)?.length ?? 0) * (code === "ja" ? 5 : 2) >= letters) return code;
+  }
+  const words = text.toLowerCase().match(/\p{L}+/gu) ?? [];
+  if (words.length < 25) return null;
+  const counts = Object.entries(COMMON_WORDS).map(([code, set]) => [code, words.filter((word) => set.has(word)).length] as const)
+    .sort((a, b) => b[1] - a[1]);
+  const [best, second] = counts;
+  return best[1] >= words.length * 0.12 && best[1] >= second[1] * 1.6 ? best[0] : null;
+}
