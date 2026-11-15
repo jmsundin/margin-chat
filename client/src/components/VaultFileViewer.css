@@ -176,3 +176,11 @@
   .html-page-bar, .document-body.is-html-page > .html-page-bar { padding-right: 0; }
   .html-page-bar > button.html-page-full-screen { position: sticky; right: 0; z-index: 1; border-radius: 0; background: var(--bg); box-shadow: -8px 0 8px -4px var(--bg); }
 }
+/* Fingers: every control in the bar is at least 40 px tall, and the bar stays within 45 px. */
+@media (pointer: coarse) {
+  .html-page-bar, .document-body.is-html-page > .html-page-bar { padding-top: 0; padding-bottom: 0; }
+  .html-page-bar .play-bar button { min-height: 40px; }
+  .html-page-bar .html-page-views button { min-height: 38px; }
+  .document-mode-menu .html-page-choice button { min-height: 40px; }
+}
+.document-mode-menu .html-page-choice button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
