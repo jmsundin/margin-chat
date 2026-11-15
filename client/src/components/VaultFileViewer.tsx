@@ -9,6 +9,7 @@ import { publishPdfNavigation } from "../lib/pdfNavigation";
 import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
 import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
 import { registerHtmlScreen } from "../lib/htmlScreens";
+import { decodeHtmlPageData, encodeHtmlPageData, htmlPageDataPath, newerHtmlPageData, sameHtmlPageData, type HtmlPageData } from "../lib/htmlPageData";
 import {
   imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, pdfPageFromSourceId, pdfPageSourceId, pdfPageText, vaultFileTitle,
   type ImageArea,
@@ -673,21 +674,18 @@ const FRAME_BORDERS = 2;
 /** Where this device keeps what a page saved in its localStorage, per page document. */
 const htmlStorageKey = (documentId: string) => `margin-chat:html-page-storage:${documentId}`;
 
-function loadHtmlStorage(documentId: string): Record<string, string> {
-  try {
-    const stored = JSON.parse(localStorage.getItem(htmlStorageKey(documentId)) ?? "{}");
-    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
-  } catch {
-    return {};
-  }
+/** This device's copy of what a page saved: read at once when the page opens, and the copy that works offline. */
+function loadHtmlStorage(documentId: string): HtmlPageData | null {
+  try { return decodeHtmlPageData(localStorage.getItem(htmlStorageKey(documentId))); } catch { return null; }
 }
 
-function saveHtmlStorage(documentId: string, data: Record<string, string>) {
-  try {
-    if (Object.keys(data).length) localStorage.setItem(htmlStorageKey(documentId), JSON.stringify(data));
-    else localStorage.removeItem(htmlStorageKey(documentId));
-  } catch { /* Without room the page still works; it just starts fresh next time. */ }
+function saveHtmlStorage(documentId: string, value: HtmlPageData) {
+  try { localStorage.setItem(htmlStorageKey(documentId), encodeHtmlPageData(value)); }
+  catch { /* Without room here the vault's copy still holds it. */ }
 }
+
+/** How long a page's saves gather before they go into the vault; a game can save on every answer. */
+const PAGE_DATA_SAVE_DELAY = 4_000;
 
 function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   const [html, setHtml] = useState<{ text: string; storage: Record<string, string> } | null>(null);
@@ -698,14 +696,41 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   const latest = useRef(props);
   latest.current = props;
 
+  const media = useVaultMedia();
+  const mediaRef = useRef(media);
+  mediaRef.current = media;
+  // What the page saved and the vault doesn't hold yet; written after a pause, and at once when the page closes.
+  const unsaved = useRef<{ path: string; value: HtmlPageData; timer: number } | null>(null);
+  const flushPageData = () => {
+    const pending = unsaved.current;
+    if (!pending) return;
+    unsaved.current = null;
+    window.clearTimeout(pending.timer);
+    // This device's copy already holds it; a failed write is made up for by the next save or the next time the page opens.
+    void mediaRef.current?.writeText?.(pending.path, encodeHtmlPageData(pending.value)).catch(() => undefined);
+  };
+
   useEffect(() => {
     let cancelled = false;
     setHtml(null); setHeight(null); setMarks([]);
     const documentId = props.conversation.id;
-    props.blob.text().then((text) => { if (!cancelled) setHtml({ text, storage: loadHtmlStorage(documentId) }); },
-      () => { if (!cancelled) setHtml({ text: "", storage: {} }); });
-    return () => { cancelled = true; };
-  }, [props.blob, props.conversation.id]);
+    const dataPath = htmlPageDataPath(props.file.path);
+    const local = loadHtmlStorage(documentId);
+    // The copy saved last wins: this device's, or the one another device put in the vault.
+    const fromVault = Promise.resolve(mediaRef.current?.readText?.(dataPath)).then(decodeHtmlPageData, () => null);
+    Promise.all([props.blob.text().catch(() => ""), fromVault]).then(([text, vault]) => {
+      if (cancelled) return;
+      const saved = newerHtmlPageData(local, vault);
+      if (saved && saved !== local) saveHtmlStorage(documentId, saved);
+      // Progress this device made before pages synced, or while the vault couldn't be written, goes up now.
+      if (saved && saved === local && Object.keys(saved.data).length && (!vault || !sameHtmlPageData(vault.data, saved.data))) {
+        void mediaRef.current?.writeText?.(dataPath, encodeHtmlPageData({ savedAt: saved.savedAt || Date.now(), data: saved.data })).catch(() => undefined);
+      }
+      setHtml({ text, storage: saved?.data ?? {} });
+    });
+    window.addEventListener("pagehide", flushPageData);
+    return () => { cancelled = true; window.removeEventListener("pagehide", flushPageData); flushPageData(); };
+  }, [props.blob, props.conversation.id, props.file.path]);
 
   // The page's saved storage is read once as it opens; later saves don't reload the frame.
   const source = useMemo(() => html === null ? null : htmlFrameDocument(html.text, html.storage), [html]);
@@ -757,7 +782,11 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
         screenRequests.current.delete(message.requestId);
         answer?.(message.screen);
       } else if (message.type === "storage") {
-        saveHtmlStorage(current.conversation.id, message.data);
+        const value = { savedAt: Date.now(), data: message.data };
+        saveHtmlStorage(current.conversation.id, value);
+        // The first save starts the wait and later ones ride along, so a page that saves constantly still reaches the vault.
+        unsaved.current = { path: htmlPageDataPath(current.file.path), value,
+          timer: unsaved.current?.timer ?? window.setTimeout(flushPageData, PAGE_DATA_SAVE_DELAY) };
       } else if (message.type === "clear") {
         current.onClearSelection?.();
       } else if (message.type === "selection") {
