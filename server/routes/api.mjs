@@ -5,7 +5,7 @@ import {
   readRawBody,
   sendJson,
 } from "../http/json.mjs";
-import { createRateLimiter, getClientAddress } from "../http/rateLimit.mjs";
+import { createRateLimiter, createSharedRateLimiter, getClientAddress } from "../http/rateLimit.mjs";
 import { createNdjsonResponse, sendStreamingJson } from "../http/streamingJson.mjs";
 import { createChatExecutionService } from "../chat/execution.mjs";
 import { validateAIOptions } from "../chat/validation.mjs";
@@ -197,12 +197,14 @@ export function createApiHandler({
   });
 
   const limits = { ...DEFAULT_AUTH_RATE_LIMITS, ...rateLimits };
-  const loginByAddress = createRateLimiter(limits.loginFailuresByAddress);
-  const loginByEmail = createRateLimiter(limits.loginFailuresByEmail);
-  const signupByAddress = createRateLimiter(limits.signupsByAddress);
-  const resetByAddress = createRateLimiter(limits.passwordResetsByAddress);
-  const passwordChangeByUser = createRateLimiter(limits.passwordChangeFailuresByUser);
-  const accountDeleteByUser = createRateLimiter(limits.accountDeleteFailuresByUser);
+  // Counted in Postgres so every server instance shares one budget per address, email or account.
+  const authLimiter = (name) => createSharedRateLimiter({ name, ...limits[name], store: database });
+  const loginByAddress = authLimiter("loginFailuresByAddress");
+  const loginByEmail = authLimiter("loginFailuresByEmail");
+  const signupByAddress = authLimiter("signupsByAddress");
+  const resetByAddress = authLimiter("passwordResetsByAddress");
+  const passwordChangeByUser = authLimiter("passwordChangeFailuresByUser");
+  const accountDeleteByUser = authLimiter("accountDeleteFailuresByUser");
   // One import saves at most a few hundred pictures; this only stops a runaway loop.
   const webImagesByUser = createRateLimiter({ max: 1_000, windowMs: 60 * 60 * 1000 });
   const clientAddress = (request) =>
@@ -213,25 +215,25 @@ export function createApiHandler({
   async function throttleLogin(request, payload, run) {
     const address = clientAddress(request);
     const email = typeof payload?.email === "string" ? payload.email.trim().toLowerCase().slice(0, 320) : null;
-    loginByAddress.check(address);
-    if (email) loginByEmail.check(email);
+    await loginByAddress.check(address);
+    if (email) await loginByEmail.check(email);
     try {
       const result = await run();
-      if (email) loginByEmail.reset(email);
+      if (email) await loginByEmail.reset(email);
       return result;
     } catch (error) {
       if (error?.statusCode === 401) {
-        loginByAddress.record(address);
-        if (email) loginByEmail.record(email);
+        await loginByAddress.record(address);
+        if (email) await loginByEmail.record(email);
       }
       throw error;
     }
   }
 
-  function throttleAttempt(limiter, request) {
+  async function throttleAttempt(limiter, request) {
     const address = clientAddress(request);
-    limiter.check(address);
-    limiter.record(address);
+    await limiter.check(address);
+    await limiter.record(address);
   }
 
   return async function handleRequest(request, response) {
@@ -469,7 +471,7 @@ export function createApiHandler({
       }
 
       if (route?.id === "authSignup") {
-        throttleAttempt(signupByAddress, request);
+        await throttleAttempt(signupByAddress, request);
         const body = await readJsonBody(request, AUTH_BODY_LIMIT);
         const result = await authService.signup(body);
 
@@ -504,7 +506,7 @@ export function createApiHandler({
       }
 
       if (route?.id === "passwordResetRequest") {
-        throttleAttempt(resetByAddress, request);
+        await throttleAttempt(resetByAddress, request);
         const result = await authService.requestPasswordReset(await readJsonBody(request, AUTH_BODY_LIMIT));
 
         sendJson(response, 200, result);
@@ -512,7 +514,7 @@ export function createApiHandler({
       }
 
       if (route?.id === "passwordResetConfirm") {
-        throttleAttempt(resetByAddress, request);
+        await throttleAttempt(resetByAddress, request);
         const result = await authService.resetPassword(await readJsonBody(request, AUTH_BODY_LIMIT));
 
         sendJson(response, 200, result, {
@@ -555,13 +557,13 @@ export function createApiHandler({
 
       if (route?.id === "passwordChange") {
         const changeBody = await readJsonBody(request, AUTH_BODY_LIMIT);
-        passwordChangeByUser.check(authContext.user.id);
+        await passwordChangeByUser.check(authContext.user.id);
         let result;
         try {
           result = await authService.changePassword(authContext.user.id, authContext.sessionId, changeBody);
-          passwordChangeByUser.reset(authContext.user.id);
+          await passwordChangeByUser.reset(authContext.user.id);
         } catch (error) {
-          if (error?.statusCode === 400) passwordChangeByUser.record(authContext.user.id);
+          if (error?.statusCode === 400) await passwordChangeByUser.record(authContext.user.id);
           throw error;
         }
         sendJson(response, 200, { ok: true }, {
@@ -576,13 +578,13 @@ export function createApiHandler({
         if (authContext.user.role === "admin") {
           throw new HttpError(409, "Admin accounts can't be deleted from Settings.");
         }
-        accountDeleteByUser.check(authContext.user.id);
+        await accountDeleteByUser.check(authContext.user.id);
         let passwordHash;
         try {
           passwordHash = await authService.verifyAccountDeletion(authContext.user.id, deleteBody);
-          accountDeleteByUser.reset(authContext.user.id);
+          await accountDeleteByUser.reset(authContext.user.id);
         } catch (error) {
-          if (error?.statusCode === 400) accountDeleteByUser.record(authContext.user.id);
+          if (error?.statusCode === 400) await accountDeleteByUser.record(authContext.user.id);
           throw error;
         }
         // Billing first, so nothing renews if a later step fails; the account row goes last,
@@ -911,12 +913,12 @@ export function createApiHandler({
       if (route?.id === "authProfile") {
         const body = await readJsonBody(request, AUTH_BODY_LIMIT);
         // Wrong passwords for an email change count like failed password changes.
-        passwordChangeByUser.check(authContext.user.id);
+        await passwordChangeByUser.check(authContext.user.id);
         let user;
         try {
           user = await authService.updateProfile(authContext.user.id, body, { currentEmail: authContext.user.email });
         } catch (error) {
-          if (error?.statusCode === 400 && /password/i.test(error.message)) passwordChangeByUser.record(authContext.user.id);
+          if (error?.statusCode === 400 && /password/i.test(error.message)) await passwordChangeByUser.record(authContext.user.id);
           throw error;
         }
 

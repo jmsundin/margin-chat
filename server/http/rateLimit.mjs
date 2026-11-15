@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { HttpError } from "../lib/errors.mjs";
 
 export class RateLimitError extends HttpError {
@@ -68,4 +69,54 @@ export function getClientAddress(request, { trustProxyHeaders = false } = {}) {
     if (first) return first.slice(0, 64);
   }
   return request.socket?.remoteAddress ?? "unknown";
+}
+
+/**
+ * A limit every server instance shares, counted in Postgres when the database offers it.
+ * Keys are hashed before they are stored, so no email or address is kept. This process's
+ * own counter is checked first and still applies if the database can't be reached, so a
+ * database hiccup never removes the limit altogether. Every method returns a promise.
+ */
+export function createSharedRateLimiter({ name, max, windowMs, store, now = Date.now, slots = 15 }) {
+  const local = createRateLimiter({ max, windowMs, now });
+  const shared = store && typeof store.countRateLimitHits === "function" && typeof store.recordRateLimitHit === "function"
+    && typeof store.clearRateLimitHits === "function" ? store : null;
+  const slotMs = Math.max(1000, Math.floor(windowMs / slots));
+  const keyHash = (key) => createHash("sha256").update(`${name}\n${key}`).digest("hex").slice(0, 40);
+  let warned = false;
+  const fallback = (error) => {
+    if (!warned) { warned = true; console.error(`Shared rate limit "${name}" unavailable; using this instance's count`, error?.message ?? error); }
+  };
+
+  return {
+    async check(key) {
+      local.check(key);
+      if (!shared) return;
+      let counted;
+      try {
+        counted = await shared.countRateLimitHits({ bucket: name, keyHash: keyHash(key), since: new Date(now() - windowMs) });
+      } catch (error) { fallback(error); return; }
+      if (counted.hits >= max) {
+        const freesAt = (counted.oldest ? counted.oldest.getTime() : now()) + windowMs;
+        throw new RateLimitError(Math.max(1, Math.ceil((freesAt - now()) / 1000)));
+      }
+    },
+    async record(key) {
+      local.record(key);
+      if (!shared) return;
+      const at = now();
+      try {
+        await shared.recordRateLimitHit({
+          bucket: name, keyHash: keyHash(key), slotStart: new Date(at - (at % slotMs)),
+          // About one attempt in fifty also clears slots older than a day.
+          pruneBefore: Math.random() < 0.02 ? new Date(at - 24 * 60 * 60 * 1000) : null,
+        });
+      } catch (error) { fallback(error); }
+    },
+    async reset(key) {
+      local.reset(key);
+      if (!shared) return;
+      try { await shared.clearRateLimitHits({ bucket: name, keyHash: keyHash(key) }); } catch (error) { fallback(error); }
+    },
+  };
 }

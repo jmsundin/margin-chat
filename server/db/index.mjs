@@ -60,6 +60,7 @@ import * as languageTerms from "./languageTermRepository.mjs";
 import * as ratchet from "./ratchetRepository.mjs";
 import * as interfaceSettings from "./interfaceSettingsRepository.mjs";
 import * as passages from "./passageRepository.mjs";
+import * as rateLimitHits from "./rateLimitRepository.mjs";
 import { recordDesktopDownload } from "./downloadRepository.mjs";
 
 const { Pool } = pg;
@@ -461,6 +462,9 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
       catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
     }),
     readRatchetCheck: (args) => withClient((client) => ratchet.readRatchetCheck(client, args)),
+    countRateLimitHits: (args) => withClient((client) => rateLimitHits.countRateLimitHits(client, args)),
+    recordRateLimitHit: (args) => withClient((client) => rateLimitHits.recordRateLimitHit(client, args)),
+    clearRateLimitHits: (args) => withClient((client) => rateLimitHits.clearRateLimitHits(client, args)),
     readInterfaceSettings: (args) => withClient((client) => interfaceSettings.readInterfaceSettings(client, args)),
     saveInterfaceSettings: (args) => withClient((client) => interfaceSettings.saveInterfaceSettings(client, args)),
     listLibraryFields: (args) => withClient((client) => library.listLibraryFields(client, args)),

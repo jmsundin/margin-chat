@@ -4,7 +4,7 @@ import { createAuthService } from "../server/auth/index.mjs";
 import { hashPassword, verifyPasswordAgainstDecoy } from "../server/auth/passwords.mjs";
 import { createRuntimeConfig } from "../server/config/runtime.mjs";
 import { parseCookieHeader } from "../server/http/cookies.mjs";
-import { createRateLimiter, getClientAddress } from "../server/http/rateLimit.mjs";
+import { createRateLimiter, createSharedRateLimiter, getClientAddress } from "../server/http/rateLimit.mjs";
 import { EXTENSION_SESSION_API_PATH, EXTENSION_WORKSPACE_SESSION_API_PATH } from "@margin-chat/capture-contracts";
 import { createApiHandler } from "../server/routes/api.mjs";
 import { createCaptureTestDatabase } from "./helpers/captureDatabase.mjs";
@@ -49,6 +49,62 @@ describe("cookie parsing", () => {
       margin_chat_session: "%E0%A4%A",
       other: "a b",
     });
+  });
+});
+
+describe("shared rate limiter", () => {
+  function memoryStore() {
+    const rows: Array<{ bucket: string; keyHash: string; slotStart: Date; hits: number }> = [];
+    return {
+      rows,
+      async countRateLimitHits({ bucket, keyHash, since }: { bucket: string; keyHash: string; since: Date }) {
+        const live = rows.filter((row) => row.bucket === bucket && row.keyHash === keyHash && row.slotStart > since);
+        return { hits: live.reduce((sum, row) => sum + row.hits, 0), oldest: live.length ? new Date(Math.min(...live.map((row) => row.slotStart.getTime()))) : null };
+      },
+      async recordRateLimitHit({ bucket, keyHash, slotStart }: { bucket: string; keyHash: string; slotStart: Date }) {
+        const row = rows.find((r) => r.bucket === bucket && r.keyHash === keyHash && r.slotStart.getTime() === slotStart.getTime());
+        if (row) row.hits += 1; else rows.push({ bucket, keyHash, slotStart, hits: 1 });
+      },
+      async clearRateLimitHits({ bucket, keyHash }: { bucket: string; keyHash: string }) {
+        for (let i = rows.length - 1; i >= 0; i -= 1) if (rows[i].bucket === bucket && rows[i].keyHash === keyHash) rows.splice(i, 1);
+      },
+    };
+  }
+
+  test("two limiters over one store share the count, and the window slides", async () => {
+    let now = 60_000;
+    const store = memoryStore();
+    const a = createSharedRateLimiter({ name: "login", max: 2, windowMs: 15_000, store, now: () => now });
+    const b = createSharedRateLimiter({ name: "login", max: 2, windowMs: 15_000, store, now: () => now });
+    await a.record("x");
+    now += 5_000;
+    await a.record("x");
+    await expect(b.check("x")).rejects.toMatchObject({ statusCode: 429 });
+    await expect(b.check("y")).resolves.toBeUndefined();
+    now += 10_500; // The first attempt has left the window; the second still counts.
+    await expect(b.check("x")).resolves.toBeUndefined();
+    await b.record("x");
+    await expect(a.check("x")).rejects.toMatchObject({ statusCode: 429 });
+    await b.reset("x");
+    await expect(a.check("x")).resolves.toBeUndefined();
+  });
+
+  test("a store that fails falls back to this instance's own count instead of dropping the limit", async () => {
+    const broken = {
+      countRateLimitHits: async () => { throw new Error("database down"); },
+      recordRateLimitHit: async () => { throw new Error("database down"); },
+      clearRateLimitHits: async () => { throw new Error("database down"); },
+    };
+    const limiter = createSharedRateLimiter({ name: "signup", max: 1, windowMs: 60_000, store: broken });
+    await limiter.check("x");
+    await limiter.record("x");
+    await expect(limiter.check("x")).rejects.toMatchObject({ statusCode: 429 });
+  });
+
+  test("without a store it behaves like the local limiter", async () => {
+    const limiter = createSharedRateLimiter({ name: "reset", max: 1, windowMs: 60_000, store: {} });
+    await limiter.record("x");
+    await expect(limiter.check("x")).rejects.toMatchObject({ statusCode: 429 });
   });
 });
 
@@ -132,6 +188,31 @@ describe("authentication endpoints", () => {
       expect((await request(path, { body: { email: user.email, password: "wrong" }, address: "198.51.100.30" })).status).toBe(401);
     }
     expect((await request("/api/auth/login", { body: { email: user.email, password }, address: "198.51.100.31" })).status).toBe(429);
+  });
+
+  test("every server instance shares one budget, counted in Postgres", async () => {
+    // A second instance over the same database, as Vercel runs several at once.
+    const runtimeConfig = createRuntimeConfig({});
+    const second = createApiHandler({
+      database: fixture.database, authService: createAuthService({ database: fixture.database, runtimeConfig, env: {} }), runtimeConfig,
+      rateLimits: { loginFailuresByEmail: { max: 2, windowMs: 60_000 } },
+    });
+    const victim = await account();
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      expect((await request("/api/auth/login", { body: { email: victim.email, password: "wrong-password" }, address: `198.51.100.${40 + attempt}` })).status).toBe(401);
+    }
+    const req = Object.assign(Readable.from([Buffer.from(JSON.stringify({ email: victim.email, password }))]), {
+      method: "POST", url: "/api/auth/login", socket: { remoteAddress: "198.51.100.49" },
+      headers: { host: "localhost", "content-type": "application/json" },
+    });
+    let status = 0;
+    await second(req, { setHeader() {}, writeHead(code: number) { status = code; }, end() {} });
+    expect(status).toBe(429);
+    // Only hashes are kept: no email or address appears in the table.
+    const rows = (await fixture.pg.query("select bucket, key_hash from marginchat_rate_limit_hits")).rows as Array<{ key_hash: string }>;
+    expect(rows.length).toBeGreaterThan(0);
+    expect(JSON.stringify(rows)).not.toContain(victim.email);
+    expect(JSON.stringify(rows)).not.toContain("198.51.100");
   });
 
   test("signup and password reset requests are limited per address", async () => {
