@@ -178,3 +178,19 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
 }
 @media (prefers-reduced-motion: reduce) { .language-term-spinner { animation: none; } .language-reader-progress i { transition: none; } }
 .language-phrase:not(.is-new) .language-word.is-new { background: transparent; text-decoration: none; }
+
+/* ----- a lesson's own recording ----- */
+.language-reader-paragraph.has-time { position: relative; }
+.language-reader .language-reader-time { all: unset; cursor: pointer; display: inline-block; min-width: 2.6em; margin-right: .5em; color: var(--lr-muted); font-family: var(--ui-font, system-ui, sans-serif); font-size: .68em; font-weight: 500; line-height: 1;
+  font-variant-numeric: tabular-nums; vertical-align: .15em; border-radius: 4px; padding: 3px 2px; }
+.language-reader-time:hover, .language-reader-time:focus-visible { color: var(--lr-pick); background: var(--lr-pick-soft); }
+.language-reader-audio { flex: 1 1 180px; min-width: 0; display: flex; align-items: center; gap: 8px; font: .78rem/1 var(--ui-font, system-ui, sans-serif); color: var(--lr-muted); }
+.language-reader-audio input[type="range"] { flex: 1 1 auto; min-width: 60px; accent-color: var(--lr-pick); }
+.language-reader-audio-time { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.language-reader-rate { all: unset; cursor: pointer; min-width: 2.6em; text-align: center; padding: 6px 4px; border-radius: 6px; font-weight: 600; color: var(--lr-ink); font-variant-numeric: tabular-nums; }
+.language-reader-rate:hover, .language-reader-rate:focus-visible { background: var(--lr-pick-soft); }
+.language-reader-audio-missing { flex: 1 1 auto; font: .78rem/1.3 var(--ui-font, system-ui, sans-serif); color: var(--lr-muted); }
+@media (max-width: 700px) {
+  .language-reader-bar { flex-wrap: wrap; }
+  .language-reader-audio { order: -1; flex-basis: 100%; }
+}

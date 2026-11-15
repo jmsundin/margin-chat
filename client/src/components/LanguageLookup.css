@@ -8,3 +8,5 @@
 @media (pointer: coarse), (max-width: 700px) {
   .language-learning-hint { display: none; }
 }
+.language-learning-new { font: inherit; font-weight: 600; color: var(--ink); background: var(--panel-strong); border: 1px solid var(--line); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
+.language-learning-new:hover, .language-learning-new:focus-visible { border-color: var(--sage); }

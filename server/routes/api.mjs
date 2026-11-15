@@ -23,7 +23,7 @@ import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from
 import { chatRunId, createChatRunService } from "../chat/runs.mjs";
 import { matchApiRoute } from "./registry.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
-import { fetchPublicImage, normalizePublicPageUrl } from "../urlMap/page.mjs";
+import { fetchPublicImage, normalizePublicPageUrl, readPublicPage } from "../urlMap/page.mjs";
 import { handleUrlMapRequest } from "./urlMap.mjs";
 import { createRepoExplainService, createRepoMapService } from "../repoMap/index.mjs";
 import { handleRepoMapRequest } from "./repoMap.mjs";
@@ -78,6 +78,8 @@ export const DEFAULT_AUTH_RATE_LIMITS = Object.freeze({
 
 const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 const AUTH_BODY_LIMIT = 16_384;
+// A long article is still one lesson; the reader pages it.
+const LESSON_PAGE_TEXT_LIMIT = 30_000;
 // Whole conversations and legacy whole-workspace uploads are the largest JSON bodies.
 const LARGE_JSON_BODY_LIMIT = 8 * 1024 * 1024;
 
@@ -147,6 +149,7 @@ export function createApiHandler({
   mcpService,
   chatRunService,
   languageSpeechService,
+  lessonPageReader,
   env = process.env,
   rateLimits,
   errorReporter = createErrorReporter({ env }),
@@ -165,6 +168,7 @@ export function createApiHandler({
   const flashcards = createFlashcardService({ database });
   const languageTerms = createLanguageTermService({ database });
   const languageSpeech = languageSpeechService ?? createLanguageSpeechService({ env });
+  const readLessonPage = lessonPageReader ?? readPublicPage;
   const ratchet = createRatchetService({ database });
   const interfaceSettings = createInterfaceSettingsService({ database });
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
@@ -815,6 +819,26 @@ export function createApiHandler({
         }
         const body = await readJsonBody(request, LANGUAGE_TERM_SYNC_BODY_LIMIT);
         sendJson(response, 200, await languageTerms.sync({ userId: authContext.user.id, body }), { "Cache-Control": "private, no-store" });
+        return;
+      }
+
+      if (route?.id === "languageLessonPage") {
+        // A web page's readable text, to read as a lesson. Public pages only, like every other import.
+        requireExpectedVaultAccount(request, authContext.user);
+        if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+            !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+          throw new HttpError(403, "Add lessons from Margin Chat.");
+        }
+        const body = await readJsonBody(request, 4096);
+        if (typeof body?.url !== "string" || !body.url.trim() || body.url.length > 2000) throw new HttpError(400, "Paste the address of a web page.");
+        const scope = createRequestAbortScope(request, response);
+        try {
+          const page = await readLessonPage(body.url.trim(), { markdown: true, markdownLinks: false, textLimit: LESSON_PAGE_TEXT_LIMIT, signal: scope.signal });
+          if (!page.text.trim()) throw new HttpError(422, "That page has no text to read. Try the address of an article.");
+          sendJson(response, 200, { url: page.url, title: page.title, text: page.text, truncated: Boolean(page.truncated) }, { "Cache-Control": "private, no-store" });
+        } finally {
+          scope.dispose();
+        }
         return;
       }
 

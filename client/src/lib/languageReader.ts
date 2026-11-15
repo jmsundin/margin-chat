@@ -1,4 +1,5 @@
 import { writeSyncedSetting } from "./interfaceSettings";
+import { isPlayable, parseMediaEmbed, parseTimestampLine } from "./documentMedia";
 import { plainReadingText } from "./languageLearning";
 
 /**
@@ -33,7 +34,11 @@ export function termKey(text: string): string {
 
 export interface ReaderToken { text: string; /** Set on words; punctuation and spaces have none. */ key?: string; word?: number }
 export interface ReaderSentence { index: number; text: string; tokens: ReaderToken[]; words: number }
-export interface ReaderParagraph { id: string; blockId: string; heading: 0 | 1 | 2 | 3; sentences: ReaderSentence[] }
+export interface ReaderParagraph {
+  id: string; blockId: string; heading: 0 | 1 | 2 | 3; sentences: ReaderSentence[];
+  /** In a lesson with a recording: the second this line starts at. */
+  time?: number;
+}
 
 const WORDISH = /[\p{L}\p{M}\p{N}]/u;
 
@@ -89,11 +94,13 @@ function sentencesOf(text: string, language?: string): string[] {
 export function readerParagraphs(blocks: ReadonlyArray<{ id: string; content: string }>, language?: string): ReaderParagraph[] {
   const paragraphs: ReaderParagraph[] = [];
   let sentence = 0;
+  // In a document with a recording, a list line that starts with a time is what is said from then on.
+  const recorded = blocks.some((block) => { const embed = /^\s*!\[/u.test(block.content) ? parseMediaEmbed(block.content.trim().split("\n")[0]) : null; return Boolean(embed && isPlayable(embed.kind)); });
   for (const block of blocks) {
     let fenced = false;
     let part = 0;
     let lines: string[] = [];
-    const flush = (heading: 0 | 1 | 2 | 3 = 0) => {
+    const flush = (heading: 0 | 1 | 2 | 3 = 0, time?: number) => {
       const text = plainReadingText(lines.join(" "));
       lines = [];
       if (!text || !WORDISH.test(text)) return;
@@ -101,7 +108,7 @@ export function readerParagraphs(blocks: ReadonlyArray<{ id: string; content: st
         const tokens = tokenize(value, language);
         return { index: sentence++, text: value.trim(), tokens, words: tokens.filter((token) => token.key !== undefined).length };
       });
-      paragraphs.push({ id: `${block.id}:${part++}`, blockId: block.id, heading, sentences });
+      paragraphs.push({ id: `${block.id}:${part++}`, blockId: block.id, heading, sentences, ...(time !== undefined ? { time } : {}) });
     };
     for (const line of block.content.split("\n")) {
       if (/^\s*(```|~~~)/u.test(line)) { flush(); fenced = !fenced; continue; }
@@ -113,7 +120,12 @@ export function readerParagraphs(blocks: ReadonlyArray<{ id: string; content: st
       const heading = /^(#{1,6})\s+/u.exec(trimmed);
       if (heading) { flush(); lines = [trimmed]; flush(Math.min(3, heading[1].length) as 1 | 2 | 3); continue; }
       // Each list item is its own line to read.
-      if (/^([-*+]|\d+[.)])\s+/u.test(trimmed)) { flush(); lines = [trimmed]; flush(); continue; }
+      if (/^([-*+]|\d+[.)])\s+/u.test(trimmed)) {
+        flush();
+        const stamp = recorded ? parseTimestampLine(trimmed) : null;
+        if (stamp?.note) { lines = [stamp.note]; flush(0, stamp.seconds); } else { lines = [trimmed]; flush(); }
+        continue;
+      }
       lines.push(trimmed);
     }
     flush();

@@ -678,9 +678,21 @@ export async function requestUploadDocument(
   return payload.document;
 }
 
+/** A public web page's readable text as Markdown, to read as a language lesson. */
+export async function requestLessonPage(url: string, args: { expectedUserId?: string; signal?: AbortSignal } = {}): Promise<{ url: string; title: string; text: string; truncated: boolean }> {
+  const response = await apiFetch("/api/language-lessons/page", {
+    body: JSON.stringify({ url }), credentials: "same-origin", method: "POST", signal: args.signal,
+    headers: { "Content-Type": "application/json", ...(args.expectedUserId ? { "X-Margin-Vault-User": args.expectedUserId } : {}) },
+  });
+  const payload = (await readJson(response)) as { url?: unknown; title?: unknown; text?: unknown; truncated?: unknown } | ErrorPayload | null;
+  ensureOk(response, payload, "That page couldn't be read. Check the address or try another page.");
+  if (!payload || typeof payload !== "object" || !("text" in payload) || typeof payload.text !== "string") throw new Error("Backend returned an invalid page.");
+  return { url: typeof payload.url === "string" ? payload.url : url, title: typeof payload.title === "string" ? payload.title : "", text: payload.text, truncated: payload.truncated === true };
+}
+
 /** Sends one voice-typing recording and returns its transcript. */
-export async function requestDictationTranscript(audio: Blob, args: { expectedUserId?: string; signal?: AbortSignal; prompt?: string } = {}): Promise<string> {
-  const response = await apiFetch("/api/dictation/transcribe", {
+export async function requestDictationTranscript(audio: Blob, args: { expectedUserId?: string; signal?: AbortSignal; prompt?: string; /** Two-letter code of the language spoken, when known. */ language?: string } = {}): Promise<string> {
+  const response = await apiFetch(`/api/dictation/transcribe${args.language && /^[a-z]{2,3}$/u.test(args.language) ? `?language=${args.language}` : ""}`, {
     body: audio,
     credentials: "same-origin",
     headers: {

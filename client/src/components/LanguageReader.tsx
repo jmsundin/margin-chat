@@ -8,6 +8,9 @@ import {
   readerParagraphs, saveReaderLook, termId, type ReaderLook, type ReaderSentence, type TermStatus,
 } from "../lib/languageReader";
 import { deviceCanSpeak, speak, stopSpeaking } from "../lib/languageSpeech";
+import { formatTimestamp, type MediaEmbed } from "../lib/documentMedia";
+import { lessonAudioOf, sentenceAtTime, sentenceTimes } from "../lib/languageLessons";
+import { useVaultMedia } from "../lib/vaultMedia";
 import "./LanguageReader.css";
 
 /** The word or words a card is open on: a sentence and a run of its words. */
@@ -23,6 +26,30 @@ interface Props {
 
 const STATUS_CLASS: Record<number, string> = { 0: "is-new", 1: "is-l1", 2: "is-l2", 3: "is-l3", 4: "is-familiar" };
 const answers = new Map<string, LookupAnswer>();
+const AUDIO_RATES = [1, 0.85, 0.7, 1.25];
+
+/** A lesson's recording as something an audio element can play: a vault file is read into an object URL. */
+function useLessonAudio(embed: MediaEmbed | null): { url?: string; status: "none" | "loading" | "ready" | "missing"; message?: string } {
+  const media = useVaultMedia();
+  const target = embed?.source === "vault" ? embed.target : null;
+  const [state, setState] = useState<{ url?: string; status: "loading" | "ready" | "missing"; message?: string }>({ status: "loading" });
+  useEffect(() => {
+    if (!target) return undefined;
+    if (!media) { setState({ status: "missing" }); return undefined; }
+    let url: string | undefined;
+    let cancelled = false;
+    setState({ status: "loading" });
+    media.read(target).then((file) => {
+      if (cancelled) return;
+      if (!file) { setState({ status: "missing" }); return; }
+      url = URL.createObjectURL(file.blob);
+      setState({ status: "ready", url });
+    }, (error: unknown) => { if (!cancelled) setState({ status: "missing", message: error instanceof Error ? error.message : undefined }); });
+    return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
+  }, [media, target]);
+  if (!embed) return { status: "none" };
+  return target ? state : { status: "ready", url: embed.target.split("#")[0] };
+}
 const isPhone = () => typeof matchMedia !== "undefined" && matchMedia("(max-width: 700px), (pointer: coarse)").matches;
 
 /**
@@ -49,6 +76,18 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
   const [speaking, setSpeaking] = useState<number | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
+  // ----- a lesson's own recording -----
+  const audioEmbed = useMemo(() => lessonAudioOf(blocks), [blocks]);
+  const audioFile = useLessonAudio(audioEmbed);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const [audio, setAudio] = useState({ playing: false, time: 0, duration: 0 });
+  const [audioRate, setAudioRate] = useState(1);
+  /** Playing one sentence stops where the next begins. */
+  const stopAt = useRef<number | null>(null);
+  const times = useMemo(() => sentenceTimes(paragraphs, audio.duration || null), [paragraphs, audio.duration]);
+  const timeOfSentence = useMemo(() => new Map(times.map((time) => [time.index, time] as const)), [times]);
+  const hasAudio = Boolean(audioEmbed && audioFile.url);
+
   const statusOf = useCallback((key: string): TermStatus => learning.terms.get(termId(language, key))?.status ?? 0, [learning.terms, language]);
   const phraseKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -67,7 +106,49 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
   useEffect(() => { setOpen(null); }, [language]);
   useEffect(() => { if (focusIndex >= sentences.length && sentences.length) setFocusIndex(sentences.length - 1); }, [focusIndex, sentences.length]);
 
-  const stopReading = useCallback(() => { stopSpeaking(); setSpeaking(null); }, []);
+  const stopReading = useCallback(() => { stopSpeaking(); audioRef.current?.pause(); stopAt.current = null; setSpeaking(null); }, []);
+
+  function playAudio(from?: number, until?: number) {
+    const element = audioRef.current;
+    if (!element) return;
+    stopSpeaking();
+    setOpen(null);
+    if (from !== undefined) element.currentTime = from;
+    stopAt.current = until ?? null;
+    element.playbackRate = audioRate;
+    void element.play().catch(() => undefined);
+  }
+  function onAudioDuration(seconds: number) {
+    const duration = Number.isFinite(seconds) ? seconds : 0;
+    setAudio((current) => current.duration === duration ? current : { ...current, duration });
+  }
+  function onAudioTime() {
+    const element = audioRef.current;
+    if (!element) return;
+    if (stopAt.current !== null && element.currentTime >= stopAt.current) { element.pause(); stopAt.current = null; }
+    const now = element.currentTime;
+    setAudio((current) => ({ ...current, time: now }));
+    if (element.paused) return;
+    const index = sentenceAtTime(times, element.currentTime);
+    setSpeaking(index);
+    if (index === null) return;
+    // The page turns with the recording; Focus view moves on to the sentence being spoken.
+    if (view === "focus") { if (stopAt.current === null && index !== focusIndex) setFocusIndex(index); }
+    else { const target = pageOfSentence.get(index); if (target !== undefined && target !== page) setPageIndex(target); }
+  }
+  function changeRate() {
+    const next = AUDIO_RATES[(AUDIO_RATES.indexOf(audioRate) + 1) % AUDIO_RATES.length];
+    setAudioRate(next);
+    if (audioRef.current) audioRef.current.playbackRate = next;
+  }
+  /** Listen to one sentence: from the recording when it has one, else a voice reads it. */
+  function listenTo(sentence: ReaderSentence, slow = false) {
+    const time = hasAudio ? timeOfSentence.get(sentence.index) : undefined;
+    if (!time) { audioRef.current?.pause(); speak(sentence.text, language, { slow }); return; }
+    if (audioRef.current) audioRef.current.playbackRate = slow ? 0.7 : audioRate;
+    playAudio(time.start, time.end);
+    if (slow && audioRef.current) audioRef.current.playbackRate = 0.7;
+  }
 
   function openRange(sentence: ReaderSentence, from: number, to: number, focusCard = true) {
     const words = sentence.tokens.filter((token) => token.key !== undefined);
@@ -229,6 +310,14 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
     speak(list[at].text, language, { onEnd: () => readFrom(list, at + 1) });
   }
   function togglePlay() {
+    if (hasAudio) {
+      if (audio.playing) { stopReading(); return; }
+      const focused = view === "focus" ? timeOfSentence.get(sentences[focusIndex]?.index ?? -1) : undefined;
+      // In Focus view the recording picks up at the sentence on screen.
+      if (focused && (audio.time < focused.start - 0.2 || audio.time >= focused.end)) playAudio(focused.start);
+      else playAudio();
+      return;
+    }
     if (speaking !== null) { stopReading(); return; }
     setOpen(null);
     readFrom(visible, 0);
@@ -299,17 +388,32 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
         {page < pages.length - 1 ? <button type="button" className="language-reader-turn is-next" aria-label="Next page" onClick={() => turnPage(1)}>›</button> : null}
         {pages[page].map((paragraph) => {
           const Tag = paragraph.heading ? (`h${paragraph.heading + 1}` as "h2" | "h3" | "h4") : "p";
-          return <Tag key={paragraph.id} className="language-reader-paragraph">
+          return <Tag key={paragraph.id} className={`language-reader-paragraph${paragraph.time !== undefined && hasAudio ? " has-time" : ""}`}>
+            {paragraph.time !== undefined && hasAudio ? <button type="button" className="language-reader-time" lang="en" aria-label={`Play from ${formatTimestamp(paragraph.time)}`}
+              onClick={() => playAudio(paragraph.time)}>{formatTimestamp(paragraph.time)}</button> : null}
             {paragraph.sentences.map((sentence) => <span key={sentence.index} data-lr-sentence-row={sentence.index} className={speaking === sentence.index ? "is-speaking" : undefined}>{renderSentence(sentence)}</span>)}
           </Tag>;
         })}
       </> : sentences[focusIndex] ? <FocusSentence key={focusIndex} sentence={sentences[focusIndex]} pair={pair} learning={learning} canBack={focusIndex > 0} canNext={focusIndex < sentences.length - 1}
-        onStep={step}>{renderSentence(sentences[focusIndex])}</FocusSentence> : null}
+        onStep={step} onListen={(slow) => listenTo(sentences[focusIndex], slow)}>{renderSentence(sentences[focusIndex])}</FocusSentence> : null}
     </div>
 
     <div className="language-reader-bar">
-      <button type="button" className="language-reader-play" aria-label={speaking !== null ? "Stop reading aloud" : view === "focus" ? "Read this sentence aloud" : "Read this page aloud"} onClick={togglePlay}>
-        {speaking !== null ? "❚❚" : "▶"}</button>
+      {audioEmbed ? <audio ref={audioRef} src={audioFile.url} preload="metadata" hidden
+        onLoadedMetadata={(event) => onAudioDuration(event.currentTarget.duration)} onDurationChange={(event) => onAudioDuration(event.currentTarget.duration)}
+        onTimeUpdate={onAudioTime} onPlay={() => setAudio((current) => ({ ...current, playing: true }))}
+        onPause={() => { setAudio((current) => ({ ...current, playing: false })); setSpeaking(null); }}
+        onEnded={() => { setAudio((current) => ({ ...current, playing: false })); setSpeaking(null); }} /> : null}
+      <button type="button" className="language-reader-play" disabled={Boolean(audioEmbed) && !hasAudio && audioFile.status === "loading"}
+        aria-label={hasAudio ? (audio.playing ? "Pause the recording" : "Play the recording") : speaking !== null ? "Stop reading aloud" : view === "focus" ? "Read this sentence aloud" : "Read this page aloud"} onClick={togglePlay}>
+        {(hasAudio ? audio.playing : speaking !== null) ? "❚❚" : "▶"}</button>
+      {hasAudio ? <div className="language-reader-audio">
+        <input type="range" min={0} max={Math.max(1, Math.round(audio.duration))} step={1} value={Math.min(Math.round(audio.time), Math.max(1, Math.round(audio.duration)))}
+          aria-label="Place in the recording" aria-valuetext={`${formatTimestamp(audio.time)} of ${formatTimestamp(audio.duration)}`}
+          onChange={(event) => { const element = audioRef.current; if (!element) return; stopAt.current = null; const to = Number(event.target.value); element.currentTime = to; setAudio((current) => ({ ...current, time: to })); }} />
+        <span className="language-reader-audio-time">{formatTimestamp(audio.time)} / {formatTimestamp(audio.duration)}</span>
+        <button type="button" className="language-reader-rate" aria-label={`Playing speed ${audioRate}×. Change speed`} onClick={changeRate}>{audioRate}×</button>
+      </div> : audioEmbed && audioFile.status !== "loading" ? <span className="language-reader-audio-missing" role="status">{audioFile.message ?? "The recording isn't in your vault on this device."}</span> : null}
       <div className="language-reader-views" role="group" aria-label="View">
         <button type="button" aria-pressed={view === "page"} onClick={() => changeView("page")}>Page</button>
         <button type="button" aria-pressed={view === "focus"} onClick={() => changeView("focus")}>Focus</button>
@@ -354,8 +458,9 @@ function LookPanel({ look, onChange }: { look: ReaderLook; onChange: (look: Read
 }
 
 /** Focus view: one sentence at a time, large, with its audio and, on request, what it means. */
-function FocusSentence({ sentence, pair, learning, canBack, canNext, onStep, children }: {
-  sentence: ReaderSentence; pair: LanguagePair; learning: DocumentLanguageLearning; canBack: boolean; canNext: boolean; onStep: (direction: 1 | -1) => void; children: ReactNode;
+function FocusSentence({ sentence, pair, learning, canBack, canNext, onStep, onListen, children }: {
+  sentence: ReaderSentence; pair: LanguagePair; learning: DocumentLanguageLearning; canBack: boolean; canNext: boolean; onStep: (direction: 1 | -1) => void;
+  onListen: (slow: boolean) => void; children: ReactNode;
 }) {
   const [shown, setShown] = useState(false);
   const [attempt, setAttempt] = useState(0);
@@ -375,8 +480,8 @@ function FocusSentence({ sentence, pair, learning, canBack, canNext, onStep, chi
   }, [shown, attempt]);
   return <div className="language-reader-focus">
     <div className="language-reader-focus-tools" lang="en">
-      <button type="button" onClick={() => speak(sentence.text, pair.target)}>Listen</button>
-      <button type="button" onClick={() => speak(sentence.text, pair.target, { slow: true })}>Slowly</button>
+      <button type="button" onClick={() => onListen(false)}>Listen</button>
+      <button type="button" onClick={() => onListen(true)}>Slowly</button>
       <span />
       {learning.aiAllowed ? <button type="button" aria-pressed={shown} onClick={() => setShown((value) => !value)}>{shown ? "Hide translation" : "Show translation"}</button> : null}
     </div>

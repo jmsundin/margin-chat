@@ -289,6 +289,9 @@ const handler = createApiHandler({
   captureService: { list: async () => ({ captures: [], nextCursor: null }) },
   billingService: {},
   chatService: { buildHealthPayload: (storage) => ({ storage, status: "ok" }) },
+  // Language lessons from a link read a made-up article instead of the web.
+  lessonPageReader: async (url) => ({ url, title: "El tiempo en Madrid", truncated: false,
+    text: "# El tiempo en Madrid\n\nHoy hace sol en Madrid. La temperatura es de veinte grados.\n\n![mapa](https://example.com/mapa.png)\n\nMañana va a llover por la tarde." }),
   runtimeConfig: { host: "127.0.0.1", port: 0 },
 });
 
@@ -330,6 +333,13 @@ const server = createServer(async (request, response) => {
         const delay = url.pathname === "/api/auth/session" ? controls.authDelayMs : controls.delayMs;
         if (delay) await new Promise((done) => setTimeout(done, delay));
         if (controls.offline) return sendJson(response, 503, { error: "The fixture is simulating an offline API." });
+        if (url.pathname === "/api/dictation/transcribe" && request.method === "POST") {
+          // Each piece of a recording comes back as a made-up Spanish line that says how large it was.
+          let bytes = 0;
+          for await (const chunk of request) bytes += chunk.length;
+          requestCounts.dictation = (requestCounts.dictation ?? 0) + 1;
+          return sendJson(response, 200, { text: `Esta es la parte número ${requestCounts.dictation}. Tiene ${Math.round(bytes / 32000)} segundos.`, model: "synthetic-transcribe" });
+        }
         if (url.pathname.startsWith("/api/chat")) {
           requestCounts.chat++;
           if (controls.chat && request.method === "POST") {
@@ -345,7 +355,10 @@ const server = createServer(async (request, response) => {
             const asked = JSON.stringify(body.messages ?? []);
             const ratchetReply = asked.includes("Find the checkable claims") || asked.includes("Check each claim against the passages") ? syntheticRatchetReply(JSON.stringify(body.messages ?? [])) : null;
             const lookupReply = asked.includes("concise bilingual dictionary") ? syntheticLookupReply(body.messages ?? []) : null;
-            const reply = lookupReply ? lookupReply : ratchetReply ? ratchetReply : asked.includes("The user wrote a note on a whiteboard")
+            const lessonReply = asked.includes("Answer with the title on the first line")
+              ? "Una mañana en el mercado\n\nAna se levanta temprano. Hoy va al mercado con su madre.\n\nEn el mercado hay mucha gente. Ana compra pan, fruta y queso. Su madre habla con la vendedora.\n\nDespués vuelven a casa y preparan la comida."
+              : null;
+            const reply = lessonReply ? lessonReply : lookupReply ? lookupReply : ratchetReply ? ratchetReply : asked.includes("The user wrote a note on a whiteboard")
               ? "```mermaid\nflowchart TD\n  N[Sleep under 6 hours] --> C[Higher cortisol]\n  N --> I[Worse insulin response]\n  C --> R[More belly fat]\n  I --> R\n  R --> Q{Fix sleep first?}\n```"
               : asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
               ? "Here is the updated diagram:\n\n```mermaid\nflowchart TD\n  A[Pack] --> S[Pack snacks]\n  S --> B{Rain?}\n  B -->|yes| C[Museum]\n  B -->|no| D[Beach]\n```\n\nI added a snack step."
