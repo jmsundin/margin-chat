@@ -34,6 +34,8 @@ export interface VaultFileViewerProps {
   htmlLayout?: "fill" | "inline";
   /** The start of the bar above an HTML page, where its title menu goes. */
   htmlBarStart?: HTMLElement | null;
+  /** Escape pressed inside an HTML page, which the page didn't use itself. */
+  onHtmlEscape?: () => void;
 }
 
 type Loaded = { status: "loading" } | { status: "missing" } | { status: "error"; message: string } | { status: "ready"; blob: Blob };
@@ -823,6 +825,7 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
       const message = readHtmlFrameMessage(event.data);
       if (!message) return;
       const current = latest.current;
+      if (message.type === "escape") { current.onHtmlEscape?.(); return; }
       if (message.type === "size") {
         // A page that fills its panel is as tall as the panel, whatever its content.
         if (layoutRef.current === "fill") return;

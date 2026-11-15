@@ -123,7 +123,7 @@
 /* One slim bar above the page: its title with every page action under it, then Play, then the view. */
 .html-page-bar { display: flex; align-items: center; gap: 8px; min-height: 40px; box-sizing: border-box; margin: 0 0 8px; }
 .document-body.is-html-page > .html-page-bar { margin: 0; padding: 2px 12px; }
-.html-page-bar > .play-bar { position: static; flex: 1 1 auto; min-width: 0; margin: 0; padding: 0; background: transparent; }
+.html-page-bar > .play-bar { position: static; z-index: auto; flex: 1 1 auto; min-width: 0; margin: 0; padding: 0; background: transparent; }
 .html-page-bar-start { display: contents; }
 .html-page-menu { flex: 0 1 auto; min-width: 0; }
 .html-page-title { display: inline-flex; align-items: center; gap: 6px; max-width: min(260px, 40vw); min-height: 28px; padding: 3px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
@@ -159,3 +159,20 @@
 .document-body.is-html-page[data-html-view="notes"] > .vault-file-notes-label { display: none; }
 .document-body.is-html-page[data-html-view="notes"] > .html-page-bar { padding: 0 0 8px; }
 @media (pointer: coarse) { .html-page-views button { min-height: 40px; padding: 4px 14px; } }
+
+/*
+ * Full screen: the panel's body, bar and page together, is laid over the whole app window. Only its
+ * layout changes, so the page keeps running where it was. Dialogs and menus (1000 and up) stay above it.
+ */
+.document-body.is-html-full-screen { position: fixed; inset: 0; z-index: 900; width: auto; height: auto; max-width: none; margin: 0; background: var(--bg);
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left); }
+.html-page-bar > .html-page-full-screen { flex: 0 0 30px; }
+.html-page-bar > .html-page-views + .html-page-full-screen { margin-left: 0; }
+.html-page-bar > .play-bar + .html-page-full-screen { margin-left: auto; }
+@media (pointer: coarse) { .html-page-bar > .html-page-full-screen { flex-basis: 40px; width: 40px; height: 40px; padding: 11px; } }
+:root.has-html-full-screen :is(.note-chat, .selection-tooltip, .selection-mobile-composer, .mobile-selection-actions) { z-index: 950; }
+/* On a phone the bar scrolls sideways; the way into and out of full screen stays at its right edge. */
+@media (max-width: 640px) {
+  .html-page-bar, .document-body.is-html-page > .html-page-bar { padding-right: 0; }
+  .html-page-bar > button.html-page-full-screen { position: sticky; right: 0; z-index: 1; border-radius: 0; background: var(--bg); box-shadow: -8px 0 8px -4px var(--bg); }
+}

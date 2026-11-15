@@ -26,6 +26,7 @@ export type HtmlFrameMessage =
   | { marginHtml: 1; type: "storage"; data: Record<string, string> }
   | { marginHtml: 1; type: "screen"; requestId: string; screen: HtmlScreen }
   | { marginHtml: 1; type: "content-request" }
+  | { marginHtml: 1; type: "escape" }
   | { marginHtml: 1; type: "asset-request"; id: string; path: string };
 
 /**
@@ -73,6 +74,7 @@ export function readHtmlFrameMessage(data: unknown): HtmlFrameMessage | null {
   switch (message.type) {
     case "size": return finite(message.height) && message.height >= 0 ? { marginHtml: 1, type: "size", height: message.height } : null;
     case "clear": return { marginHtml: 1, type: "clear" };
+    case "escape": return { marginHtml: 1, type: "escape" };
     case "content-request": return { marginHtml: 1, type: "content-request" };
     case "asset-request": return typeof message.id === "string" && message.id.length <= 40 && typeof message.path === "string" && message.path.length <= 1_000
       ? { marginHtml: 1, type: "asset-request", id: message.id, path: message.path } : null;
@@ -535,6 +537,8 @@ function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstT
   }, true);
   // A form the page doesn't handle itself would load something else into the frame.
   window.addEventListener("submit", (event) => { if (!event.defaultPrevented) event.preventDefault(); });
+  // Keys pressed in the page never reach the app, so Escape is passed on, unless the page used it itself.
+  window.addEventListener("keydown", (event) => { if (event.key === "Escape" && !event.defaultPrevented) post({ type: "escape" }); });
 
   /*
    * Games load their questions from the vault. `marginChat.getQuestions()` resolves with
