@@ -9,10 +9,12 @@ import { spotlightFromSearch } from "../lib/mapSpotlight";
 import { prepareSearchSources } from "../lib/searchExploration";
 import type { Conversation } from "../types";
 import MarkdownLivePreview from "./MarkdownLivePreview";
+import { matchFeatures, setFeature, useFeatures, type FeatureInfo } from "../lib/features";
 import "./VaultSearchPalette.css";
 
 export type VaultSearchOpenMode = "here" | "beside";
-type Entry = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit } | { kind: "answer"; hit: { key: string } };
+type Entry = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit } | { kind: "answer"; hit: { key: string } }
+  | { kind: "feature"; hit: { key: string; feature: FeatureInfo } };
 const ANSWER_ENTRY: Entry = { kind: "answer", hit: { key: "answer:vault" } };
 
 const PASSAGE_PAGE = 30;
@@ -143,14 +145,21 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
   const canAnswer = !!onAnswer && query.trim().length >= 3;
   // A question puts the answer first; otherwise it follows what was found.
   const answerFirst = canAnswer && (found?.question ?? /\?\s*$/u.test(query));
+  // Typing a feature's name (or a word for it) offers to turn it on, after the titles that match.
+  const features = useFeatures();
+  const featureEntries: Entry[] = searching ? matchFeatures(query).map((feature) => ({ kind: "feature" as const, hit: { key: `feature:${feature.id}`, feature } })) : [];
   const shownPassages = passages.slice(0, passageLimit);
+  const featuresEarly = !documents.length && !foundEntries.length;
   // A one-letter search can match thousands of titles; drawing them all would stall typing.
   const shownDocuments = documents.slice(0, documentLimit);
   const entries: Entry[] = [
     ...(answerFirst ? [ANSWER_ENTRY] : []),
     ...foundEntries,
+    // With no titles to show, a feature typed by name comes before asking the vault.
+    ...(featuresEarly ? featureEntries : []),
     ...(canAnswer && !answerFirst ? [ANSWER_ENTRY] : []),
     ...shownDocuments.map((hit) => ({ kind: "document" as const, hit })),
+    ...(featuresEarly ? [] : featureEntries),
     ...related.map((hit) => ({ kind: "passage" as const, hit })),
     ...shownPassages.map((hit) => ({ kind: "passage" as const, hit })),
   ];
@@ -170,6 +179,7 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
 
   function open(entry: Entry, mode: VaultSearchOpenMode) {
     if (entry.kind === "answer") { onAnswer?.(query.trim()); return; }
+    if (entry.kind === "feature") { setFeature(entry.hit.feature.id, !features[entry.hit.feature.id]); return; }
     if (entry.kind === "document") onOpenDocument(entry.hit, mode);
     else onOpenPassage(entry.hit, mode);
   }
@@ -222,6 +232,17 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
         <p className="vault-search-preview-text">AI writes a short answer using only passages from your vault, and lists the documents it cites. Nothing is saved unless you save it. Uses your AI allowance, like Ask AI.</p>
       </>;
     }
+    if (selected.kind === "feature") {
+      const { feature } = selected.hit;
+      return <>
+        <p className="vault-search-preview-crumb">Settings › Features</p>
+        <h3>{feature.name}</h3>
+        <p className="vault-search-meta">{features[feature.id] ? "On" : "Off"}</p>
+        <p className="vault-search-preview-text">{feature.description}</p>
+        <p className="vault-search-preview-text">Adds: {feature.adds}</p>
+        <p className="vault-search-meta">Turning it off later only hides these; what you made with it stays.</p>
+      </>;
+    }
     if (selected.kind === "passage") {
       const hit = selected.hit;
       return <>
@@ -249,6 +270,14 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
   const status = !searching ? "Recent documents. Type to search titles and passages in your whole vault."
     : stale ? "Searching…"
     : `${foundEntries.length ? `Found ${foundEntries.length === 1 ? `“${foundEntries[0].hit.title}”` : `${foundEntries.length} documents on this`}. ` : ""}${documents.length} ${documents.length === 1 ? "title" : "titles"}${related.length ? `, ${related.length} best ${related.length === 1 ? "match" : "matches"}` : ""} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
+
+  const featureRows = featureEntries.length ? <>
+    <li className="vault-search-section" role="presentation"><span>Features</span><span>{featureEntries.length}</span></li>
+    {featureEntries.map((entry) => entry.kind === "feature" ? row(entry, <>
+      <span className="vault-search-row-title">{features[entry.hit.feature.id] ? `${entry.hit.feature.name} is on` : `Turn on ${entry.hit.feature.name}`}</span>
+      <span className="vault-search-meta">{features[entry.hit.feature.id] ? "Press Enter to turn it off" : entry.hit.feature.description}</span>
+    </>) : null)}
+  </> : null;
 
   const modal = <div className="vault-search-backdrop" role="presentation" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
     onClick={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose(); }}>
@@ -282,6 +311,7 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
               <span className="vault-search-meta vault-search-why">{entry.hit.why}</span>
               {entry.kind === "passage" ? <span className="vault-search-snippet">{highlight(entry.hit.preview, searchedQuery)}</span> : null}
             </>))}
+            {featuresEarly ? featureRows : null}
             {canAnswer && !answerFirst ? row(ANSWER_ENTRY, <>
               <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Answer from my vault</span>
               <span className="vault-search-meta">A short answer that cites your documents</span>
@@ -292,6 +322,7 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
               <span className="vault-search-meta">{meta(hit)}</span>
             </>))}
             {documents.length > shownDocuments.length ? <li role="presentation"><button className="vault-search-more" onClick={() => setDocumentLimit((limit) => limit + PASSAGE_PAGE)} type="button">Show {Math.min(PASSAGE_PAGE, documents.length - shownDocuments.length)} more titles</button></li> : null}
+            {featuresEarly ? null : featureRows}
             {related.length ? <li className="vault-search-section" role="presentation" title="Ranked by matching words and by meaning"><span>Best matches</span><span>{related.length}</span></li> : null}
             {related.map((hit) => row({ kind: "passage", hit }, <>
               <span className="vault-search-row-title">{hit.title}{hit.cloudPath ? <span className="vault-search-cloud">{openingPath === hit.cloudPath ? "Opening…" : "In cloud"}</span> : null}<span className="vault-search-meta">{hit.matchLabel}</span></span>
@@ -309,7 +340,9 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
         </div>
         <aside aria-label="Preview" className="vault-search-preview">
           {preview}
-          {selected?.kind === "answer" ? <div className="vault-search-actions">
+          {selected?.kind === "feature" ? <div className="vault-search-actions">
+            <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">{features[selected.hit.feature.id] ? "Turn off" : "Turn on"} <kbd>↵</kbd></button>
+          </div> : selected?.kind === "answer" ? <div className="vault-search-actions">
             <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">Answer <kbd>↵</kbd></button>
           </div> : selected ? <div className="vault-search-actions">
             <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">Open here <kbd>↵</kbd></button>

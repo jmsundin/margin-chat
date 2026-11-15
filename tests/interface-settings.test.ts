@@ -7,7 +7,7 @@ import { createInterfaceSettingsService } from "../server/interfaceSettings/inde
 import { setApiTransport } from "../client/src/lib/apiTransport";
 import { onSyncedSettingChange, startInterfaceSettingsSync, writeSyncedSetting } from "../client/src/lib/interfaceSettings";
 import {
-  FEATURES_KEY, applyFeaturePreset, featuresFromUsage, hasFeatureChoices, matchingPreset, parseFeatures, readFeatures, saveFeatures, setFeature, unchosenFeatures,
+  FEATURES_KEY, applyFeaturePreset, featuresFromUsage, hasFeatureChoices, matchingPreset, parseFeatures, readFeatures, matchFeatures, saveFeatures, setFeature, unchosenFeatures,
 } from "../client/src/lib/features";
 
 const databases: PGlite[] = [];
@@ -152,6 +152,14 @@ describe("features", () => {
     applyFeaturePreset("simple");
     expect(matchingPreset(readFeatures())).toBe("simple");
     expect(hasFeatureChoices()).toBe(true);
+  });
+
+  test("⌘K finds a feature by the start of its name or a word for it", () => {
+    expect(matchFeatures("flash").map((feature) => feature.id)).toEqual(["flashcards"]);
+    expect(matchFeatures("dictat").map((feature) => feature.id)).toEqual(["voice"]);
+    expect(matchFeatures("boards").map((feature) => feature.id)).toEqual(["boards"]);
+    expect(matchFeatures("fl")).toEqual([]);
+    expect(matchFeatures("planets")).toEqual([]);
   });
 
   test("an existing account keeps on only what it already uses", () => {

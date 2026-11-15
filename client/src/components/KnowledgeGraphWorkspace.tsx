@@ -27,6 +27,8 @@ import type { MapSpotlight } from "../lib/mapSpotlight";
 import "./KnowledgeGraphWorkspace.css";
 
 interface Props extends ConversationGraphViewProps {
+  /** Opens Settings → Features; offered at the end of the map's ⋯ menu. */
+  onMoreFeatures?: () => void;
   onToggleSidebar?: () => void;
   sidebarOpen?: boolean;
   urlMapAIOptions?: UrlMapAIOptions;
@@ -63,7 +65,7 @@ const errorMessage = (error: unknown, fallback: string) => error instanceof Erro
 const hostname = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
 const editable = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")));
 
-export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, pathRequest, ...personalProps }: Props) {
+export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, pathRequest, onMoreFeatures, ...personalProps }: Props) {
   const mapTools = useFeature("mapTools");
   const [sourcesFor, setSourcesFor] = useState<string | "add" | null>(null);
   const [addedTopicId, setAddedTopicId] = useState<string | null>(null);
@@ -457,6 +459,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   // The map's ⋯ menu holds these, so its bar keeps only search, the scope and Roadmaps.
   const closeMenu = (element: HTMLElement) => element.closest("details")?.removeAttribute("open");
   // Bringing in sources and exploring topics come with More map tools; a plain map just adds notes.
+  const moreFeatures = onMoreFeatures ? <button type="button" className="graph-map-more-features" title="Turn on more tools in Settings → Features"
+    onClick={(event) => { closeMenu(event.currentTarget); onMoreFeatures(); }}>More features…</button> : null;
   const menuActions = !mapTools ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onCreateMapNote({}); }}>New note</button> : <>
     <span className="graph-map-menu-label">Add and explore</span>
     <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onCreateMapNote({}); }}>New note</button>
@@ -528,7 +532,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
             if ("error" in made) return made.error;
             setPicking(null); setActivePath(made.id); return null;
           }} /> : null}</>}
-        menuItems={menuActions} scopeRequest={scopeRequest}
+        menuItems={menuActions} menuFooter={moreFeatures} scopeRequest={scopeRequest}
         focusRequest={personalProps.focusRequest ?? personalFocus}
         onFocusRequestHandled={(id) => { if (personalProps.focusRequest?.requestId === id) personalProps.onFocusRequestHandled?.(id); else setPersonalFocus(null); }}
         onConnectConversation={(source, target) => { if (source !== target) { onSetMapConnection(source, target, true); setConnectingId(null); } }}

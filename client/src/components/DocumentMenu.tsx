@@ -68,6 +68,8 @@ export interface DocumentMenuProps {
    * Reading) and who wrote which lines are chosen here.
    */
   pageView?: boolean;
+  /** Opens Settings → Features, at the end of the menu. */
+  onMoreFeatures?: () => void;
   /** Language learning on this page: tap a word to see what it means. */
   languageLearning?: { on: boolean; onToggle: (on: boolean) => void };
 }
@@ -90,7 +92,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning, onMoreFeatures }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -376,6 +378,10 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         {minimized && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Restore document</button> : null}
         {closed && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Open document</button> : null}
         {onClose ? <button type="button" role="menuitem" onClick={() => action(onClose)}>Close document</button> : null}
+      </div> : null}
+      {onMoreFeatures ? <div role="group" className="document-menu-section">
+        <button type="button" role="menuitem" className="document-menu-more-features" title="Turn on more tools in Settings → Features"
+          onClick={() => { close(); onMoreFeatures(); }}>More features…</button>
       </div> : null}
     </div>, document.body) : null}
     {renameOpen && onRename ? createPortal(<div className="document-rename-backdrop"

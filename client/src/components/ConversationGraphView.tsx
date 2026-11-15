@@ -332,6 +332,8 @@ export interface ConversationGraphViewProps {
   menuItems?: ReactNode;
   /** Hides Note / Around / Topic / All and zoom, e.g. while a roadmap fills the pane as a course. */
   scopeHidden?: boolean;
+  /** Shown last in the ⋯ menu ("More features…"). */
+  menuFooter?: ReactNode;
   /** Asks the map to show this much of itself, e.g. everything when a roadmap is turned on so all its steps are in view. */
   scopeRequest?: { choice: MapScopeChoice; requestId: number } | null;
   /** Offers other places to look for a map search; `matchedIds` are the documents it found, best first. */
@@ -1231,6 +1233,7 @@ export default function ConversationGraphView({
   toolbarLeading,
   toolbarTrailing,
   menuItems,
+  menuFooter,
   scopeRequest,
   scopeHidden,
   renderSearchFallback,
@@ -4527,6 +4530,7 @@ export default function ConversationGraphView({
                 {showRelated && relatedStatus === "ready" ? <small>Suggestions from up to 40 recent items; relevance is not a factual relationship.</small> : null}
               </div></fieldset> : null}
             </> : null}
+            {menuFooter}
           </div>
         </DismissibleDetails>
       </div>

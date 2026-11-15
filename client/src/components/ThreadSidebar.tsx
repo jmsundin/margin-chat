@@ -67,6 +67,8 @@ interface ThreadSidebarProps {
   onImportChatHistory?: () => void;
   /** Start the guided tour from the beginning. */
   onTakeTour?: () => void;
+  /** Opens Settings → Features, where the tools beyond the essentials are switched on. */
+  onMoreFeatures?: () => void;
   onOpenProfile: () => void;
   onOpenSearch: () => void;
   /** Cards to study now; null hides Review (no cards written yet). */
@@ -368,6 +370,7 @@ export default function ThreadSidebar({
   onOpenInbox,
   onImportChatHistory,
   onTakeTour,
+  onMoreFeatures,
   onOpenProfile,
   onOpenSearch,
   flashcardsDue = null,
@@ -1085,6 +1088,9 @@ export default function ThreadSidebar({
                   <span>Cloud Inbox</span>
                 </button>
               ) : null}
+              {onMoreFeatures ? <button type="button" className="sidebar-workspace-action is-more-features" onClick={() => {
+                closeWorkspaceActions(); onMoreFeatures();
+              }}><span>More features…</span></button> : null}
             </div>
           ) : null}
         </div>
