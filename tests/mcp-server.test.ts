@@ -189,7 +189,7 @@ describe("MCP server", () => {
 
     const names = async (token: string) => (await (await rpc(token, "tools/list")).json()).result.tools.map((tool: any) => tool.name);
     expect(await names(reader)).not.toContain("create_document");
-    expect(await names(writer)).toEqual(["search_vault", "find_document", "read_document", "list_related", "search", "fetch", "get_document_blame", "create_document", "append_to_document", "update_document"]);
+    expect(await names(writer)).toEqual(["search_vault", "find_document", "read_document", "list_related", "search", "fetch", "get_document_blame", "create_document", "append_to_document", "update_document", "read_page_file", "edit_page_file"]);
     const refused = await (await rpc(reader, "tools/call", { name: "create_document", arguments: { title: "x", content: "y" } })).json();
     expect(refused.error).toMatchObject({ code: -32602, message: expect.stringContaining("can add documents") });
     const init = await (await rpc(writer, "initialize", { protocolVersion: "2025-06-18", capabilities: {} })).json();

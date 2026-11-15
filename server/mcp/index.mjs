@@ -3,6 +3,7 @@ import { VAULT_TOOL_DEFINITIONS, createVaultTools } from "../chat/agent/vaultToo
 import { HttpError } from "../lib/errors.mjs";
 import { WRITE_TOOL_DEFINITIONS, agentActor, createWriteTools } from "./writeTools.mjs";
 import { BLAME_TOOL_DEFINITION, UPDATE_TOOL_DEFINITION, createAuthorshipTools, matchesAuthorFilter } from "./authorshipTools.mjs";
+import { PAGE_EDIT_TOOL_DEFINITION, PAGE_READ_TOOL_DEFINITION, PAGE_TOOL_NAMES, createPageTools } from "./pageTools.mjs";
 import { vaultQuotaFor } from "../vault/index.mjs";
 
 /**
@@ -31,6 +32,7 @@ const WRITE_NOTE = [
   "With create_document and append_to_document you can add to the vault. Search before creating, so you don't duplicate a document that already exists.",
   "With update_document you can edit lines the user didn't write (text by AI, other apps or imports); the user's own lines can't be changed, moved or deleted.",
   "Read with include_authorship (or get_document_blame) first, change only lines not by the user, and send the revision and line hashes you read.",
+  "An HTML page the user plays in the vault (a game or tool) and the scripts beside it are code: read them with read_page_file and change them in place with edit_page_file, which keeps the version it replaces.",
 ].join(" ");
 const AUTHOR_FILTERS = ["any", "mine", "not-mine", "ai", "agent", "import"];
 
@@ -83,7 +85,7 @@ export const MCP_TOOLS = [
   BLAME_TOOL_DEFINITION,
 ];
 const TOOL_NAMES = new Set(MCP_TOOLS.map((tool) => tool.name));
-const ALL_WRITE_TOOLS = [...WRITE_TOOL_DEFINITIONS, UPDATE_TOOL_DEFINITION];
+const ALL_WRITE_TOOLS = [...WRITE_TOOL_DEFINITIONS, UPDATE_TOOL_DEFINITION, PAGE_READ_TOOL_DEFINITION, PAGE_EDIT_TOOL_DEFINITION];
 const WRITE_TOOL_NAMES = new Set(ALL_WRITE_TOOLS.map((tool) => tool.name));
 
 /** The tools a token may use: everyone reads; a write token can also add and update. */
@@ -135,6 +137,7 @@ export function createMcpService({ database, vaultService, passageService, creat
         return { ok: false, error: name === "update_document" ? "The vault couldn't be saved just now. Nothing was changed." : "The vault couldn't be read just now." };
       }
     }
+    if (PAGE_TOOL_NAMES.has(name)) return createPageTools({ userId: user.id, vault: vaultService, database, quotaBytes: vaultQuotaFor(user) }).run(name, args);
     if (writing) return createWriteTools({ userId: user.id, vault: vaultService, agentName: user.token?.name, agentId: user.token?.id, quotaBytes: vaultQuotaFor(user) }).run(name, args);
     // The agent reaches the whole vault: the member chose that by making the token.
     const tools = createVaultTools({
