@@ -111,3 +111,29 @@
 .document-margin-item.is-left::before { inset: -6px -8px; }
 .document-margin-item.is-pointed::before { opacity: .55; }
 @media (prefers-reduced-motion: reduce) { .document-margin-item::before { transition: none; } }
+
+/* ---- Folded notes ----
+   With more than one note on a page, each note but the one you're in folds to a single line:
+   its first words, on the same line as the passage it's about. Clicking it opens the note. The
+   dot and the words sit where the open note's dot and words are, so opening it doesn't jump. */
+.document-margin-item.is-folded { gap: 0; --fold-dot-x: 4px; --fold-text-x: 16px; }
+.is-quiet-page .document-margin-item.is-folded { --fold-dot-x: 38px; --fold-text-x: 52px; }
+@media (pointer: coarse), (max-width: 700px) { .is-quiet-page .document-margin-item.is-folded { --fold-dot-x: 6px; --fold-text-x: 20px; } }
+.document-margin-item.is-folded > :not(.document-margin-fold) { display: none; }
+.document-margin-fold {
+  position: relative; display: block; width: 100%; height: 22px; margin: 0; padding: 0 4px 0 var(--fold-text-x);
+  border: 0; border-radius: 6px; background: transparent; color: var(--ink, inherit); text-align: left; cursor: pointer;
+  font: inherit; font-size: 13.5px; line-height: 22px;
+}
+.is-quiet-page .document-margin-fold { font-family: var(--paper-serif, "Iowan Old Style", Georgia, serif); font-size: 14px; }
+.document-margin-fold::before {
+  content: ""; position: absolute; top: 7.5px; left: var(--fold-dot-x); width: 7px; height: 7px; border-radius: 50%;
+  background: var(--quiet-note-dot, var(--sage, #6f8f7a));
+}
+.document-margin-item.is-ai .document-margin-fold::before { background: var(--quiet-ai-ink, var(--accent)); }
+.document-margin-fold-text { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; opacity: .82; }
+.document-margin-fold:hover .document-margin-fold-text, .document-margin-item.is-pointed .document-margin-fold-text { opacity: 1; }
+.document-margin-fold:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: 0; }
+/* A folded note's highlight hugs its one line. */
+.document-margin-item.is-folded::before { inset: -2px -6px -2px 18px; }
+.is-quiet-page .document-margin-item.is-folded::before { inset: -2px -6px -2px 30px; }

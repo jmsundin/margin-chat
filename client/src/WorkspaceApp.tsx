@@ -6737,7 +6737,7 @@ function WorkspaceAppContent({
   function getMarginItems(conversation: Conversation, view: "chat" | "graph"): DocumentMarginItem[] | undefined {
     if (!showsMarginInPanel(conversation, view)) return undefined;
     const claims = view === "chat" ? getClaimMarginItems(conversation) : [];
-    const items = getMarginDocuments(conversation).map((note): DocumentMarginItem => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true),
+    const items = getMarginDocuments(conversation).map((note): DocumentMarginItem => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true), foldable: true,
       label: getEditableDocumentText(note).trim().split(/\r?\n/)[0]?.slice(0, 80) || note.title,
       ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()),
       pending: Boolean(note.document?.generations.some((generation) => generation.status === "streaming")) }));

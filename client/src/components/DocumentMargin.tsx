@@ -14,6 +14,11 @@ export interface DocumentMarginItem {
   ai?: boolean;
   /** The AI is still writing it: its passage gets a wavy underline that fills like a loading bar. */
   pending?: boolean;
+  /**
+   * A written note (not a card such as a checked claim): when a page has more than one, each folds
+   * to one line, its `label`, level with its passage, and opens when clicked.
+   */
+  foldable?: boolean;
 }
 
 interface Props {
@@ -37,7 +42,9 @@ type Placement = { top: number; anchorTop: number | null; left?: number; line?: 
 type AnchorLine = { start: number; end: number; y: number };
 /** The left column: where its notes start and how wide they are, from the margin's left edge; null when there's no room. */
 type LeftColumn = { x: number; width: number; textX: number } | null;
-const GAP = 12;
+const GAP = 8;
+/** Between folded notes: just enough that notes on neighbouring lines don't touch. */
+const FOLDED_GAP = 2;
 /** Room on the left of the cards for the line back to each passage. */
 export const DOCUMENT_MARGIN_GUTTER = 22;
 /** The margin's width in marks mode: room for one dot beside the text. */
@@ -147,6 +154,12 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   useEffect(() => { if (!openId) setSheetFull(false); }, [openId]);
   const frame = useRef(0);
   const itemKey = items.map((item) => `${item.id}:${item.anchored ? 1 : 0}`).join("|");
+  // Clicking a note opens it a little wider, and only then is its line back to the passage drawn.
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  /** With more than one note, every note but the open one folds to a line beside its passage. */
+  const folds = !marks && items.filter((item) => item.foldable).length > 1;
+  const isFolded = (item: DocumentMarginItem) => folds && Boolean(item.foldable) && item.id !== expandedId;
+  const foldedKey = items.filter(isFolded).map((item) => item.id).join("|");
   const heightCallback = useRef(onHeightChange);
   heightCallback.current = onHeightChange;
 
@@ -161,6 +174,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     const bodyTop = body.getBoundingClientRect().top - body.scrollTop;
     const start = Number.parseFloat(getComputedStyle(body).paddingTop) || GAP;
     const asideLeft = asideRef.current?.getBoundingClientRect().left ?? 0;
+    const folded = new Set(foldedKey ? foldedKey.split("|") : []);
     const measured = items.map((item, index) => {
       const found = item.anchored ? anchorMarks(body, item.id) : [];
       const mark = found[0];
@@ -171,7 +185,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       const line = first ? { start: Math.round(Math.min(...onLine.map((box) => box.left)) - asideLeft),
         end: Math.round(Math.max(...onLine.map((box) => box.right)) - asideLeft), y: Math.round(first.top + first.height / 2 - bodyTop) } : undefined;
       return { id: item.id, index, anchorTop: mark ? mark.getBoundingClientRect().top - bodyTop : null, line,
-        height: marks ? MARK_SIZE : itemRefs.current[item.id]?.offsetHeight ?? 0 };
+        folded: folded.has(item.id), height: marks ? MARK_SIZE : itemRefs.current[item.id]?.offsetHeight ?? 0 };
     });
     // Whole-document notes (and notes whose passage is gone) first, then notes in passage order.
     measured.sort((a, b) => (a.anchorTop === null ? -1 : 0) - (b.anchorTop === null ? -1 : 0)
@@ -181,23 +195,28 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     let cursor = start, leftCursor = start;
     const next: Record<string, Placement> = {};
     for (const item of measured) {
-      const wanted = item.anchorTop === null ? start : item.anchorTop + (marks ? 6 : -4);
+      // A folded note's one line sits on its passage's first line, centred on it.
+      const wanted = item.anchorTop === null ? start
+        : item.folded ? (item.line ? item.line.y - item.height / 2 : item.anchorTop)
+        : item.anchorTop + (marks ? 6 : -4);
+      const gap = item.folded ? FOLDED_GAP : GAP;
       const top = Math.max(cursor, wanted);
       const leftTop = Math.max(leftCursor, wanted);
-      if (column && item.anchorTop !== null && top - wanted > CROWDED && leftTop < top) {
+      // A folded line just steps down under the open note: sending it across the page would be a jump.
+      if (column && !item.folded && item.anchorTop !== null && top - wanted > CROWDED && leftTop < top) {
         next[item.id] = { top: leftTop, anchorTop: item.anchorTop, left: column.x, line: item.line };
-        leftCursor = leftTop + item.height + GAP;
+        leftCursor = leftTop + item.height + gap;
         continue;
       }
       next[item.id] = { top, anchorTop: item.anchorTop, line: item.line };
-      cursor = top + item.height + (marks ? 4 : GAP);
+      cursor = top + item.height + (marks ? 4 : gap);
     }
     const end = Math.max(cursor, leftCursor);
     setPlacements((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
     setLeft((current) => JSON.stringify(current) === JSON.stringify(column) ? current : column);
     setHeight((current) => current === end ? current : end);
     syncScroll();
-  }, [bodyRef, itemKey, syncScroll, marks, width]);
+  }, [bodyRef, itemKey, foldedKey, syncScroll, marks, width]);
 
   const schedule = useCallback(() => {
     window.cancelAnimationFrame(frame.current);
@@ -260,8 +279,6 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     return () => { document.removeEventListener("pointerdown", close, true); document.removeEventListener("keydown", escape); };
   }, [marks, openId]);
 
-  // Clicking a note opens it a little wider, and only then is its line back to the passage drawn.
-  const [expandedId, setExpandedId] = useState<string | null>(null);
   /** Notes already drawn in place: only these glide when they move, so a new note doesn't fly in from the top. */
   const placedIds = useRef(new Set<string>());
   useEffect(() => { for (const id of Object.keys(placements)) placedIds.current.add(id); }, [placements]);
@@ -385,13 +402,23 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       {items.map((item) => {
         const placement = placements[item.id];
         const onLeft = placement?.left !== undefined && left;
-        return <div key={item.id} className={`document-margin-item${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${onLeft ? " is-left" : ""}${placement && placedIds.current.has(item.id) ? "" : " is-placing"}`}
+        const folded = isFolded(item);
+        return <div key={item.id} className={`document-margin-item${folded ? " is-folded" : ""}${item.ai ? " is-ai" : ""}${placement?.anchorTop === null ? " is-document-note" : ""}${item.id === expandedId ? " is-expanded" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${onLeft ? " is-left" : ""}${placement && placedIds.current.has(item.id) ? "" : " is-placing"}`}
           data-margin-note-id={item.id} ref={(element) => { itemRefs.current[item.id] = element; }}
           onPointerDownCapture={() => setExpandedId(item.id)}
           style={{ top: placement?.top ?? 0, left: onLeft ? left.x : DOCUMENT_MARGIN_GUTTER, visibility: placement ? undefined : "hidden",
             ...(onLeft ? { right: "auto", width: left.width } : item.id === expandedId && expandBy ? { right: 10 - expandBy } : {}) }}
           onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
-          {item.anchored ? null : <span className="document-margin-label">About this document</span>}
+          {folded ? <button type="button" className="document-margin-fold" title={item.label}
+            aria-label={`Open note: ${item.label || "Margin note"}`} aria-expanded={false}
+            onClick={(event) => {
+              setExpandedId(item.id);
+              // From the keyboard, the caret goes into the note so you can write or reply at once.
+              if (event.detail === 0) window.requestAnimationFrame(() => itemRefs.current[item.id]?.querySelector<HTMLElement>(".cm-content, [contenteditable=\"true\"]")?.focus());
+            }}>
+            <span className="document-margin-fold-text">{item.label || (item.pending ? "Thinking…" : "Margin note")}</span>
+          </button> : item.anchored ? null : <span className="document-margin-label">About this document</span>}
+          {/* A folded note stays mounted (CSS hides it), so it opens at once with its editor as it was. */}
           {item.node}
         </div>;
       })}
