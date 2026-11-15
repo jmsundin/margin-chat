@@ -7316,6 +7316,7 @@ function WorkspaceAppContent({
                     onRemoveMapNote={handleRemoveMapNote}
                     onUndoMapEdit={handleUndoMapEdit}
                     mapEditMessage={mapEditMessage}
+                    onDismissMapEdit={() => { setMapEditMessage(""); mapUndoRef.current = null; }}
                     canUndoMapEdit={Boolean(mapUndoRef.current)}
                     key={`graph-${user.id}`}
                     workspaceKey={storageUserId}

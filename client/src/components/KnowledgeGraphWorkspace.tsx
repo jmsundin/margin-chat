@@ -21,8 +21,8 @@ import { getStandaloneNote } from "../lib/standaloneNotes";
 import TopicExplorer from "./TopicExplorer";
 import type { Conversation } from "../types";
 import { MapCourseEmpty, MapModeSwitch, MapRoadmapCourse } from "./MapRoadmapCourse";
-import { MapPathBar, MapPathLayer, MapPathPickBanner, MapPathPicker, MapPathsMenu, MapRoadmapFlags, type MapPathActions } from "./MapPaths";
-import { buildMapPath, isPathDocument, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
+import { draftingLabel, MapPathBar, MapPathLayer, MapPathStepStrip, MapPathPickBanner, MapPathPicker, MapPathsMenu, MapRoadmapFlags, type MapPathActions } from "./MapPaths";
+import { buildMapPath, isPathDocument, withDraftPreview, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
 import type { MapSpotlight } from "../lib/mapSpotlight";
 import "./KnowledgeGraphWorkspace.css";
 
@@ -38,6 +38,8 @@ interface Props extends ConversationGraphViewProps {
   onSetMapConnection: (sourceId: string, targetId: string, connected: boolean) => void;
   onRemoveMapNote: (id: string) => void;
   onUndoMapEdit: () => void;
+  /** Put the map's last-edit notice away (its Undo goes with it). */
+  onDismissMapEdit?: () => void;
   mapEditMessage?: string;
   canUndoMapEdit?: boolean;
   onAddChildNote?: (conversationId: string) => void;
@@ -66,7 +68,7 @@ const errorMessage = (error: unknown, fallback: string) => error instanceof Erro
 const hostname = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
 const editable = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")));
 
-export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, pathRequest, onMoreFeatures, ...personalProps }: Props) {
+export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, onDismissMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, pathRequest, onMoreFeatures, ...personalProps }: Props) {
   const mapTools = useFeature("mapTools");
   const [sourcesFor, setSourcesFor] = useState<string | "add" | null>(null);
   const [addedTopicId, setAddedTopicId] = useState<string | null>(null);
@@ -186,7 +188,16 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     const first = note ? buildMapPath(note, conversations).steps[0] : undefined;
     return first ? [{ ...summary, docId: first.docId }] : [];
   }).slice(0, 12) : [], [hasPaths, pathSummaries, conversations]);
-  const activePath = useMemo(() => activePathNote && hasPaths ? buildMapPath(activePathNote, conversations) : null, [activePathNote, hasPaths, conversations]);
+  const savedActivePath = useMemo(() => activePathNote && hasPaths ? buildMapPath(activePathNote, conversations) : null, [activePathNote, hasPaths, conversations]);
+  // While AI drafts the roadmap, its lessons stream onto it as they are written; they are saved when the run ends.
+  const streamingDraft = activePathId ? pathActions?.progress[activePathId]?.roadmapDraft : undefined;
+  const activePathDrafting = Boolean(activePathId && pathActions?.writingIds[activePathId]);
+  const activePath = savedActivePath;
+  const coursePath = useMemo(() => savedActivePath && activePathDrafting ? withDraftPreview(savedActivePath, streamingDraft, conversations) : savedActivePath,
+    [savedActivePath, activePathDrafting, streamingDraft, conversations]);
+  /** The lesson whose step details were closed with ×; they come back when another lesson is picked. */
+  const [stepHiddenFor, setStepHiddenFor] = useState<string | null>(null);
+  useEffect(() => { setStepHiddenFor(null); }, [mapSelection]);
   // Turning a roadmap on shows the whole map, so every step is in view wherever it sits.
   const [scopeRequest, setScopeRequest] = useState<{ choice: "all"; requestId: number } | null>(null);
   function setActivePath(id: string | null, trail: string[] = []) {
@@ -492,7 +503,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
       <small>A linked source with room for your notes.</small>{sourceError ? <p role="alert">{sourceError}</p> : null}
     </form> : null}
     {connectingId ? <div className="map-workspace-notice" role="status">Choose a second node to connect with {conversations[connectingId]?.title}.<button type="button" onClick={() => setConnectingId(null)}>Cancel</button></div> : null}
-    {mapEditMessage ? <div className="map-workspace-notice" role="status">{mapEditMessage}{canUndoMapEdit ? <button type="button" onClick={onUndoMapEdit}>Undo</button> : null}</div> : null}
+    {mapEditMessage ? <div className="map-workspace-notice is-dismissible" role="status"><span>{mapEditMessage}</span>{canUndoMapEdit ? <button type="button" onClick={onUndoMapEdit}>Undo</button> : null}
+      {onDismissMapEdit ? <button type="button" className="map-workspace-notice-close" aria-label="Dismiss" title="Dismiss" onClick={onDismissMapEdit}>×</button> : null}</div> : null}
     {expandingTopicId ? <div className="map-workspace-notice" role="status" aria-live="polite"><span>{topicExpansionProgress || "Building an AI subgraph…"} · {conversations[expandingTopicId]?.title}</span><button type="button" onClick={onCancelTopicExpansion}>Cancel expansion</button></div> : null}
     {topicExpansionError ? <div className="map-workspace-notice is-error" role="alert"><span>{topicExpansionError.message}</span>{conversations[topicExpansionError.conversationId] ? <button type="button" disabled={Boolean(expandingTopicId)} onClick={() => onExpandTopicWithAI?.(topicExpansionError.conversationId)}>Retry AI expansion</button> : null}<button type="button" onClick={onDismissTopicExpansionError}>Dismiss</button></div> : null}
     <div className={`knowledge-map-panel${exploring ? " is-exploring" : ""}`} ref={panelRef}>
@@ -552,13 +564,21 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
           setLearnEmpty(false); setActivePath(made.id); return null;
         }} /> : null}
       {!exploring && !picking && activePath && pathActions ? <>
-        {pathLayout === "list" ? <MapRoadmapCourse path={activePath} conversations={conversations} currentDocId={mapSelection}
+        {pathLayout === "list" ? <MapRoadmapCourse path={coursePath ?? activePath} conversations={conversations} currentDocId={mapSelection}
+          drafting={activePathDrafting ? { label: draftingLabel(pathActions.progress[activePath.id], coursePath ?? activePath), onStop: () => pathActions.onStopDraft(activePath.id) } : null}
+          stepStrip={(() => {
+            const step = activePath.steps.find((item) => item.docId === mapSelection && !item.drafting);
+            return step && stepHiddenFor !== step.docId ? <MapPathStepStrip docked path={activePath} step={step} conversations={conversations} actions={pathActions}
+              onStep={stepTo} onOpenStep={(id) => personalProps.onOpenConversation(id)} onGoIn={(id) => setActivePath(id, [...pathTrail, activePath.id])}
+              onMessage={setPathMessage} onHide={() => setStepHiddenFor(step.docId)} /> : null;
+          })()}
           trail={pathTrail.flatMap((id) => pathSummaries.filter((item) => item.id === id))}
           onOpen={(id) => { if (conversations[id]?.nodeType === "roadmap") openedFromCourse.current = id; stepTo(id); personalProps.onOpenConversation(id); }}
           onGoIn={(id) => setActivePath(id, [...pathTrail, activePath.id])}
           onGoTo={(id) => { const index = pathTrail.indexOf(id); setActivePath(id, index >= 0 ? pathTrail.slice(0, index) : []); }}
           onClose={() => setActivePath(null)} /> : null}
         <MapPathBar path={activePath} conversations={conversations} currentDocId={mapSelection} actions={pathActions} message={pathMessage} inCourse={pathLayout === "list"}
+          stepHidden={stepHiddenFor === mapSelection} onHideStep={() => setStepHiddenFor(mapSelection)}
           trail={pathTrail.flatMap((id) => pathSummaries.filter((item) => item.id === id))}
           onStep={stepTo} onClose={() => setActivePath(null)} onMessage={setPathMessage}
           onOpenNote={() => personalProps.onOpenConversation(activePath.id)}
