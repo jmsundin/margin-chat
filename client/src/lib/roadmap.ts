@@ -419,17 +419,25 @@ export function roadmapDraftLink(input: string): string | null {
 }
 
 /** What Draft with AI asks Agent mode: a roadmap from the vault for a goal, or one that follows a page the user gave. */
+/**
+ * What every roadmap draft is told about scope: the whole subject, as an expert would teach it, not only
+ * what the vault already holds. Vault documents are reused where they fit; every other topic becomes a new lesson.
+ */
+const ROADMAP_SCOPE = "Lay out the whole subject the way an expert teacher would (like a roadmap.sh course): every topic needed to learn it, from first steps to advanced, drawing on your own knowledge and, if you can search the web, on current, reliable sources. Don't limit the roadmap to what my vault has. Search my vault too: where one of my documents already teaches a topic, point that step at it; for every other topic, make a step with a new document whose notes list the key ideas to cover and the best sources you found (title and link). ";
+
 export function roadmapDraftPrompt(input: string): string {
   const link = roadmapDraftLink(input);
-  if (!link) return `Draft a learning roadmap for: ${input.trim()}\n\nSearch my vault for documents that teach this, then use propose_roadmap to lay them out in stages with their prerequisites. Add the stages to this roadmap document.`;
+  if (!link) return `Draft a learning roadmap for: ${input.trim()}\n\n${ROADMAP_SCOPE}Then use propose_roadmap to lay it out in stages with their prerequisites. Add the stages to this roadmap document.`;
   const typedLink = DRAFT_LINK.exec(input)?.[0] ?? BARE_LINK.exec(input)?.[1] ?? "";
   const extra = input.replace(typedLink, " ").replace(/\s+/gu, " ").trim();
-  return `Build this roadmap from the page at ${link}\n\nRead the page, then use propose_roadmap to lay out its sections as stages and its topics as steps, in the page's order. Search my vault first: where one of my documents already teaches a topic, point the step at it; for every other topic, make a step with a new document whose notes list what the page says to cover. Add the stages to this roadmap document.${extra ? `\n\nAlso keep in mind: ${extra}` : ""}`;
+  return `Build this roadmap from the page at ${link}\n\nRead the page, then use propose_roadmap to lay out its sections as stages and its topics as steps, in the page's order, adding any topic the page leaves out that a learner needs. Search my vault first: where one of my documents already teaches a topic, point the step at it; for every other topic, make a step with a new document whose notes list what the page says to cover and the best sources for it (title and link). Don't limit the roadmap to what my vault has. Add the stages to this roadmap document.${extra ? `\n\nAlso keep in mind: ${extra}` : ""}`;
 }
 
 /** What Explain with AI asks: a readable explanation of a step's topic, written into the step's document. */
-export function roadmapExplainPrompt(topic: string, roadmapTitle: string, context = ""): string {
-  return `Explain “${topic}” so I can learn it. It is a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”.${context ? ` ${context}` : ""}\n\nCover what it is, why it matters here, the key ideas (the ones this document lists, if it lists any), a small worked example, and common mistakes. Use short sections with headings. End with two or three questions I can use to check I understood.`;
+export function roadmapExplainPrompt(topic: string, roadmapTitle: string, context = "", options: { web?: boolean } = {}): string {
+  return `Explain “${topic}” so I can learn it. It is a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”.${context ? ` ${context}` : ""}\n\nCover what it is, why it matters here, the key ideas (the ones this document lists, if it lists any), a small worked example, and common mistakes. Use short sections with headings. End with two or three questions I can use to check I understood.${options.web
+    ? " Check my vault for notes on it, and search the web for current, reliable sources; use what you find, and end with a short Sources list of the pages you relied on (title and link)."
+    : ""}`;
 }
 
 /** What Dive deeper asks Agent mode: the step's topic as a roadmap of its own, in the step's document. */

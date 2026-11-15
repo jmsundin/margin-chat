@@ -100,3 +100,18 @@ describe("Learn: a roadmap AI is drafting streams in", () => {
     expect(layout.lessons).toHaveLength(7);
   });
 });
+
+describe("Roadmap drafts cover the whole subject", () => {
+  test("the draft asks for every topic, from AI's knowledge and the web, with vault documents reused where they fit", async () => {
+    const { roadmapDraftPrompt, roadmapExplainPrompt } = await import("../client/src/lib/roadmap");
+    for (const prompt of [roadmapDraftPrompt("Sleep better"), roadmapDraftPrompt("https://roadmap.sh/ai/roadmap/fastapi-development-s56nq")]) {
+      expect(prompt).toContain("Don't limit the roadmap to what my vault has");
+      expect(prompt).toMatch(/point (the|that) step at it/);
+      expect(prompt).toContain("sources");
+    }
+    expect(roadmapDraftPrompt("Sleep better")).toContain("search the web");
+    // A lesson AI writes as an agent checks the vault and the web, and lists its sources.
+    expect(roadmapExplainPrompt("Caffeine", "Sleep better", "", { web: true })).toContain("Sources list");
+    expect(roadmapExplainPrompt("Caffeine", "Sleep better")).not.toContain("search the web");
+  });
+});

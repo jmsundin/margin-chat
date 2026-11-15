@@ -29,7 +29,7 @@ export const PROPOSE_DOCUMENT_DEFINITION = {
 
 export const PROPOSE_ROADMAP_DEFINITION = {
   name: "propose_roadmap",
-  description: "Draft a learning roadmap for the user to approve: ordered stages of steps, with the steps each one needs first. A step points at one of the user's own documents that teaches it, or, when the vault has none, carries notes for a new document that approving creates under the roadmap. Search the vault before calling this and cite only documents your tools returned. Nothing is saved until the user approves it; approving adds the stages and steps to the roadmap document.",
+  description: "Draft a learning roadmap for the user to approve: ordered stages of steps, with the steps each one needs first. Cover the whole subject, not only what the vault holds: a step points at one of the user's own documents that teaches it, or, for every topic the vault has no document for, carries notes for a new document created under the roadmap. Cite only documents your tools returned. The roadmap is added to the roadmap document when your run ends, and the user can undo it.",
   parameters: { type: "object", properties: {
     roadmap_id: documentRef("The roadmap document the stages are added to"),
     goal: { type: "string", description: "What the roadmap is for, in a few words, such as \"Understand the biology of aging\"." },
@@ -40,7 +40,7 @@ export const PROPOSE_ROADMAP_DEFINITION = {
         document_id: { type: "string", description: "The document that teaches this step: an ID from search_vault, read_document or list_related. An empty string when the vault has no document for it and notes is given." },
         title: { type: "string", description: "A short name for the step, or an empty string to use the document's title. Required for a step with notes: it names the new document." },
         // Strict tool schemas need every property in required, so "none" is null.
-        notes: { type: ["string", "null"], description: "null for a step with a document_id. For a step the vault has no document for: the new document's starting text in Markdown, such as the subtopics to cover as a list. Keep it short; the user fills it in as they learn." },
+        notes: { type: ["string", "null"], description: "null for a step with a document_id. For a step the vault has no document for: the new document's starting text in Markdown: the key ideas to cover as a short list, then the best sources you found as Markdown links. Keep it short; the full lesson is written when the user opens it." },
         why: { type: "string", description: "One short line on what the step covers or why it is here." },
         needs: { type: "array", items: { type: "string" }, description: "Keys of steps that must come first. Only real prerequisites; never a loop." },
       }, required: ["key", "document_id", "title", "notes", "why", "needs"], additionalProperties: false } },
