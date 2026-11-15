@@ -76,6 +76,10 @@ async function syntheticRoadmapRun(body) {
     const topics = String(document?.text ?? "").split(/\n#/u)[0].split("\n").map((line) => /^\s*[-*]\s+(.+)$/u.exec(line)?.[1]?.trim()).filter(Boolean).slice(0, 12);
     const half = Math.ceil(topics.length / 2);
     outline = `## Start here\n${topics.slice(0, half).map((topic) => `### ${topic}\n- What it is\n- When to use it\n- A small example`).join("\n")}\n## Go further\n${topics.slice(half).map((topic) => `### ${topic}\n- How it works\n- Common mistakes`).join("\n")}`;
+  } else if (prompt.includes("Draft a learning roadmap for:")) {
+    // A goal with no link: a fixed sleep course, so drafting from the Map can be tried without a model.
+    goal = /Draft a learning roadmap for: (.+)/u.exec(prompt)?.[1]?.trim() || "This goal";
+    outline = "## Foundations\n### Why sleep matters\n### Circadian rhythm\n### Sleep stages\n## Habits\n### Light in the morning\n### Caffeine timing\n### A wind-down routine\n## Environment\n### Dark, cool, quiet room\n### Screens at night\n## Measure and adjust\n### Sleep diary\n### Wearables and their limits\n### When to see a doctor";
   } else return null;
   const stages = [];
   for (const line of outline.split("\n")) {
