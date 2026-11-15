@@ -85,7 +85,8 @@ import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
 import DocumentMenu from "./components/DocumentMenu";
 import DocumentModeSwitch from "./components/DocumentModeSwitch";
-import { documentModeOf, saveDocumentModePick, useDocumentModePicks, type DocumentMode } from "./lib/documentModes";
+import { codeShareOf, documentModeOf, saveDocumentModePick, useDocumentModePicks, type DocumentMode } from "./lib/documentModes";
+import { RUN_ALL_CELLS_EVENT } from "./lib/codeRunner/codeCellScope";
 import { readDocumentViewMode, subscribeDocumentEditorPreference } from "./lib/documentEditorPreference";
 import DocumentViewsMenu from "./components/DocumentViewsMenu";
 import WorkspaceModeToggle from "./components/WorkspaceModeToggle";
@@ -6396,7 +6397,7 @@ function WorkspaceAppContent({
   }
 
   function documentModeFor(conversation: Conversation): DocumentMode {
-    return documentModeOf(conversation, documentModePicks, deviceDocumentView);
+    return documentModeOf(conversation, documentModePicks, deviceDocumentView, codeShareOf(getEditableDocument(conversation).blocks));
   }
 
   /** Moves a document to another mode, leaving the one it was in: a board stops being a board, Language turns off. */
@@ -6405,7 +6406,7 @@ function WorkspaceAppContent({
     if (mode === current) return;
     if (current === "board") handleToggleBoard(conversation.id);
     if (current === "language") handleLanguageLearningChange(conversation.id, null);
-    if (mode === "write" || mode === "read") saveDocumentModePick(conversation.id, mode);
+    if (mode === "write" || mode === "read" || mode === "code") saveDocumentModePick(conversation.id, mode);
     if (mode === "board") handleToggleBoard(conversation.id);
     if (mode === "language") {
       const pair = conversation.languageLearning ?? defaultLanguagePair();
@@ -6414,11 +6415,28 @@ function WorkspaceAppContent({
     }
   }
 
+  /** Code mode's bar above the page: run every cell, or ask AI about the code in the Ask panel. */
+  function renderCodeModeBar(conversation: Conversation) {
+    const { cells } = codeShareOf(getEditableDocument(conversation).blocks);
+    const ask = (question: string) => { setNoteChatFor(conversation.id); handleAskAboutNote(conversation.id, question); };
+    const aiOff = isHiddenFromAI(conversation);
+    return <div className="code-mode-bar" role="toolbar" aria-label="Code">
+      <span className="code-mode-count">{cells} {cells === 1 ? "cell" : "cells"}</span>
+      <button type="button" className="is-primary" title="Run every cell, top to bottom"
+        onClick={() => window.dispatchEvent(new CustomEvent(RUN_ALL_CELLS_EVENT, { detail: { documentId: conversation.id } }))}>▶ Run all</button>
+      {aiOff ? null : <>
+        <button type="button" title="AI explains what the code does, cell by cell" onClick={() => ask("Explain what the code in this document does, cell by cell, in plain words.")}>Explain</button>
+        <button type="button" title="AI looks for mistakes in the code and shows the fixed cells" onClick={() => ask("Find the mistakes in this document's code. For each one, say what is wrong and show the fixed cell.")}>Fix</button>
+        <button type="button" title="AI writes tests for the code as a new cell" onClick={() => ask("Write tests for the code in this document, as one new code cell in the same language that I can paste in and run.")}>Write tests</button>
+      </>}
+    </div>;
+  }
+
   function renderDocumentModeSwitch(conversation: Conversation) {
     if (!hasDocumentModes(conversation)) return null;
     const cards = [...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0);
     return <DocumentModeSwitch title={conversation.title} mode={documentModeFor(conversation)}
-      offered={{ language: features.language, board: features.boards }}
+      offered={{ code: codeShareOf(getEditableDocument(conversation).blocks).cells > 0, language: features.language, board: features.boards }}
       onPick={(mode) => handlePickDocumentMode(conversation, mode)}
       onMap={() => handleShowOnMap(conversation.id)}
       review={features.flashcards && cards ? { count: cards, onOpen: () => setFlashcardReview({ title: conversation.title || "Untitled", docIds: documentFamilyIds(conversation.id), docId: conversation.id }) } : undefined} />;
@@ -6475,7 +6493,7 @@ function WorkspaceAppContent({
 
   function renderDocumentControls(conversation: Conversation, view: "chat" | "graph" = "chat") {
     // On phones the breadcrumb bar lists notes and children (and reopens closed notes), so the header skips them.
-    const noteCount = isMobileViewport || (hasDocumentModes(conversation) && documentModeFor(conversation) === "board") ? 0 : getMarginDocuments(conversation).length;
+    const noteCount = isMobileViewport || (hasDocumentModes(conversation) && ["board", "code"].includes(documentModeFor(conversation))) ? 0 : getMarginDocuments(conversation).length;
     const claimCount = view === "chat" ? ratchet.documents[conversation.id]?.claims.length ?? 0 : 0;
     const roadmap = view === "chat" && isPathDocument(conversation) ? buildMapPath(conversation, state.conversations) : null;
     const steps = view === "chat" ? (roadmapSteps.get(conversation.id) ?? []).filter((step) => step.pathId !== conversation.id).slice(0, 2) : [];
@@ -6558,7 +6576,7 @@ function WorkspaceAppContent({
     const writing = mode === "write";
     // Language and Board are their own screens: no path above, no Keep reading below. A board has no margin
     // either; Language keeps it, because "Ask in margin" from a word puts its note there.
-    const ownScreen = mode === "language" || mode === "board";
+    const ownScreen = mode === "language" || mode === "board" || mode === "code";
     return <DocumentPanel key={embedded ? `roadmap-sheet:${conversation.id}` : conversation.id} conversation={conversation}
       compact={isCompactDocument(conversation)} bareHeader={bareHeader}
       onMinimize={!embedded && view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
@@ -6577,10 +6595,10 @@ function WorkspaceAppContent({
       childNavigation={view === "graph" ? renderChildrenMenu(conversation, view, dock) : undefined}
       claimHighlights={view === "chat" ? getClaimHighlights(conversation) : undefined}
       onOpenClaim={(claimId) => setClaimsView({ id: conversation.id, focus: claimId })}
-      marginNotes={mode === "board" && view === "chat" ? [] : getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
+      marginNotes={(mode === "board" || mode === "code") && view === "chat" ? [] : getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       marginMarks={marginMarks} marginNoteWidth={Math.min(320, Math.max(220, getMarginColumnWidth(conversation)))}
       activeMarginNoteId={activeConversation.id}
-      pageMode={modes && (mode === "write" || mode === "read") ? mode : undefined}
+      pageMode={modes && (mode === "write" || mode === "read" || mode === "code") ? mode === "code" ? "write" : mode : undefined}
       onPageModeChange={modes ? (next) => handlePickDocumentMode(conversation, next) : undefined}
       aiInstruction={writing && !conversation.vaultFile && !isCompactDocument(conversation) ? <>{renderAnswerSourcesLine(conversation)}<AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /></> : undefined}
@@ -6588,7 +6606,7 @@ function WorkspaceAppContent({
       // The quiet page shows nothing above the text unless it has something to say: Tell the AI and
       // how the AI joins in are set in the Ask panel, and the page view in the document's ⋯ menu.
       quiet={quietPage && !conversation.vaultFile && !isCompactDocument(conversation)}
-      pageBar={writing && quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && (renderAnswerSourcesLine(conversation) || conversation.aiInstruction || inheritedAIInstruction(conversation))
+      pageBar={mode === "code" && view === "chat" ? renderCodeModeBar(conversation) : writing && quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && (renderAnswerSourcesLine(conversation) || conversation.aiInstruction || inheritedAIInstruction(conversation))
         ? <div className="document-page-bar">
         {renderAnswerSourcesLine(conversation)}
         {conversation.aiInstruction || inheritedAIInstruction(conversation) ? <AIInstructionLine compact value={conversation.aiInstruction}

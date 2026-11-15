@@ -8,7 +8,7 @@ export interface DocumentModeSwitchProps {
   title: string;
   mode: DocumentMode;
   /** Modes this document can switch to; Write and Read are always offered. */
-  offered: { language: boolean; board: boolean };
+  offered: { code: boolean; language: boolean; board: boolean };
   onPick: (mode: DocumentMode) => void;
   /** The map around this document, beside it. */
   onMap?: () => void;
@@ -65,7 +65,7 @@ export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap
     items[next]?.focus();
   }
 
-  const modes: DocumentMode[] = ["write", "read", ...(offered.language || mode === "language" ? ["language" as const] : []), ...(offered.board || mode === "board" ? ["board" as const] : [])];
+  const modes: DocumentMode[] = ["write", "read", ...(offered.code || mode === "code" ? ["code" as const] : []), ...(offered.language || mode === "language" ? ["language" as const] : []), ...(offered.board || mode === "board" ? ["board" as const] : [])];
 
   return <div className="document-mode-switch">
     <button ref={trigger} type="button" className="document-mode-trigger" data-mode={mode}

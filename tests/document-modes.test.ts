@@ -1,5 +1,5 @@
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
-import { documentModeOf, editorViewFor, readDocumentModePicks, saveDocumentModePick } from "../client/src/lib/documentModes";
+import { codeShareOf, documentModeOf, editorViewFor, readDocumentModePicks, saveDocumentModePick } from "../client/src/lib/documentModes";
 import { FEATURES, FEATURE_PRESETS, parseFeatures } from "../client/src/lib/features";
 
 const store = new Map<string, string>();
@@ -43,6 +43,23 @@ describe("the mode a document opens in", () => {
     expect(readDocumentModePicks()).toEqual({ c: "read" });
     store.set("margin-chat:document-modes", "not json");
     expect(readDocumentModePicks()).toEqual({});
+  });
+});
+
+describe("Code mode", () => {
+  const block = (content: string) => ({ kind: "markdown", content });
+  test("counts runnable cells and opens a page that is mostly code in Code", () => {
+    const code = [block("Kaplan–Meier curves.\n\n```python\nimport pandas as pd\ndf = pd.read_csv('cohort.csv')\nprint(df.describe())\n```")];
+    expect(codeShareOf(code)).toEqual({ cells: 1, mostlyCode: true });
+    expect(documentModeOf({ id: "a" }, {}, "live", codeShareOf(code))).toBe("code");
+    expect(documentModeOf({ id: "a" }, { a: "write" }, "live", codeShareOf(code))).toBe("write");
+  });
+  test("a page with a snippet stays in Write, and a Code pick needs a cell", () => {
+    const prose = [block("A long paragraph about rapamycin dosing and the PEARL trial results over 48 weeks.\n\n```js\n1+1\n```")];
+    expect(codeShareOf(prose)).toEqual({ cells: 1, mostlyCode: false });
+    expect(documentModeOf({ id: "a" }, {}, "live", codeShareOf(prose))).toBe("write");
+    expect(documentModeOf({ id: "b" }, { b: "code" }, "live", codeShareOf([block("No code here.")]))).toBe("write");
+    expect(codeShareOf([block("```mermaid\ngraph TD\n```")]).cells).toBe(0);
   });
 });
 
