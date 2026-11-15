@@ -1,3 +1,4 @@
+import { useFeature } from "../lib/features";
 import DismissibleDetails from "./DismissibleDetails";
 import { MapGroupingButtons, MapGroupingMenu, type MapGrouping } from "./MapGroupingMenu";
 import MapHelp from "./MapHelp";
@@ -168,8 +169,9 @@ const CAMERA_COMMIT_MS = 64;
 const CAMERA_SETTLE_MS = 700;
 
 export type MapScopeChoice = "note" | "around" | "topic" | "all";
+// "Note" (just this note's family) is no longer offered: Around already starts at its family
+// (thread "Simplify Margin Chat with opt-in features"). A map opened that way shows as Around.
 const MAP_SCOPES: { id: MapScopeChoice; label: string; title: string }[] = [
-  { id: "note", label: "Note", title: "This note: its parent, the notes beside it and the notes inside it" },
   { id: "around", label: "Around", title: "Notes one and two links away, grouped close around this note" },
   { id: "topic", label: "Topic", title: "This note's topic on the whole map" },
   { id: "all", label: "All", title: "Everything" },
@@ -178,7 +180,7 @@ const MAP_SCOPES: { id: MapScopeChoice; label: string; title: string }[] = [
 /** How much of the map to show, from this note out to everything. */
 function MapScopeSwitch({ value, onChange }: { value: MapScopeChoice; onChange: (value: MapScopeChoice) => void }) {
   return <div className="graph-map-scope-switch" role="group" aria-label="How much of the map">
-    {MAP_SCOPES.map((item) => <button key={item.id} type="button" aria-pressed={value === item.id} title={item.title} onClick={() => onChange(item.id)}>{item.label}</button>)}
+    {MAP_SCOPES.map((item) => <button key={item.id} type="button" aria-pressed={(value === "note" ? "around" : value) === item.id} title={item.title} onClick={() => onChange(item.id)}>{item.label}</button>)}
   </div>;
 }
 
@@ -1269,6 +1271,7 @@ export default function ConversationGraphView({
   renderExpandedConversation,
   dockControlsInHeader = false,
 }: ConversationGraphViewProps) {
+  const mapTools = useFeature("mapTools");
   const groupSemantics = useJevGroupCategories({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
     ready: !!jev?.ready && isVisible, conversations, groups });
   const territoryGroups = useMemo(() => Object.fromEntries(groupSemantics.orderedGroupIds
@@ -4449,21 +4452,23 @@ export default function ConversationGraphView({
         <span className="graph-map-bar-spacer" />
         {toolbarTrailing}
         <DismissibleDetails className="graph-map-view-options" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector<HTMLElement>("summary")?.focus(); } }}>
-          <summary aria-label="Map options" title="Map options: grouping, filter, explore, history, add, layout"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>{secondaryViewLabel ? <span className="graph-map-view-options-active">{secondaryViewLabel}</span> : null}
+          <summary aria-label="Map options" title={mapTools ? "Map options: grouping, filter, explore, history, add, layout" : "Map options: filter and layout"}><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.6" /><circle cx="12" cy="12" r="1.6" /><circle cx="19" cy="12" r="1.6" /></svg>{secondaryViewLabel ? <span className="graph-map-view-options-active">{secondaryViewLabel}</span> : null}
             {clusterStatus ? <span className="graph-map-view-options-status" role="status" title={clusterStatus}><span className="public-map-visually-hidden">{clusterStatus}</span></span> : null}</summary>
           <div>
-            <div className="graph-map-menu-travel" role="group" aria-label="Move around the map">
+            {/* Simple map: Filter and Layout. More map tools (a feature) adds the rest. */}
+            {mapTools ? <div className="graph-map-menu-travel" role="group" aria-label="Move around the map">
               <button type="button" aria-label="Back in map" title="Back in map" disabled={!navigation.canGoBack} onClick={() => restoreHistory("back")}><span aria-hidden="true">←</span></button>
               <button type="button" aria-label="Forward in map" title="Forward in map" disabled={!navigation.canGoForward} onClick={() => restoreHistory("forward")}><span aria-hidden="true">→</span></button>
               {isCanvasMode ? null : <button type="button" className="graph-map-all-groups" aria-label="Zoom out to all groups" onClick={() => { closeViewOptions(); showAllGroups(); }}>All groups</button>}
-            </div>
+            </div> : null}
             {/* The bar keeps search, the scope and Roadmaps; grouping, Filter and everything else live here. */}
             <div className="graph-map-menu-main" role="group" aria-label="Map views">
-              {isCanvasMode && !panelView ? <><span className="graph-map-menu-label">Group by</span>
+              {mapTools && isCanvasMode && !panelView ? <><span className="graph-map-menu-label">Group by</span>
                 <MapGroupingButtons value={canvasGrouping} onChange={(next) => { closeViewOptions(); chooseCanvasGrouping(next); }} /></> : null}
               <button type="button" className="graph-map-lens-toggle" aria-pressed={lensOpen} aria-expanded={lensOpen}
                 onClick={() => { closeViewOptions(); setLensOpen(!lensOpen); }}>Filter{lens.filters.length ? <span className="graph-map-lens-badge">{lens.filters.length}</span> : null}</button>
               {menuItems}
+              {mapTools ? <>
               {showTidyUp ? <button type="button" aria-pressed={isMultiSelectActive} onClick={() => { closeViewOptions(); toggleMultiSelect(); }}>
                 {isMultiSelectActive ? "Stop selecting cards" : "Select several cards"}</button> : null}
               {showTidyUp && !showCanvasGroupBoxes ? <button type="button" disabled={isAutoArranging || !scene.nodes.length}
@@ -4475,6 +4480,7 @@ export default function ConversationGraphView({
                 <button type="button" disabled={!canExpandNeighborhood} onClick={() => { closeViewOptions(); focusConnections(scope.conversationId, scope.depth + 1, documentLayoutMode); }}>Show more connections</button>
                 <button type="button" onClick={() => { closeViewOptions(); showDocuments(); }}>All documents</button>
               </div> : null}
+              </> : null}
               {showLayoutPicker ? <><span className="graph-map-menu-label">Layout</span><div className="graph-map-layout-options" role="group" aria-label="Layout">
                 {([
                   ["auto", "Auto layout"],
@@ -4484,9 +4490,10 @@ export default function ConversationGraphView({
                 ] as const).filter(([mode]) => !isLineageMode || mode === "tree-right" || mode === "tree-down").map(([mode, label]) => <button type="button" key={mode} aria-pressed={documentLayoutMode === mode}
                   onClick={() => { closeViewOptions(); chooseDocumentLayout(mode); }}>{label}</button>)}
               </div></> : null}
-              <span className="graph-map-menu-label">View</span>
-              <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }} />
+              {mapTools ? <><span className="graph-map-menu-label">View</span>
+              <GraphViewModeTabs mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }} /></> : null}
             </div>
+            {mapTools ? <>
             <button type="button" ref={explorerTriggerRef} aria-label="Explore map collections and sources" onClick={() => { closeViewOptions(); openExplorer(); }}>Explore groups and sources</button>
             {modeSettings}
             <GraphViewModeSelects mode={viewMode} lens={navigation.state.contentLens} onModeChange={(mode) => { closeViewOptions(); chooseViewMode(mode); }}
@@ -4514,6 +4521,7 @@ export default function ConversationGraphView({
                 {hasRelatedFilter ? <label><input type="checkbox" checked={showRelated} onChange={(event) => { navigation.update({ showRelated: event.target.checked }); setFitAfterArrange(true); }} /> Possibly related to {conversations[activeConversationId]?.title}</label> : null}
                 {showRelated && relatedStatus === "ready" ? <small>Suggestions from up to 40 recent items; relevance is not a factual relationship.</small> : null}
               </div></fieldset> : null}
+            </> : null}
           </div>
         </DismissibleDetails>
       </div>

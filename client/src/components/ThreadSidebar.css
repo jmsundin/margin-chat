@@ -18,6 +18,14 @@
   padding: 2px;
 }
 
+/* One list (no Groups, Outline or Spaces): just the sort button, at the right, without the bar. */
+.sidebar-content-switcher.is-sort-only {
+  background: transparent;
+  justify-content: flex-end;
+  padding: 0;
+  margin-bottom: -6px;
+}
+
 .sidebar-content-switcher button {
   background: transparent;
   border: 0;

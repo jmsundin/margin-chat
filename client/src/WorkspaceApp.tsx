@@ -47,7 +47,7 @@ import {
   type CSSProperties,
 } from "react";
 import BranchRail from "./components/BranchRail";
-import { featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, useFeatures } from "./lib/features";
+import { featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, unchosenFeatures, useFeatures } from "./lib/features";
 import { interfaceSettingsLoaded, onInterfaceSettingsLoaded, startInterfaceSettingsSync } from "./lib/interfaceSettings";
 import { parseDocumentFlashcards } from "./lib/flashcards";
 import ServicePickerModal from "./components/ServicePickerModal";
@@ -1546,19 +1546,26 @@ function WorkspaceAppContent({
   const settingsLoaded = useSyncExternalStore(onInterfaceSettingsLoaded, interfaceSettingsLoaded, () => false);
   // An account from before features existed keeps on what it already uses; new accounts start on Simple.
   const featuresSeededFromUsage = useRef(false);
+  // A feature added later (Groups, Spaces…) is decided the same way, once, for accounts that chose before it existed.
   useEffect(() => {
-    if (guest || !settingsLoaded || !vault.ready || hasFeatureChoices()) return;
-    const conversations = Object.values(currentStateRef.current.conversations);
-    featuresSeededFromUsage.current = true;
-    saveFeatures(featuresFromUsage({
+    if (guest || !settingsLoaded || !vault.ready) return;
+    const unchosen = unchosenFeatures();
+    if (!unchosen.length) return;
+    const current = currentStateRef.current;
+    const conversations = Object.values(current.conversations);
+    if (!hasFeatureChoices()) featuresSeededFromUsage.current = true;
+    const usage = featuresFromUsage({
       roadmaps: conversations.some((conversation) => conversation.nodeType === "roadmap"),
       boards: conversations.some((conversation) => conversation.nodeType === "board"),
       flashcards: flashcards.totalCards > 0 || conversations.some((conversation) => !conversation.vaultFile
         && (conversation.document || conversation.kind === "note")
         && parseDocumentFlashcards(conversation.id, getEditableDocument(conversation).blocks).length > 0),
-      claims: false,
-      voice: false,
-    }));
+      // The example vault's own group and space don't count; only ones the person made.
+      groups: Object.keys(current.groups ?? {}).some((id) => !id.startsWith("example-")),
+      spaces: Object.keys(current.sessions?.items ?? {}).some((id) => !id.startsWith("example-")),
+      tiles: mainViewMode === "tiles",
+    });
+    saveFeatures(Object.fromEntries(unchosen.map((id) => [id, usage[id]])));
   }, [guest, settingsLoaded, vault.ready, flashcards.totalCards]);
   // Card history can arrive from the account a moment after that first look.
   useEffect(() => {
@@ -2236,6 +2243,7 @@ function WorkspaceAppContent({
   const setViewFromShortcut = useEffectEvent((mode: MainViewMode) => {
     // Cmd+G shows or hides the map around the document.
     if (mode === "graph") { if (mainViewMode !== "chat") handleSetMainViewMode("graph"); else handleToggleDocumentMap(); return; }
+    if (mode === "tiles" && !features.tiles) return;
     if (mode !== mainViewMode) handleSetMainViewMode(mode);
   });
   useEffect(() => {
@@ -6243,7 +6251,7 @@ function WorkspaceAppContent({
                     <DocumentTabs vertical={vertical} documents={spaceTabDocuments}
                       visitingDocumentIds={visitingTabIds} onKeep={handleKeepInSpace}
                       groups={state.groups}
-                      onAssignGroup={handleAssignConversationGroup}
+                      onAssignGroup={features.groups ? handleAssignConversationGroup : undefined}
                       onRename={handleRenameThread}
                       activeDocumentId={activePeerTabId}
                       minimizedDocumentIds={documentWorkspace.minimizedIds}
@@ -6346,7 +6354,7 @@ function WorkspaceAppContent({
         maximized={maximizedDocument?.id === conversation.id}
         onToggleMaximize={!isCompactDocument(conversation) ? (id) => maximizedDocument?.id === id ? setMaximizedDocumentId(null) : toggleMaximizedDocument(id) : undefined}
         onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} revealLabel={revealInFolderLabel()}
-        groups={state.groups} onAssignGroup={handleAssignConversationGroup}
+        groups={state.groups} onAssignGroup={features.groups ? handleAssignConversationGroup : undefined}
         onFocusFallback={() => {
           const triggers = [...document.querySelectorAll<HTMLButtonElement>("[data-document-tab-id] .document-tab-menu-trigger")]
             .filter((button) => !button.closest("[hidden]"));
@@ -6422,7 +6430,7 @@ function WorkspaceAppContent({
       onToggleHiddenFromAI={handleToggleHiddenFromAI}
       onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
         onVersionHistory={conversation.document || conversation.kind === "note" ? (id) => setVersionHistory({ id }) : undefined} revealLabel={revealInFolderLabel()}
-      groups={state.groups} onAssignGroup={handleAssignConversationGroup} />;
+      groups={state.groups} onAssignGroup={features.groups ? handleAssignConversationGroup : undefined} />;
   }
 
   /** A document's panel. `embedded`: opened beside a roadmap, so the page's own window controls stay with the roadmap. */
@@ -6772,7 +6780,7 @@ function WorkspaceAppContent({
           <SidebarPanelIcon />
         </button>
         <h1>Margin Chat</h1>
-        <WorkspaceModeToggle mainViewMode={mainViewMode} onSetMainViewMode={handleSetMainViewMode} />
+        {features.tiles || isTileView ? <WorkspaceModeToggle mainViewMode={mainViewMode} onSetMainViewMode={handleSetMainViewMode} /> : null}
       </div>
     );
   }
@@ -6799,7 +6807,7 @@ function WorkspaceAppContent({
   return (
     <VaultMediaContext.Provider value={vault.media}>
     <DocumentTitleSuggestionContext.Provider value={suggestDocumentTitle}>
-    <SpaceMenuContext.Provider value={spaceMenuActions}>
+    <SpaceMenuContext.Provider value={features.spaces ? spaceMenuActions : null}>
     <ConversationGroupPickerContext.Provider value={{
       getSuggestion: (conversationId) => {
         const match = jev.groupSuggestions[conversationId];
@@ -6907,7 +6915,8 @@ function WorkspaceAppContent({
               vaultSwitcher={<VaultSwitcher vault={vault} cloudSync={cloudSyncEnabled}
                 onOpenSettings={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }} />}
               documentOrder={documentOrder}
-              sessionsPanel={<SpacesPanel spaces={orderedSpaces} activeId={sessions?.activeId ?? null}
+              groupsEnabled={features.groups} outlineEnabled={features.outline}
+              sessionsPanel={!features.spaces ? undefined : <SpacesPanel spaces={orderedSpaces} activeId={sessions?.activeId ?? null}
                 conversations={state.conversations} focusedDocumentId={activeConversation.id}
                 onOpen={handleSwitchSession}
                 onRename={(sessionId, name) => setState((current) => renameSession(current, sessionId, name))}

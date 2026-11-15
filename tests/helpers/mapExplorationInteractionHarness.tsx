@@ -7,6 +7,8 @@ import { validateGeneratedUrlMap } from "../../server/urlMap/index.mjs";
 import { urlMapHtml, urlMapModelReply } from "./urlMapFixture";
 
 const browser = new Window({ url: "http://map-exploration-interactions.test/" });
+// The full map ⋯ menu is the "More map tools" feature (Settings → Features); these tests use it switched on.
+browser.localStorage.setItem("margin-chat:features", JSON.stringify({ mapTools: true }));
 startMapsInGroupedView(browser.localStorage as unknown as Storage);
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "ResizeObserver", "DOMRect"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? browser : (browser as any)[name] });

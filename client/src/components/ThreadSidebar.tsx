@@ -42,6 +42,10 @@ interface ThreadSidebarProps {
   arrivingThreadIds?: ReadonlySet<string>;
   /** The Spaces view: spaces to switch between, rename and delete. */
   sessionsPanel?: ReactNode;
+  /** Groups (a feature): the Groups tab, New group and the Group picker on each document. */
+  groupsEnabled?: boolean;
+  /** Outline (a feature): the Outline tab and each document's outline arrow. */
+  outlineEnabled?: boolean;
   /** Changes each time something outside the sidebar asks for the Spaces view. */
   sessionsRequest?: number;
   mapExplorerRef?: (element: HTMLDivElement | null) => void;
@@ -356,6 +360,8 @@ export default function ThreadSidebar({
   mainViewMode,
   onAssignGroup,
   onCreateGroup,
+  groupsEnabled = true,
+  outlineEnabled = true,
   onDeleteThread,
   onNewChat,
   onNewNote,
@@ -416,8 +422,13 @@ export default function ThreadSidebar({
     setSidebarContent(next);
   }
 
+  // A tab whose feature was just switched off falls back to the list.
   useEffect(() => {
-    if (sessionsRequest) showSidebarContent("sessions");
+    if ((sidebarContent === "groups" && !groupsEnabled) || (sidebarContent === "outline" && !outlineEnabled) || (sidebarContent === "sessions" && !sessionsPanel)) setSidebarContent("documents");
+  }, [sidebarContent, groupsEnabled, outlineEnabled, sessionsPanel]);
+
+  useEffect(() => {
+    if (sessionsRequest && sessionsPanel) showSidebarContent("sessions");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionsRequest]);
 
@@ -903,7 +914,7 @@ export default function ThreadSidebar({
           ) : null}
         </button>
 
-        <button
+        {outlineEnabled ? <button
           aria-controls={`chat-outline-${thread.id}`}
           aria-expanded={isExpanded}
           aria-label={`${isExpanded ? "Collapse" : "Expand"} outline for ${thread.title}`}
@@ -916,7 +927,7 @@ export default function ThreadSidebar({
           type="button"
         >
           <ExpandIcon />
-        </button>
+        </button> : null}
 
         <button
           aria-controls={
@@ -1017,7 +1028,7 @@ export default function ThreadSidebar({
                   <span>Flashcards</span>
                 </button>
               ) : null}
-              {newGroupName === null ? (
+              {!groupsEnabled ? null : newGroupName === null ? (
                 <button
                   className="sidebar-workspace-action"
                   onClick={() => setNewGroupName("")}
@@ -1143,13 +1154,14 @@ export default function ThreadSidebar({
         </div>
       ) : (
         <div className="sidebar-document-browser">
-          <div className="sidebar-content-switcher" role="group" aria-label="Sidebar content">
-            <button type="button" aria-label="Show documents" aria-pressed={sidebarContent === "documents"}
-              aria-controls="sidebar-document-list" onClick={() => showSidebarContent("documents")}>Documents</button>
-            <button type="button" aria-label="Show groups" aria-pressed={sidebarContent === "groups"}
-              aria-controls="sidebar-document-list" onClick={() => showSidebarContent("groups")}>Groups</button>
-            <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
-              aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button>
+          <div className={`sidebar-content-switcher${groupsEnabled || outlineEnabled || sessionsPanel ? "" : " is-sort-only"}`} role="group" aria-label="Sidebar content">
+            {/* With Groups, Outline and Spaces off there is one list, so no tabs to switch between. */}
+            {groupsEnabled || outlineEnabled || sessionsPanel ? <button type="button" aria-label="Show documents" aria-pressed={sidebarContent === "documents"}
+              aria-controls="sidebar-document-list" onClick={() => showSidebarContent("documents")}>Documents</button> : null}
+            {groupsEnabled ? <button type="button" aria-label="Show groups" aria-pressed={sidebarContent === "groups"}
+              aria-controls="sidebar-document-list" onClick={() => showSidebarContent("groups")}>Groups</button> : null}
+            {outlineEnabled ? <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
+              aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button> : null}
             {sessionsPanel ? <button type="button" aria-label="Show spaces" aria-pressed={sidebarContent === "sessions"}
               aria-controls="sidebar-sessions" onClick={() => showSidebarContent("sessions")}>Spaces</button> : null}
             {renderSortControl()}
@@ -1396,7 +1408,7 @@ export default function ThreadSidebar({
                     {revealInFolder.label}
                   </button>
                 ) : null}
-                <ConversationGroupSelect
+                {groupsEnabled ? <ConversationGroupSelect
                   className="is-menu"
                   conversationId={thread.id}
                   groups={groups}
@@ -1404,7 +1416,7 @@ export default function ThreadSidebar({
                     onAssignGroup(conversationId, groupId);
                     setOpenMenuState(null);
                   }}
-                />
+                /> : null}
                 <button
                   className="thread-item-menu-action is-danger"
                   onClick={() => handleOpenDelete(thread)}
