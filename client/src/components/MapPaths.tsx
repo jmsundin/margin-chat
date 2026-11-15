@@ -31,9 +31,11 @@ export interface MapPathActions {
 const PathIcon = () => <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="18.5" r="2.4" /><circle cx="19" cy="5.5" r="2.4" /><path d="M7.2 17.2C14 15 9 9.5 16.8 6.8" /></svg>;
 
 /** The toolbar's Paths menu: turn a path on, start one by hand, or have AI draft one. */
-export function MapPathsMenu({ paths, activeId, onPick, onNew, onDraft }: {
+export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPick, onNew, onDraft }: {
   paths: MapPathSummary[];
   activeId: string | null;
+  /** The roadmap's name is already on screen (Learn's header), so the button just says Roadmaps. */
+  nameShownElsewhere?: boolean;
   onPick(id: string | null): void;
   onNew(): void;
   onDraft(goal: string): string | null;
@@ -46,7 +48,7 @@ export function MapPathsMenu({ paths, activeId, onPick, onNew, onDraft }: {
   const link = roadmapDraftLink(goal);
   return <DismissibleDetails className="map-paths-menu" onToggle={(event) => { if (!event.currentTarget.open) { setDrafting(false); setError(null); } }}>
     <summary aria-label={active ? `Roadmap: ${active.name}` : "Roadmaps"} title="Roadmaps: learning paths drawn over your map" className={active ? "is-on" : undefined}>
-      <PathIcon /><span>{active ? active.name : "Roadmaps"}</span>
+      <PathIcon /><span>{active && !nameShownElsewhere ? active.name : "Roadmaps"}</span>
     </summary>
     <div role="menu">
       {drafting ? <form className="map-paths-draft" onSubmit={(event) => {
@@ -171,7 +173,7 @@ export function MapPathPickBanner({ count, onCancel, onDone }: { count: number; 
  * The path bar at the bottom of the map: progress, ‹ step ›, Map | List and ✕,
  * with the current step's strip above it (status, needs first, unlocks, AI).
  */
-export function MapPathBar({ path, trail, conversations, currentDocId, actions, message, onStep, onClose, onOpenNote, onOpenStep, onGoIn, onGoTo, onMessage }: {
+export function MapPathBar({ path, trail, conversations, currentDocId, actions, message, inCourse = false, onStep, onClose, onOpenNote, onOpenStep, onGoIn, onGoTo, onMessage }: {
   path: MapPath;
   /** Paths this one was gone into from, outermost first. */
   trail: MapPathSummary[];
@@ -179,6 +181,8 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
   currentDocId: string | null;
   actions: MapPathActions;
   message: string | null;
+  /** Learn shows the name, progress and every lesson itself, so only the step card and messages float. */
+  inCourse?: boolean;
   onStep(docId: string): void;
   onClose(): void;
   onOpenNote(): void;
@@ -235,7 +239,7 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
       </div>
     </section> : null}
     {message ? <p className="map-path-message" role="status">{message}<button type="button" aria-label="Dismiss" onClick={() => onMessage(null)}>×</button></p> : null}
-    <div className="map-path-bar" role="toolbar" aria-label={`Path: ${path.name}`}>
+    {inCourse ? null : <div className="map-path-bar" role="toolbar" aria-label={`Path: ${path.name}`}>
       <span className="map-path-name">
         <PathIcon />
         {trail.map((item) => <button key={item.id} type="button" className="is-crumb" onClick={() => onGoTo(item.id)}>{item.name} ›</button>)}
@@ -251,7 +255,7 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
         <button type="button" aria-label="Next step" disabled={!path.steps.length || index === path.steps.length - 1} onClick={() => onStep(path.steps[index < 0 ? 0 : index + 1]?.docId)}>›</button>
       </span>
       <button type="button" className="map-path-close" aria-label="Turn the path off" title="Turn the path off" onClick={onClose}>×</button>
-    </div>
+    </div>}
   </div>;
 }
 
