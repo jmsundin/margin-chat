@@ -11,7 +11,7 @@ import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
  *   as they are, and a board still opens as a board.
  * The choices are saved to the account (see interfaceSettings.ts), so every device matches.
  */
-export type FeatureId = "flashcards" | "roadmaps" | "boards" | "claims" | "voice" | "groups" | "spaces" | "outline" | "tiles" | "mapTools";
+export type FeatureId = "language" | "flashcards" | "roadmaps" | "boards" | "claims" | "voice" | "groups" | "spaces" | "outline" | "tiles" | "mapTools";
 
 export interface FeatureInfo {
   id: FeatureId;
@@ -30,9 +30,11 @@ export const FEATURES: readonly FeatureInfo[] = [
   { id: "claims", group: "Think", name: "Claim checking", description: "Find the claims a document makes and check each against your other notes.",
     adds: "“Check claims…” in a document's ⋯ menu", keywords: ["claim", "fact check", "check claims", "ratchet", "evidence"] },
   { id: "boards", group: "Think", name: "Boards", description: "A full-page canvas to draw and think on.",
-    adds: "“New board” in the sidebar's ⋯ and + menus, “Board” in a document's ⋯ menu", keywords: ["board", "canvas", "whiteboard", "draw", "drawing"] },
+    adds: "“New board” in the sidebar's ⋯ and + menus, Board in a document's mode button", keywords: ["board", "canvas", "whiteboard", "draw", "drawing"] },
   { id: "flashcards", group: "Learn", name: "Flashcards and quiz", description: "Lines like “Question :: Answer” become cards you review with spaced repetition.",
-    adds: "Quiz on the selection menu, “Make flashcards…” and “Review cards” in a document's ⋯ menu, Review in the sidebar", keywords: ["flashcard", "cards", "quiz", "review", "spaced repetition", "anki", "study"] },
+    adds: "Quiz on the selection menu, “Make flashcards…” in a document's ⋯ menu, Review in its mode button and the sidebar", keywords: ["flashcard", "cards", "quiz", "review", "spaced repetition", "anki", "study"] },
+  { id: "language", group: "Learn", name: "Language learning", description: "Read a document in another language: tap a word to see, save and rate what it means.",
+    adds: "Language in a document's mode button", keywords: ["language", "translate", "translation", "vocabulary", "words", "spanish", "lingq", "foreign"] },
   { id: "voice", group: "Capture", name: "Voice typing", description: "Talk instead of typing in any text field.",
     adds: "The mic button in text fields and Hold Space to talk", keywords: ["voice", "dictation", "dictate", "mic", "microphone", "speech", "talk"] },
   { id: "groups", group: "Organize", name: "Groups", description: "Collect documents into named groups.",
@@ -53,7 +55,7 @@ export type FeaturePreset = "simple" | "researcher" | "student" | "everything";
 export const FEATURE_PRESETS: readonly { id: FeaturePreset; name: string; features: readonly FeatureId[] }[] = [
   { id: "simple", name: "Simple", features: [] },
   { id: "researcher", name: "Researcher", features: ["roadmaps", "claims", "mapTools", "outline"] },
-  { id: "student", name: "Student", features: ["flashcards", "voice", "outline"] },
+  { id: "student", name: "Student", features: ["flashcards", "language", "voice", "outline"] },
   { id: "everything", name: "Everything", features: FEATURES.map((feature) => feature.id) },
 ];
 

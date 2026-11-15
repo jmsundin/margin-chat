@@ -31,6 +31,7 @@ import MathEquationDialog from "./MathEquationDialog";
 import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBlocks, liveBlockInfo, reflowBlocks, renderedTableSelection, snapOutOfGaps, visibleEnd, type LiveBlock, type TextSource, type TextSpan } from "../lib/liveDocument";
 import { livePreviewInline, type LivePreviewMode } from "../lib/livePreviewMarkdown";
 import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
+import { editorViewFor } from "../lib/documentModes";
 import { listenForEditorCommands, type EditorCommand } from "../lib/editorCommands";
 import { findWikiLinkAround, findWikiLinkQuery, type WikiLinkDocument, type WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
 import WikiLinkMenu, { type WikiLinkMenuState } from "./WikiLinkMenu";
@@ -513,7 +514,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   // Language learning mode shows the text in its own reader, where every word can be tapped; the editor waits underneath.
   const learning = props.languageLearning ?? null;
   const languagePair = learning?.pair ?? null;
-  const mode: LivePreviewMode = languagePair ? "reading" : viewMode;
+  const ownModes = Boolean(props.onPageModeChange);
+  const mode: LivePreviewMode = languagePair ? "reading" : props.pageMode ? editorViewFor(props.pageMode, viewMode) : viewMode;
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [editorFocused, setEditorFocused] = useState(false);
   const [insertMenu, setInsertMenu] = useState<{ top: number; blockId: string; open: boolean } | null>(null);
@@ -1167,7 +1169,11 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
 
   function setMode(next: LivePreviewMode) {
     if (latest.current.languageLearning?.pair) latest.current.languageLearning.onChange(null);
-    saveDocumentViewMode(next);
+    // A document with its own mode remembers Read for itself; Live Preview or Source stays the device's way of writing.
+    if (latest.current.onPageModeChange) {
+      latest.current.onPageModeChange(next === "reading" ? "read" : "write");
+      if (next !== "reading") saveDocumentViewMode(next);
+    } else saveDocumentViewMode(next);
     const view = viewRef.current;
     if (view && next !== "reading") requestAnimationFrame(() => view.focus());
   }
@@ -1672,9 +1678,10 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       if (focus) { pendingHistoryFocus.current = focus; setHistoryRevision((revision) => revision + 1); setAnnouncement(event.shiftKey ? "Edit redone." : "Edit undone."); }
     }}>
     {/* The quiet page keeps Live Preview, Source and Reading in the document's ⋯ menu (and ⌘E), so its row shows only when it holds something. */}
-    {props.compactModes && !props.toolbarStart && !languagePair ? null : <div className={`live-document-modes${props.compactModes ? " is-compact" : ""}`} role="toolbar" aria-label="Document view">
+    {/* A document with its own mode button picks Read and Language there; Write keeps Live Preview and Source here. */}
+    {(ownModes ? !props.toolbarStart && (props.compactModes || mode === "reading") : props.compactModes && !props.toolbarStart && !languagePair) ? null : <div className={`live-document-modes${props.compactModes ? " is-compact" : ""}`} role="toolbar" aria-label="Document view">
       {props.toolbarStart}
-      {props.compactModes ? !languagePair ? null : <div className="live-document-view-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setViewMenuOpen(false); }}>
+      {ownModes && (props.compactModes || mode === "reading") ? null : props.compactModes ? !languagePair ? null : <div className="live-document-view-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setViewMenuOpen(false); }}>
         <button type="button" className="live-document-view-trigger" aria-haspopup="menu" aria-expanded={viewMenuOpen}
           title="How this page shows its Markdown (⌘E switches to Reading)"
           onMouseDown={(event) => event.preventDefault()} onClick={() => setViewMenuOpen((open) => !open)}>
@@ -1691,12 +1698,12 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           </button> : null}
         </div> : null}
       </div> : <>
-        {(["live", "source", "reading"] as const).map((candidate) => <button key={candidate} type="button" aria-pressed={!languagePair && mode === candidate}
+        {(ownModes ? ["live", "source"] as const : ["live", "source", "reading"] as const).map((candidate) => <button key={candidate} type="button" aria-pressed={!languagePair && mode === candidate}
           title={candidate === "live" ? "Live Preview: Markdown shows on the line you're editing" : candidate === "source" ? "Source: the Markdown file as saved" : "Reading: rendered, not editable (⌘E)"}
           onMouseDown={(event) => event.preventDefault()} onClick={() => setMode(candidate)}>
           {VIEW_LABELS[candidate]}
         </button>)}
-        {learning ? <button type="button" aria-pressed={Boolean(languagePair)} title="Language learning: tap a word to see, save and rate what it means"
+        {learning && !ownModes ? <button type="button" aria-pressed={Boolean(languagePair)} title="Language learning: tap a word to see, save and rate what it means"
           onMouseDown={(event) => event.preventDefault()} onClick={() => setLanguageLearning(!languagePair)}>Language</button> : null}
       </>}
     </div>}

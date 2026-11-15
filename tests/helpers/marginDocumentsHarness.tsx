@@ -170,7 +170,7 @@ async function createSide() {
 }
 function notePane(id: string): any { return element(`[data-document-id="${id}"]`); }
 async function documentAction(id: string, label: string) {
-  await click(notePane(id).querySelector('.document-header [aria-haspopup="menu"]'));
+  await click(notePane(id).querySelector('.document-header [aria-haspopup="menu"]:not(.document-mode-trigger)'));
   const action = [...browser.document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.trim() === label);
   await click(action);
 }
