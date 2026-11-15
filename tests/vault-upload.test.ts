@@ -39,6 +39,21 @@ describe("planVaultUpload", () => {
       + "“Song.mp3” isn’t a note, PDF, image, HTML page or zip; “Broken.md” isn’t readable text.");
   });
 
+  test("keeps a zipped page and the files it loads together in a folder named after the zip", () => {
+    const zip = zipSync({
+      "glider/index.html": text("<script src=vendor/engine.js></script>"),
+      "glider/vendor/engine.js": text("var engine = 1;"),
+      "glider/vendor/engine.wasm": new Uint8Array([0, 97, 115, 109]),
+    });
+    const plan = planVaultUpload([upload("Glider Gauntlet.zip", zip)], ["glider gauntlet/old.html"], now);
+    expect(Object.keys(plan.files).sort()).toEqual([
+      "Glider Gauntlet 2/Glider Gauntlet.html", "Glider Gauntlet 2/vendor/engine.js", "Glider Gauntlet 2/vendor/engine.wasm"]);
+    expect(plan.added).toEqual(["Glider Gauntlet.zip"]);
+    // A zip of notes with a page among them keeps its own layout.
+    const notes = planVaultUpload([upload("Vault.zip", zipSync({ "Note.md": text("# Note"), "index.html": text("<p>hi</p>"), "app.js": text("1") }))], [], now);
+    expect(Object.keys(notes.files).sort()).toEqual(["Note.md", "app.js", "index.html"]);
+  });
+
   test("unpacks a zipped phone folder at the top of the vault without Mac junk", () => {
     const zip = zipSync({
       "My Vault/Note.md": text("hello"),

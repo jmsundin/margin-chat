@@ -25,7 +25,8 @@ export type HtmlFrameMessage =
   | { marginHtml: 1; type: "open"; id: string }
   | { marginHtml: 1; type: "storage"; data: Record<string, string> }
   | { marginHtml: 1; type: "screen"; requestId: string; screen: HtmlScreen }
-  | { marginHtml: 1; type: "content-request" };
+  | { marginHtml: 1; type: "content-request" }
+  | { marginHtml: 1; type: "asset-request"; id: string; path: string };
 
 /**
  * What a page shows at one moment, for Play's notes and Ask AI: the words in view, what the person
@@ -73,6 +74,8 @@ export function readHtmlFrameMessage(data: unknown): HtmlFrameMessage | null {
     case "size": return finite(message.height) && message.height >= 0 ? { marginHtml: 1, type: "size", height: message.height } : null;
     case "clear": return { marginHtml: 1, type: "clear" };
     case "content-request": return { marginHtml: 1, type: "content-request" };
+    case "asset-request": return typeof message.id === "string" && message.id.length <= 40 && typeof message.path === "string" && message.path.length <= 1_000
+      ? { marginHtml: 1, type: "asset-request", id: message.id, path: message.path } : null;
     case "open": return typeof message.id === "string" && message.id.length <= 200 ? { marginHtml: 1, type: "open", id: message.id } : null;
     case "storage": {
       const data = readStorageData(message.data);
@@ -111,7 +114,7 @@ function readScreenMessage(message: Record<string, unknown>): HtmlFrameMessage |
  * Runs inside the frame, before the page's own scripts. It must stay
  * self-contained: it is sent to the frame as source text.
  */
-function bridge(savedStorage: Record<string, string>) {
+function bridge(savedStorage: Record<string, string>, hasAssets: boolean) {
   const SKIP = /^(?:SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA|SELECT|OPTION)$/u;
   const parentWindow = window.parent;
   const post = (message: Record<string, unknown>) => parentWindow.postMessage({ marginHtml: 1, ...message }, "*");
@@ -168,6 +171,172 @@ function bridge(savedStorage: Record<string, string>) {
       },
     });
   } catch { /* The browser keeps its own. */ }
+
+  /*
+   * Files beside the page. The frame has no address of its own, so "vendor/engine.js" would be asked of
+   * Margin Chat's server, which doesn't have it. For a page in its own folder the app answers instead,
+   * from that folder in the vault: fetches, scripts and pictures the page adds, and fetches its workers make.
+   */
+  const assetWaiters = new Map<string, (blob: Blob | null) => void>();
+  if (hasAssets) {
+    const baseFolder = new URL(".", document.baseURI).href;
+    const assets = new Map<string, Promise<Blob | null>>();
+    let nextAsset = 0;
+    /** The path inside the page's folder that an address names, or null for anything on the web. */
+    const assetPath = (address: unknown) => {
+      let url: URL;
+      try { url = new URL(String(address), document.baseURI); } catch { return null; }
+      const plain = url.href.split(/[?#]/u)[0]!;
+      if (!/^https?:$/u.test(url.protocol) || !plain.startsWith(baseFolder) || plain.endsWith("/")) return null;
+      try { return decodeURIComponent(plain.slice(baseFolder.length)) || null; } catch { return null; }
+    };
+    const loadAsset = (path: string) => {
+      let asset = assets.get(path);
+      if (!asset) {
+        asset = new Promise<Blob | null>((resolve) => {
+          const id = `a${nextAsset += 1}`;
+          assetWaiters.set(id, resolve);
+          post({ type: "asset-request", id, path });
+          window.setTimeout(() => { if (assetWaiters.delete(id)) resolve(null); }, 60_000);
+        });
+        assets.set(path, asset);
+        // A file that wasn't there may be added later; one that was is kept for the page's life.
+        void asset.then((blob) => { if (!blob) assets.delete(path); });
+      }
+      return asset;
+    };
+    const answer = (blob: Blob) => new Response(blob, { status: 200, headers: { "Content-Type": blob.type || "application/octet-stream" } });
+
+    const nativeFetch = window.fetch.bind(window);
+    window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+      const request = typeof input === "object" && input !== null && !(input instanceof URL) ? input as Request : null;
+      const method = String(init?.method ?? request?.method ?? "GET").toUpperCase();
+      const path = method === "GET" ? assetPath(request ? request.url : input) : null;
+      if (!path) return nativeFetch(input, init);
+      return loadAsset(path).then((blob) => blob ? answer(blob) : nativeFetch(input, init));
+    }) as typeof window.fetch;
+
+    // A script, picture, sound or stylesheet the page points at a file beside it gets that file.
+    const redirected: Array<{ type: typeof Element; name: string; set: (element: Element, value: unknown) => void }> = [];
+    const redirect = (type: typeof Element | undefined, name: string) => {
+      const described = type && Object.getOwnPropertyDescriptor(type.prototype, name);
+      if (!type || !described?.get || !described.set) return;
+      const wanted = new WeakMap<Element, string>();
+      const set = (element: Element, value: unknown) => {
+        const path = assetPath(value);
+        if (!path) { wanted.delete(element); described.set!.call(element, value); return; }
+        const address = new URL(String(value), document.baseURI).href;
+        if (wanted.get(element) === address) return;
+        wanted.set(element, address);
+        void loadAsset(path).then((blob) => {
+          if (wanted.get(element) === address) described.set!.call(element, blob ? URL.createObjectURL(blob) : address);
+        });
+      };
+      Object.defineProperty(type.prototype, name, {
+        configurable: true, enumerable: described.enumerable,
+        get(this: Element) { return wanted.get(this) ?? described.get!.call(this); },
+        set(this: Element, value: unknown) { set(this, value); },
+      });
+      redirected.push({ type, name, set });
+    };
+    redirect(window.HTMLScriptElement, "src");
+    redirect(window.HTMLImageElement, "src");
+    redirect(window.HTMLMediaElement, "src");
+    redirect(window.HTMLSourceElement, "src");
+    redirect(window.HTMLLinkElement, "href");
+    const redirectFor = (element: Element, name: string) => redirected.find((entry) => entry.name === name && element instanceof entry.type);
+    const nativeSetAttribute = Element.prototype.setAttribute;
+    Element.prototype.setAttribute = function setAttribute(this: Element, name: string, value: string) {
+      const entry = typeof name === "string" ? redirectFor(this, name.toLowerCase()) : undefined;
+      if (entry && assetPath(value)) entry.set(this, value); else nativeSetAttribute.call(this, name, value);
+    };
+    // Markup (the page's own, or what a script writes with innerHTML) names files too.
+    const adopt = (root: ParentNode) => {
+      for (const element of root.querySelectorAll("img[src], audio[src], video[src], source[src], link[href]")) {
+        const name = element instanceof HTMLLinkElement ? "href" : "src";
+        const value = element.getAttribute(name);
+        if (value && assetPath(value)) redirectFor(element, name)?.set(element, value);
+      }
+    };
+    new MutationObserver((changes) => {
+      for (const change of changes) for (const node of change.addedNodes) {
+        if (node instanceof Element) adopt(node.parentNode ?? document);
+      }
+    }).observe(document, { childList: true, subtree: true });
+
+    /*
+     * A worker has its own fetch, out of this page's reach, and the engines that need files beside them
+     * (a compiler and its libraries) run in one. A worker started from text the page made gets a few
+     * lines ahead of its own that send such fetches back here.
+     */
+    function workerShim(folder: string) {
+      const scope = self as unknown as { fetch: typeof fetch; addEventListener: typeof addEventListener; removeEventListener: typeof removeEventListener };
+      let port: MessagePort | null = null;
+      const unsent: Array<{ id: number; path: string }> = [];
+      const waiting = new Map<number, (blob: Blob | null) => void>();
+      let next = 0;
+      const first = (event: Event) => {
+        const message = event as MessageEvent;
+        if (!message.data || message.data.marginAssetPort !== 1 || !message.ports[0]) return;
+        event.stopImmediatePropagation();
+        scope.removeEventListener("message", first);
+        port = message.ports[0];
+        port.onmessage = (reply) => { const resolve = waiting.get(reply.data.id); waiting.delete(reply.data.id); resolve?.(reply.data.blob ?? null); };
+        for (const request of unsent.splice(0)) port.postMessage(request);
+      };
+      scope.addEventListener("message", first);
+      const native = scope.fetch.bind(self);
+      scope.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+        let path: string | null = null;
+        try {
+          const address = typeof input === "object" && input !== null && !(input instanceof URL) ? (input as Request).url : String(input);
+          const plain = new URL(address).href.split(/[?#]/u)[0]!;
+          const method = String(init?.method ?? "GET").toUpperCase();
+          if (method === "GET" && plain.startsWith(folder) && !plain.endsWith("/")) path = decodeURIComponent(plain.slice(folder.length));
+        } catch { path = null; }
+        if (!path) return native(input, init);
+        const asked = path;
+        return new Promise<Blob | null>((resolve) => {
+          const id = next += 1;
+          waiting.set(id, resolve);
+          if (port) port.postMessage({ id, path: asked }); else unsent.push({ id, path: asked });
+        }).then((blob) => blob
+          ? new Response(blob, { status: 200, headers: { "Content-Type": blob.type || "application/octet-stream" } })
+          : native(input, init));
+      }) as typeof fetch;
+    }
+    const NativeWorker = window.Worker;
+    const made = new Map<string, Blob>();
+    const nativeCreate = URL.createObjectURL.bind(URL);
+    const nativeRevoke = URL.revokeObjectURL.bind(URL);
+    URL.createObjectURL = (source: Blob | MediaSource) => {
+      const url = nativeCreate(source);
+      if (source instanceof Blob && source.size < 50_000_000) made.set(url, source);
+      return url;
+    };
+    URL.revokeObjectURL = (url: string) => { made.delete(url); nativeRevoke(url); };
+    if (NativeWorker) {
+      const prelude = `(${workerShim.toString()})(${JSON.stringify(baseFolder)});\n`;
+      const PageWorker = function PageWorker(address: string | URL, options?: WorkerOptions) {
+        const source = made.get(String(address));
+        if (!source || options?.type === "module") return new NativeWorker(address, options);
+        const url = nativeCreate(new Blob([prelude, source], { type: "text/javascript" }));
+        const worker = new NativeWorker(url, options);
+        window.setTimeout(() => nativeRevoke(url), 30_000);
+        const channel = new MessageChannel();
+        channel.port1.onmessage = (event) => {
+          const { id, path } = event.data ?? {};
+          void loadAsset(String(path)).then((blob) => channel.port1.postMessage({ id, blob }));
+        };
+        worker.postMessage({ marginAssetPort: 1 }, [channel.port2]);
+        return worker;
+      };
+      PageWorker.prototype = NativeWorker.prototype;
+      stand(window, "Worker", PageWorker);
+    }
+    const start = () => adopt(document);
+    if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+  }
 
   function textNodes() {
     const nodes: Text[] = [];
@@ -403,6 +572,12 @@ function bridge(savedStorage: Record<string, string>) {
       for (const listener of contentListeners) { try { listener(contentCopy()); } catch { /* A game's own mistake stays its own. */ } }
       return;
     }
+    if (event.data.type === "asset" && typeof event.data.id === "string") {
+      const resolve = assetWaiters.get(event.data.id);
+      assetWaiters.delete(event.data.id);
+      resolve?.(event.data.blob instanceof Blob ? event.data.blob : null);
+      return;
+    }
     if (event.data.type === "read-screen" && typeof event.data.requestId === "string") {
       const top = Number(event.data.top) || 0;
       const bottom = Number.isFinite(Number(event.data.bottom)) ? Number(event.data.bottom) : Number.POSITIVE_INFINITY;
@@ -418,12 +593,12 @@ function bridge(savedStorage: Record<string, string>) {
 
 /**
  * The page as the frame loads it: the bridge goes first in the head, after any doctype so the page keeps its rendering mode.
- * `storage` is what the page last kept in its localStorage.
+ * `storage` is what the page last kept in its localStorage; `assets` is whether the page may ask for the files beside it.
  */
-export function htmlFrameDocument(html: string, storage: Record<string, string> = {}) {
+export function htmlFrameDocument(html: string, storage: Record<string, string> = {}, assets = false) {
   // Escaped so the page's saved text can't close the script early.
   const saved = JSON.stringify(readStorageData(storage) ?? {}).replace(/</gu, "\\u003c").replace(/\u2028/gu, "\\u2028").replace(/\u2029/gu, "\\u2029");
-  const script = `<script>(${bridge.toString()})(${saved});</script>`;
+  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"});</script>`;
   const head = /<head(?:\s[^>]*)?>/iu.exec(html);
   if (head) return html.slice(0, head.index + head[0].length) + script + html.slice(head.index + head[0].length);
   const root = /<html(?:\s[^>]*)?>/iu.exec(html);
