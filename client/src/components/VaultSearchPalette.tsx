@@ -14,7 +14,7 @@ import "./VaultSearchPalette.css";
 
 export type VaultSearchOpenMode = "here" | "beside";
 type Entry = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit } | { kind: "answer"; hit: { key: string } }
-  | { kind: "feature"; hit: { key: string; feature: FeatureInfo } };
+  | { kind: "feature"; hit: { key: string; feature: FeatureInfo } } | { kind: "create"; hit: { key: string; title: string } };
 const ANSWER_ENTRY: Entry = { kind: "answer", hit: { key: "answer:vault" } };
 
 const PASSAGE_PAGE = 30;
@@ -56,11 +56,28 @@ const entryKey = (entry: Entry) => entry.hit.key;
 export const cloudPathOf = (entry: Entry) => entry.kind === "document"
   ? entry.hit.target.kind === "cloud" ? entry.hit.target.path : null
   : entry.kind === "passage" ? entry.hit.cloudPath ?? null : null;
+/** The title a new document gets from what was typed in the switcher. */
+export const newDocumentTitle = (query: string) => query.replace(/\s+/gu, " ").trim().slice(0, 200);
+const sameTitle = (a: string, b: string) => newDocumentTitle(a).toLocaleLowerCase() === newDocumentTitle(b).toLocaleLowerCase();
+/** The switcher puts the exact title first, then titles that start with what was typed, newest first within each. */
+export function rankTitles(hits: VaultSearchDocumentHit[], query: string) {
+  const typed = newDocumentTitle(query).toLocaleLowerCase();
+  if (!typed) return hits;
+  const rank = (title: string) => { const folded = newDocumentTitle(title).toLocaleLowerCase(); return folded === typed ? 0 : folded.startsWith(typed) ? 1 : 2; };
+  return hits.map((hit, index) => ({ hit, index, rank: rank(hit.title) })).sort((a, b) => a.rank - b.rank || a.index - b.index).map(({ hit }) => hit);
+}
+/** How long Enter waits for titles still coming from the cloud before it creates a document. */
+const CREATE_WAIT_MS = 1500;
 const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform);
 
-/** Cmd+K: one box over the whole vault. Titles first, then passages; Enter opens here, Cmd+Enter beside. */
-export default function VaultSearchPalette({ isOpen, onClose: closePalette, query: savedQuery, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onExplore, onKeepOpen, onAnswer, onShowOnMap }: {
+/**
+ * Cmd+K: one box over the whole vault. Titles first, then passages; Enter opens here, Cmd+Enter beside.
+ * Cmd+O (variant "switcher"): titles only, like a quick switcher. When no title matches, Enter creates
+ * a document with the typed title; Shift+Enter always does.
+ */
+export default function VaultSearchPalette({ isOpen, variant = "search", onClose: closePalette, query: savedQuery, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onCreateDocument, onExplore: exploreHandler, onKeepOpen: keepOpenHandler, onAnswer: answerHandler, onShowOnMap: showOnMapHandler }: {
   isOpen: boolean;
+  variant?: "search" | "switcher";
   onClose: () => void;
   query: string;
   onQueryChange: (value: string) => void;
@@ -71,6 +88,8 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
   openingPath?: string | null;
   onOpenDocument: (hit: VaultSearchDocumentHit, mode: VaultSearchOpenMode) => void;
   onOpenPassage: (hit: VaultSearchPassageHit, mode: VaultSearchOpenMode) => void;
+  /** The switcher creates and opens a document with this title. */
+  onCreateDocument?: (title: string) => void;
   /** Opens the filters-and-connections view with the same query. */
   onExplore?: () => void;
   /** Keeps these results open beside the documents. */
@@ -82,7 +101,14 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
 }) {
   // What is typed stays here, so a keystroke redraws only the search box and not
   // the whole workspace; the workspace hears the query when search closes or hands off.
+  const switcher = variant === "switcher";
+  // The switcher only finds and makes documents; asking, keeping and mapping belong to Cmd+K.
+  const onKeepOpen = switcher ? undefined : keepOpenHandler;
+  const onExplore = switcher ? undefined : exploreHandler;
+  const onAnswer = switcher ? undefined : answerHandler;
+  const onShowOnMap = switcher ? undefined : showOnMapHandler;
   const [query, setQuery] = useState(savedQuery);
+  const [pendingEnter, setPendingEnter] = useState<{ mode: VaultSearchOpenMode; until: number } | null>(null);
   const [shownSavedQuery, setShownSavedQuery] = useState(savedQuery);
   if (savedQuery !== shownSavedQuery) { setShownSavedQuery(savedQuery); setQuery(savedQuery); }
   const keepQuery = () => { if (query !== savedQuery) onQueryChange(query); };
@@ -137,22 +163,28 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
   }, [isOpen]);
 
   const searching = !!query.trim();
-  const documents = results?.documents ?? [];
-  const passages = results?.passages ?? [];
-  const related = searching ? results?.related ?? [] : [];
-  const found = searching ? results?.found ?? null : null;
+  const documents = switcher ? rankTitles(results?.documents ?? [], query) : results?.documents ?? [];
+  const passages = switcher ? [] : results?.passages ?? [];
+  const related = searching && !switcher ? results?.related ?? [] : [];
+  const found = searching && !switcher ? results?.found ?? null : null;
   const foundEntries = found?.hits ?? [];
   const canAnswer = !!onAnswer && query.trim().length >= 3;
   // A question puts the answer first; otherwise it follows what was found.
   const answerFirst = canAnswer && (found?.question ?? /\?\s*$/u.test(query));
   // Typing a feature's name (or a word for it) offers to turn it on, after the titles that match.
   const features = useFeatures();
-  const featureEntries: Entry[] = searching ? matchFeatures(query).map((feature) => ({ kind: "feature" as const, hit: { key: `feature:${feature.id}`, feature } })) : [];
+  const featureEntries: Entry[] = searching && !switcher ? matchFeatures(query).map((feature) => ({ kind: "feature" as const, hit: { key: `feature:${feature.id}`, feature } })) : [];
   const shownPassages = passages.slice(0, passageLimit);
   const featuresEarly = !documents.length && !foundEntries.length;
   // A one-letter search can match thousands of titles; drawing them all would stall typing.
   const shownDocuments = documents.slice(0, documentLimit);
+  const typedTitle = newDocumentTitle(query);
+  const createEntry: Entry | null = switcher && onCreateDocument && typedTitle && !documents.some((hit) => sameTitle(hit.title, typedTitle))
+    ? { kind: "create", hit: { key: "create:document", title: typedTitle } } : null;
+  // Nothing by that title: Enter makes it. Titles that only contain the words still come first.
+  const createFirst = !!createEntry && !documents.length;
   const entries: Entry[] = [
+    ...(createFirst ? [createEntry] : []),
     ...(answerFirst ? [ANSWER_ENTRY] : []),
     ...foundEntries,
     // With no titles to show, a feature typed by name comes before asking the vault.
@@ -162,6 +194,7 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
     ...(featuresEarly ? [] : featureEntries),
     ...related.map((hit) => ({ kind: "passage" as const, hit })),
     ...shownPassages.map((hit) => ({ kind: "passage" as const, hit })),
+    ...(createEntry && !createFirst ? [createEntry] : []),
   ];
   const selected = entries.find((entry) => entryKey(entry) === selectedKey) ?? entries[0] ?? null;
   const selectedIndex = selected ? entries.indexOf(selected) : -1;
@@ -175,9 +208,31 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
       .find((element) => element.dataset.searchKey === selectedEntryKey)?.scrollIntoView?.({ block: "nearest" });
   }, [selectedEntryKey]);
 
+  // Enter pressed before the search caught up with the typing acts once the titles are in, so a
+  // document that exists (perhaps only in the cloud) opens instead of being made twice.
+  const settling = stale || results === null || results.complete === false;
+  useEffect(() => {
+    if (!pendingEnter || !isOpen) return;
+    if (stale || results === null || (results.complete === false && Date.now() < pendingEnter.until)) {
+      const timer = setTimeout(() => setPendingEnter((pending) => pending && { ...pending }), 100);
+      return () => clearTimeout(timer);
+    }
+    setPendingEnter(null);
+    if (selected) open(selected, pendingEnter.mode);
+  });
+
   if (!isOpen) return null;
 
+  function create(title: string) {
+    if (!onCreateDocument || !title) return;
+    // The next Cmd+O starts empty instead of on the title just made.
+    setQuery("");
+    if (savedQuery) onQueryChange("");
+    onCreateDocument(title);
+  }
+
   function open(entry: Entry, mode: VaultSearchOpenMode) {
+    if (entry.kind === "create") { create(entry.hit.title); return; }
     if (entry.kind === "answer") { onAnswer?.(query.trim()); return; }
     if (entry.kind === "feature") { setFeature(entry.hit.feature.id, !features[entry.hit.feature.id]); return; }
     if (entry.kind === "document") onOpenDocument(entry.hit, mode);
@@ -192,6 +247,16 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
       event.preventDefault();
       const next = event.key === "ArrowDown" ? Math.min(selectedIndex + 1, entries.length - 1) : Math.max(selectedIndex - 1, 0);
       setSelectedKey(entryKey(entries[next]));
+      return;
+    }
+    if (event.key === "Enter" && event.shiftKey && switcher && onCreateDocument && typedTitle) {
+      event.preventDefault();
+      create(typedTitle);
+      return;
+    }
+    if (event.key === "Enter" && switcher && searching && settling && (event.target === inputRef.current || (event.target as HTMLElement).dataset.searchKey)) {
+      event.preventDefault();
+      setPendingEnter({ mode: event.metaKey || event.ctrlKey ? "beside" : "here", until: Date.now() + CREATE_WAIT_MS });
       return;
     }
     if (event.key === "Enter" && event.shiftKey && onKeepOpen && query.trim()) {
@@ -225,6 +290,13 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
 
   const preview = (() => {
     if (!selected) return null;
+    if (selected.kind === "create") {
+      return <>
+        <p className="vault-search-preview-crumb">New document</p>
+        <h3>{selected.hit.title}</h3>
+        <p className="vault-search-preview-text">{documents.length ? "No document has exactly this title." : "No document has this title yet."} Press Enter to create it and start writing.</p>
+      </>;
+    }
     if (selected.kind === "answer") {
       return <>
         <p className="vault-search-preview-crumb">Answer from my vault</p>
@@ -267,9 +339,21 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
     </>;
   })();
 
-  const status = !searching ? "Recent documents. Type to search titles and passages in your whole vault."
+  const status = switcher ? (!searching ? "Recent documents. Type a title to open it, or a new one to create it."
+      : stale ? "Searching…"
+      : !documents.length ? (createEntry ? `No title matches. Enter creates “${createEntry.hit.title}”` : "No title matches.")
+      : `${documents.length} ${documents.length === 1 ? "title" : "titles"}${results?.complete === false ? " so far" : ""}${createEntry ? `. Shift+Enter creates “${createEntry.hit.title}”` : ""}`)
+    : !searching ? "Recent documents. Type to search titles and passages in your whole vault."
     : stale ? "Searching…"
     : `${foundEntries.length ? `Found ${foundEntries.length === 1 ? `“${foundEntries[0].hit.title}”` : `${foundEntries.length} documents on this`}. ` : ""}${documents.length} ${documents.length === 1 ? "title" : "titles"}${related.length ? `, ${related.length} best ${related.length === 1 ? "match" : "matches"}` : ""} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
+
+  const createRow = createEntry ? <>
+    {createFirst ? null : <li className="vault-search-section" role="presentation"><span>New</span><span/></li>}
+    {row(createEntry, <>
+      <span className="vault-search-row-title vault-search-create-title"><span aria-hidden="true">+</span> Create “{createEntry.hit.title}”</span>
+      <span className="vault-search-meta">{createFirst ? "No document has this title yet" : <>New document · <kbd>⇧↵</kbd></>}</span>
+    </>)}
+  </> : null;
 
   const featureRows = featureEntries.length ? <>
     <li className="vault-search-section" role="presentation"><span>Features</span><span>{featureEntries.length}</span></li>
@@ -281,24 +365,26 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
 
   const modal = <div className="vault-search-backdrop" role="presentation" onPointerDown={(event) => event.stopPropagation()} onMouseDown={(event) => event.stopPropagation()}
     onClick={(event) => { event.stopPropagation(); if (event.target === event.currentTarget) onClose(); }}>
-    <section aria-label="Search your vault" aria-modal="true" className="vault-search" ref={dialogRef} role="dialog" onKeyDown={onKeyDown}>
+    <section aria-label={switcher ? "Open or create a document" : "Search your vault"} aria-modal="true" className={`vault-search${switcher ? " is-switcher" : ""}`} ref={dialogRef} role="dialog" onKeyDown={onKeyDown}>
       <label className="vault-search-input">
         <SearchIcon/>
-        <span className="vault-search-hidden">Search titles and passages in your whole vault</span>
+        <span className="vault-search-hidden">{switcher ? "Find or create a document by title" : "Search titles and passages in your whole vault"}</span>
         <input ref={inputRef} aria-activedescendant={selected ? `${id}-${entryKey(selected)}` : undefined} aria-controls={`${id}-results`}
-          aria-expanded="true" autoComplete="off" onChange={(event) => setQuery(event.target.value)} placeholder="Search titles and passages in your whole vault…"
+          aria-expanded="true" autoComplete="off" onChange={(event) => { setPendingEnter(null); setQuery(event.target.value); }}
+          placeholder={switcher ? "Find or create a document…" : "Search titles and passages in your whole vault…"}
           role="combobox" type="search" value={query}/>
         <button aria-label="Close search" className="vault-search-close" onClick={onClose} type="button"><kbd>Esc</kbd></button>
       </label>
-      <div aria-label="Narrow the search" className="vault-search-scopes" role="group">
+      {switcher ? null : <div aria-label="Narrow the search" className="vault-search-scopes" role="group">
         {SCOPES.map((option) => <button aria-pressed={scope === option.id} key={option.id} onClick={() => { setScope(option.id); inputRef.current?.focus(); }}
           title={option.id === "family" && currentFamilyTitle ? `Only ${currentFamilyTitle} and the documents under it` : undefined} type="button">
           {option.id === "family" && currentFamilyTitle ? `In ${currentFamilyTitle}` : option.label}</button>)}
-      </div>
+      </div>}
       <div className="vault-search-body">
         <div className="vault-search-list" ref={listRef}>
           <p className="vault-search-hidden" role="status">{status}</p>
           <ul aria-label="Search results" id={`${id}-results`} role="listbox">
+            {createFirst ? createRow : null}
             {answerFirst ? row(ANSWER_ENTRY, <>
               <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Answer from my vault</span>
               <span className="vault-search-meta">A short answer that cites your documents</span>
@@ -333,15 +419,18 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
               <span className="vault-search-row-title">{hit.title}{hit.cloudPath ? <span className="vault-search-cloud">{openingPath === hit.cloudPath ? "Opening…" : "In cloud"}</span> : null}<span className="vault-search-meta">{meta(hit)}</span></span>
               <span className="vault-search-snippet">{highlight(hit.preview, searchedQuery)}</span>
             </>))}
+            {createFirst ? null : createRow}
           </ul>
           {passages.length > shownPassages.length ? <button className="vault-search-more" onClick={() => setPassageLimit((limit) => limit + PASSAGE_PAGE)} type="button">Show {Math.min(PASSAGE_PAGE, passages.length - shownPassages.length)} more passages</button> : null}
           {searching && !stale && !entries.length && results?.complete === false ? <p className="vault-search-empty">Searching your whole vault…</p> : null}
-          {searching && !stale && !entries.length && results?.complete !== false ? <p className="vault-search-empty">Nothing in your vault matches “{query.trim()}”{scope === "all" ? "" : " in this scope"}. {scope === "all" ? "Try a shorter word." : "Try Anywhere."}</p> : null}
+          {searching && !stale && !entries.length && results?.complete !== false && !switcher ? <p className="vault-search-empty">Nothing in your vault matches “{query.trim()}”{scope === "all" ? "" : " in this scope"}. {scope === "all" ? "Try a shorter word." : "Try Anywhere."}</p> : null}
         </div>
         <aside aria-label="Preview" className="vault-search-preview">
           {preview}
           {selected?.kind === "feature" ? <div className="vault-search-actions">
             <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">{features[selected.hit.feature.id] ? "Turn off" : "Turn on"} <kbd>↵</kbd></button>
+          </div> : selected?.kind === "create" ? <div className="vault-search-actions">
+            <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">Create <kbd>↵</kbd></button>
           </div> : selected?.kind === "answer" ? <div className="vault-search-actions">
             <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">Answer <kbd>↵</kbd></button>
           </div> : selected ? <div className="vault-search-actions">
@@ -352,7 +441,7 @@ export default function VaultSearchPalette({ isOpen, onClose: closePalette, quer
       </div>
       <footer className="vault-search-footer">
         <span aria-hidden="true">{status}</span>
-        <span className="vault-search-keys"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open here · <kbd>{mod}↵</kbd> open beside{onKeepOpen ? <> · <kbd>⇧↵</kbd> keep open</> : null}</span>
+        <span className="vault-search-keys"><kbd>↑</kbd><kbd>↓</kbd> move · <kbd>↵</kbd> open here · <kbd>{mod}↵</kbd> open beside{onKeepOpen ? <> · <kbd>⇧↵</kbd> keep open</> : null}{switcher && onCreateDocument ? <> · <kbd>⇧↵</kbd> create</> : null}</span>
         {onShowOnMap && searching && !stale && Object.keys(spotlightFromSearch(results)).length
           ? <button className="vault-search-explore" onClick={() => onShowOnMap(query.trim(), spotlightFromSearch(results))} title="Light what was found on the Map" type="button">Show on Map</button> : null}
         {onKeepOpen && searching ? <button className="vault-search-explore" onClick={() => { keepQuery(); onKeepOpen(query, scope); }} title="Shift+Enter" type="button">Keep results open</button> : null}

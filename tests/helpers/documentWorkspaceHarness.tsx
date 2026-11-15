@@ -193,6 +193,7 @@ try {
     assert(shortcut.defaultPrevented, "Global search suppresses the browser's Open File action.");
     const searchInput = browser.document.querySelector('.vault-search input[type="search"]');
     assert(searchInput, `${modifier}+O opens global search from the document editor.`);
+    assert(browser.document.querySelector(".vault-search.is-switcher"), `${modifier}+O opens the title-only switcher, not Cmd+K's full search.`);
     assert.equal(browser.document.activeElement, searchInput, "Global search is ready to type into.");
     assert.deepEqual(latest.conversations[mainId].document, contentBeforeSidebarShortcuts, "Opening global search does not edit the document.");
     await act(async () => searchInput.dispatchEvent(new browser.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true })));

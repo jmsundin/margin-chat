@@ -1016,6 +1016,8 @@ function WorkspaceAppContent({
     },
   });
   const [searchModalOpen, setSearchModalOpen] = useState(false);
+  // Cmd+K searches the whole vault; Cmd+O is the title-only switcher that can also make a document.
+  const [searchVariant, setSearchVariant] = useState<"search" | "switcher">("search");
   /** The older filters-and-connections view, reached from the search box. */
   const [searchExploreOpen, setSearchExploreOpen] = useState(false);
   /** Search results kept open beside the documents. */
@@ -2223,6 +2225,7 @@ function WorkspaceAppContent({
     function handleKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
+        setSearchVariant("search");
         setSearchModalOpen(true);
       }
     }
@@ -2234,7 +2237,13 @@ function WorkspaceAppContent({
     };
   }, []);
 
-  const openSearchFromShortcut = useEffectEvent(() => handleOpenSearch());
+  const openSearchFromShortcut = useEffectEvent(() => handleOpenSearch("switcher"));
+  useEffect(() => {
+    // The desktop app's File menu sends Cmd+O here, since its menu takes the key first.
+    const openSwitcher = () => openSearchFromShortcut();
+    window.addEventListener("margin:quick-switcher", openSwitcher);
+    return () => window.removeEventListener("margin:quick-switcher", openSwitcher);
+  }, []);
   useEffect(() => {
     function handleSearchShortcut(event: KeyboardEvent) {
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.isComposing || event.key.toLowerCase() !== "o") return;
@@ -4843,7 +4852,7 @@ function WorkspaceAppContent({
     });
   }
 
-  function handleCreateMainConversation(kind: "document" | "board" = "document") {
+  function handleCreateMainConversation(kind: "document" | "board" = "document", title?: string) {
     const now = new Date().toISOString();
     const conversationId = createId("conversation");
     const created = createMainConversation({
@@ -4853,7 +4862,7 @@ function WorkspaceAppContent({
       serviceId: state.defaultServiceId,
     });
     const mainConversation = kind === "board" ? makeBoardDocument(created, now) : created;
-    mainConversation.title = kind === "board" ? "Untitled board" : "Untitled document";
+    mainConversation.title = title?.trim() || (kind === "board" ? "Untitled board" : "Untitled document");
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     setSearchModalOpen(false);
@@ -5121,7 +5130,8 @@ function WorkspaceAppContent({
     return childConversationId;
   }
 
-  function handleOpenSearch() {
+  function handleOpenSearch(variant: "search" | "switcher" = "search") {
+    setSearchVariant(variant);
     if (isMobileViewport) {
       setLeftSidebarOpen(false);
       setState((current) =>
@@ -7028,7 +7038,7 @@ function WorkspaceAppContent({
                 setProfileInitialTab(null);
                 setProfileModalOpen(true);
               }}
-              onOpenSearch={handleOpenSearch}
+              onOpenSearch={() => handleOpenSearch()}
               flashcardsDue={flashcards.totalCards ? flashcards.dueCount : null}
               onOpenFlashcards={!features.flashcards ? undefined : () => { setFlashcardReview({ title: "All cards" }); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onPinThread={handlePinThread}
@@ -7556,6 +7566,8 @@ function WorkspaceAppContent({
             currentConversationId={activeConversation?.id}
             currentFamilyTitle={activeConversation ? state.conversations[getConversationRootId(state.conversations, activeConversation.id) ?? activeConversation.id]?.title : undefined}
             isOpen={searchModalOpen}
+            variant={searchVariant}
+            onCreateDocument={(title) => handleCreateMainConversation("document", title)}
             onClose={handleCloseSearch}
             onExplore={() => { setSearchModalOpen(false); setSearchExploreOpen(true); }}
             onKeepOpen={(query, scope) => { handleCloseSearch(); setMainViewMode("chat"); setSearchPanel({ query, scope }); }}

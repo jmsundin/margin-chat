@@ -51,3 +51,4 @@
   .vault-search-preview, .vault-search-keys { display: none; }
 }
 .vault-search-answer-title > span { color: var(--accent); }
+.vault-search-create-title > span { color: var(--accent); font-weight: 600; }
