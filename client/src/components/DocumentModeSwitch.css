@@ -10,7 +10,7 @@
 .document-mode-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex-shrink: 0; }
 [data-mode="write"] > .document-mode-dot { background: var(--ink); }
 [data-mode="read"] > .document-mode-dot { background: #b7791f; }
-[data-mode="code"] > .document-mode-dot { background: #4f7a63; }
+[data-mode="code"] > .document-mode-dot, [data-mode="learn"] > .document-mode-dot { background: #4f7a63; }
 [data-mode="language"] > .document-mode-dot, [data-mode="map"] > .document-mode-dot { background: #3c6b94; }
 [data-mode="board"] > .document-mode-dot { background: #c08a2e; }
 [data-mode="review"] > .document-mode-dot { background: #b4483a; }
