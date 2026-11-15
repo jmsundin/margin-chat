@@ -10,6 +10,11 @@ import type { CodeCellSibling } from "./languages";
  */
 export interface CodeCellScope {
   cells: ReadonlyArray<CodeCellSibling>;
+  /**
+   * The document these cells are in. With it, a live HTML cell that runs scripts (a small game in a note) keeps
+   * what it saves and can ask for the note's questions, as a played HTML page does.
+   */
+  documentId?: string;
   /** Index in `cells` of the first code block in this piece of Markdown. */
   offset: number;
   /** Saves the `index`-th code block of this piece; false when it changed elsewhere and was left alone. */

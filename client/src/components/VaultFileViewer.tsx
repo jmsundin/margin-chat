@@ -11,7 +11,7 @@ import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
 import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
 import { registerHtmlScreen } from "../lib/htmlScreens";
 import { getPlayContent, hasPlayContent, subscribePlayContent } from "../lib/playContent";
-import { decodeHtmlPageData, encodeHtmlPageData, htmlPageDataPath, newerHtmlPageData, sameHtmlPageData, type HtmlPageData } from "../lib/htmlPageData";
+import { decodeHtmlPageData, encodeHtmlPageData, htmlPageDataPath, loadHtmlStorage, newerHtmlPageData, saveHtmlStorage, sameHtmlPageData, type HtmlPageData } from "../lib/htmlPageData";
 import {
   imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, pdfPageFromSourceId, pdfPageSourceId, pdfPageText, vaultFileTitle,
   type ImageArea,
@@ -672,19 +672,6 @@ function ImageView(props: VaultFileViewerProps & { blob: Blob }) {
 const MAX_CREEPING_GROWTHS = 6;
 const MAX_FRAME_HEIGHT = 60_000;
 const FRAME_BORDERS = 2;
-
-/** Where this device keeps what a page saved in its localStorage, per page document. */
-const htmlStorageKey = (documentId: string) => `margin-chat:html-page-storage:${documentId}`;
-
-/** This device's copy of what a page saved: read at once when the page opens, and the copy that works offline. */
-function loadHtmlStorage(documentId: string): HtmlPageData | null {
-  try { return decodeHtmlPageData(localStorage.getItem(htmlStorageKey(documentId))); } catch { return null; }
-}
-
-function saveHtmlStorage(documentId: string, value: HtmlPageData) {
-  try { localStorage.setItem(htmlStorageKey(documentId), encodeHtmlPageData(value)); }
-  catch { /* Without room here the vault's copy still holds it. */ }
-}
 
 /** How long a page's saves gather before they go into the vault; a game can save on every answer. */
 const PAGE_DATA_SAVE_DELAY = 4_000;

@@ -17,6 +17,9 @@ import { runCode, type RunEvent, type RunResult } from "../lib/codeRunner/runner
 import { codeSuggestions } from "../lib/codeRunner/ghostText";
 import { requestCodeSuggestion } from "../lib/api";
 import { ApiError } from "../lib/apiError";
+import { HTML_FRAME_SANDBOX, htmlFrameDocument, readHtmlFrameMessage } from "../lib/htmlDocuments";
+import { loadHtmlStorage, saveHtmlStorage } from "../lib/htmlPageData";
+import { getPlayContent, hasPlayContent, subscribePlayContent } from "../lib/playContent";
 import "./CodeCell.css";
 
 /**
@@ -267,7 +270,7 @@ export default function CodeCell({ language, source, index, dark }: CodeCellProp
     </div>}
     {page && (page.attached
       ? <div className="code-cell-hint">These styles show in the HTML preview above.</div>
-      : <CodePreview html={page.html} css={page.css} dark={dark} sample={page.htmlIndex === null} />)}
+      : <CodePreview html={page.html} css={page.css} dark={dark} sample={page.htmlIndex === null} documentId={scope?.documentId} />)}
   </div>;
 }
 
@@ -278,25 +281,47 @@ function formatMs(ms: number) {
 /** Reports the page's height so the frame grows with it; the frame has no origin, so the parent can't measure it. */
 const SIZE_SCRIPT = `<script>(function(){var last=0;function send(){var h=Math.ceil(document.documentElement.scrollHeight);if(h!==last){last=h;parent.postMessage({codePreviewHeight:h},"*");}}addEventListener("load",send);new ResizeObserver(send).observe(document.documentElement);setInterval(send,1000);})();<\/script>`;
 
-function CodePreview({ html, css, dark, sample }: { html: string; css: string[]; dark: boolean; sample: boolean }) {
+/** A page with scripts of its own is a small game or tool, not only markup to look at. */
+const RUNS_SCRIPTS = /<script[\s>]/iu;
+const MAX_PREVIEW_HEIGHT = 560;
+const MAX_PLAY_HEIGHT = 900;
+
+function CodePreview({ html, css, dark, sample, documentId }: { html: string; css: string[]; dark: boolean; sample: boolean; documentId?: string }) {
   const frame = useRef<HTMLIFrameElement>(null);
-  const [doc, setDoc] = useState(() => previewDocument(html, css, dark) + SIZE_SCRIPT);
+  // In a document, a page that runs scripts gets what a played HTML page gets: storage that lasts and the note's questions.
+  const plays = Boolean(documentId) && !sample && RUNS_SCRIPTS.test(html);
+  const build = () => plays
+    ? htmlFrameDocument(previewDocument(html, css, dark), loadHtmlStorage(documentId!)?.data ?? {})
+    : previewDocument(html, css, dark) + SIZE_SCRIPT;
+  const [doc, setDoc] = useState(build);
   const [height, setHeight] = useState(160);
   useEffect(() => {
-    const timer = setTimeout(() => setDoc(previewDocument(html, css, dark) + SIZE_SCRIPT), PREVIEW_DELAY_MS);
+    const timer = setTimeout(() => setDoc(build()), PREVIEW_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [html, css, dark]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [html, css, dark, plays, documentId]);
   useEffect(() => {
+    const sendContent = () => {
+      if (!documentId || !plays || !hasPlayContent(documentId)) return;
+      const { questions, decks } = getPlayContent(documentId);
+      frame.current?.contentWindow?.postMessage({ marginHtml: 1, type: "content", questions, decks }, "*");
+    };
     const onMessage = (event: MessageEvent) => {
       if (event.source !== frame.current?.contentWindow) return;
       const value = (event.data as { codePreviewHeight?: unknown })?.codePreviewHeight;
-      if (typeof value === "number" && Number.isFinite(value)) setHeight(Math.min(560, Math.max(60, value)));
+      if (typeof value === "number" && Number.isFinite(value)) { setHeight(Math.min(MAX_PREVIEW_HEIGHT, Math.max(60, value))); return; }
+      if (!plays || !documentId) return;
+      const message = readHtmlFrameMessage(event.data);
+      if (message?.type === "size") setHeight(Math.min(MAX_PLAY_HEIGHT, Math.max(60, Math.ceil(message.height))));
+      else if (message?.type === "storage") saveHtmlStorage(documentId, { savedAt: Date.now(), data: message.data });
+      else if (message?.type === "content-request") sendContent();
     };
     window.addEventListener("message", onMessage);
-    return () => window.removeEventListener("message", onMessage);
-  }, []);
+    const unsubscribe = documentId && plays ? subscribePlayContent(documentId, sendContent) : undefined;
+    return () => { window.removeEventListener("message", onMessage); unsubscribe?.(); };
+  }, [documentId, plays]);
   return <div className="code-cell-preview">
     <div className="code-cell-preview-label">{sample ? "Preview on a sample page" : "Preview"}</div>
-    <iframe ref={frame} title="HTML preview" sandbox="allow-scripts" srcDoc={doc} style={{ height }} />
+    <iframe ref={frame} title="HTML preview" sandbox={plays ? HTML_FRAME_SANDBOX : "allow-scripts"} srcDoc={doc} style={{ height }} />
   </div>;
 }
