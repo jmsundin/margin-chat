@@ -20,29 +20,31 @@ export interface FeatureInfo {
   description: string;
   /** Where its controls appear when it is on, in the words the app uses. */
   adds: string;
+  /** Other words people may type in ⌘K looking for it. */
+  keywords: readonly string[];
 }
 
 export const FEATURES: readonly FeatureInfo[] = [
   { id: "roadmaps", group: "Think", name: "Roadmaps", description: "Learning paths drawn over your map, with AI drafts and Dive deeper.",
-    adds: "Roadmaps on the map, flags where roadmaps start, “Make a roadmap from this…” in a document's ⋯ menu" },
+    adds: "Roadmaps on the map, flags where roadmaps start, “Make a roadmap from this…” in a document's ⋯ menu", keywords: ["roadmap", "learning path", "path", "dive deeper", "plan"] },
   { id: "claims", group: "Think", name: "Claim checking", description: "Find the claims a document makes and check each against your other notes.",
-    adds: "“Check claims…” in a document's ⋯ menu" },
+    adds: "“Check claims…” in a document's ⋯ menu", keywords: ["claim", "fact check", "check claims", "ratchet", "evidence"] },
   { id: "boards", group: "Think", name: "Boards", description: "A full-page canvas to draw and think on.",
-    adds: "“New board” in the sidebar's ⋯ and + menus, “Board” in a document's ⋯ menu" },
+    adds: "“New board” in the sidebar's ⋯ and + menus, “Board” in a document's ⋯ menu", keywords: ["board", "canvas", "whiteboard", "draw", "drawing"] },
   { id: "flashcards", group: "Learn", name: "Flashcards and quiz", description: "Lines like “Question :: Answer” become cards you review with spaced repetition.",
-    adds: "Quiz on the selection menu, “Make flashcards…” and “Review cards” in a document's ⋯ menu, Review in the sidebar" },
+    adds: "Quiz on the selection menu, “Make flashcards…” and “Review cards” in a document's ⋯ menu, Review in the sidebar", keywords: ["flashcard", "cards", "quiz", "review", "spaced repetition", "anki", "study"] },
   { id: "voice", group: "Capture", name: "Voice typing", description: "Talk instead of typing in any text field.",
-    adds: "The mic button in text fields and Hold Space to talk" },
+    adds: "The mic button in text fields and Hold Space to talk", keywords: ["voice", "dictation", "dictate", "mic", "microphone", "speech", "talk"] },
   { id: "groups", group: "Organize", name: "Groups", description: "Collect documents into named groups.",
-    adds: "A Groups tab in the sidebar, “New group” in the sidebar's ⋯ menu, “Group” in a document's ⋯ menu" },
+    adds: "A Groups tab in the sidebar, “New group” in the sidebar's ⋯ menu, “Group” in a document's ⋯ menu", keywords: ["group", "folder", "collection"] },
   { id: "spaces", group: "Organize", name: "Spaces", description: "Save a set of open documents to come back to.",
-    adds: "A Spaces tab in the sidebar, “Add to space” in a document's ⋯ menu" },
+    adds: "A Spaces tab in the sidebar, “Add to space” in a document's ⋯ menu", keywords: ["space", "session", "workspace"] },
   { id: "outline", group: "Organize", name: "Outline", description: "The open document's headings, to jump between.",
-    adds: "An Outline tab in the sidebar" },
+    adds: "An Outline tab in the sidebar", keywords: ["outline", "headings", "table of contents", "toc"] },
   { id: "tiles", group: "Organize", name: "Tile view", description: "Every open document side by side as tiles.",
-    adds: "The page and tiles switch at the top of the sidebar" },
+    adds: "The page and tiles switch at the top of the sidebar", keywords: ["tile", "tiles", "grid", "side by side"] },
   { id: "mapTools", group: "Think", name: "More map tools", description: "Other ways to look at the map: themes, evidence, colours, line filters and the explorer.",
-    adds: "“Explore groups and sources”, views, colours and lines in the map's ⋯ menu" },
+    adds: "“Explore groups and sources”, views, colours and lines in the map's ⋯ menu", keywords: ["map", "explore", "themes", "evidence", "colour", "color", "lines", "wikipedia", "web source"] },
 ];
 
 export const FEATURE_GROUPS = ["Think", "Learn", "Capture", "Organize"] as const;
@@ -129,6 +131,15 @@ export function useFeatures(): FeatureSet {
   return useSyncExternalStore(subscribeFeatures, readFeatures, () => ALL_OFF);
 }
 
+/** Features whose name or keywords match what was typed in ⌘K. */
+export function matchFeatures(query: string): FeatureInfo[] {
+  const text = query.trim().toLocaleLowerCase();
+  if (text.length < 3) return [];
+  // Typing the start of a name or keyword finds it ("flash", "dictat"); a plural finds it too ("boards").
+  return FEATURES.filter((feature) => [feature.name.toLocaleLowerCase(), ...feature.keywords]
+    .some((word) => word.startsWith(text) || text === `${word}s` || text === `${word}es`));
+}
+
 export function useFeature(id: FeatureId): boolean {
   return useFeatures()[id];
 }
@@ -140,4 +151,35 @@ export function useFeature(id: FeatureId): boolean {
  */
 export function featuresFromUsage(usage: Partial<Record<FeatureId, boolean>>): FeatureSet {
   return { ...ALL_OFF, ...usage };
+}
+
+/**
+ * A quiet line on a page whose content uses a feature that is off ("This note has flashcards…").
+ * Dismissing it, or turning the feature on, ends it for that feature on every device.
+ */
+export const FEATURE_HINTS_KEY = "margin-chat:feature-hints-dismissed";
+let hintsCache: { raw: string | null; ids: ReadonlySet<string> } | null = null;
+function readDismissedHints(): ReadonlySet<string> {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(FEATURE_HINTS_KEY); } catch { raw = hintsCache?.raw ?? null; }
+  if (hintsCache && hintsCache.raw === raw) return hintsCache.ids;
+  let ids: unknown = [];
+  try { ids = raw ? JSON.parse(raw) : []; } catch { ids = []; }
+  hintsCache = { raw, ids: new Set(Array.isArray(ids) ? ids.filter((id): id is string => typeof id === "string") : []) };
+  return hintsCache.ids;
+}
+const hintListeners = new Set<() => void>();
+export function dismissFeatureHint(id: FeatureId) {
+  const next = [...new Set([...readDismissedHints(), id])];
+  writeSyncedSetting(FEATURE_HINTS_KEY, JSON.stringify(next));
+  hintListeners.forEach((listener) => listener());
+}
+function subscribeHints(listener: () => void) {
+  hintListeners.add(listener);
+  const stop = onSyncedSettingChange([FEATURE_HINTS_KEY], listener);
+  return () => { hintListeners.delete(listener); stop(); };
+}
+const NO_HINTS: ReadonlySet<string> = new Set();
+export function useDismissedFeatureHints(): ReadonlySet<string> {
+  return useSyncExternalStore(subscribeHints, readDismissedHints, () => NO_HINTS);
 }

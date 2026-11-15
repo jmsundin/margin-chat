@@ -47,7 +47,8 @@ import {
   type CSSProperties,
 } from "react";
 import BranchRail from "./components/BranchRail";
-import { featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, unchosenFeatures, useFeatures } from "./lib/features";
+import "./components/FeatureSettings.css";
+import { FEATURES, dismissFeatureHint, featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, unchosenFeatures, useDismissedFeatureHints, useFeatures, type FeatureId } from "./lib/features";
 import { interfaceSettingsLoaded, onInterfaceSettingsLoaded, startInterfaceSettingsSync } from "./lib/interfaceSettings";
 import { parseDocumentFlashcards } from "./lib/flashcards";
 import ServicePickerModal from "./components/ServicePickerModal";
@@ -1546,6 +1547,27 @@ function WorkspaceAppContent({
   }, [flashcards.scheduled]);
   /** Which opt-in features are on (Settings → Features); every device of the account matches. */
   const features = useFeatures();
+  const dismissedFeatureHints = useDismissedFeatureHints();
+  /**
+   * When a page uses a feature that is off (flashcard lines, a roadmap), one quiet line says so
+   * and offers to turn it on. Dismissing it ends the hint for that feature on every device.
+   */
+  function renderFeatureHint(conversation: Conversation) {
+    if (guest) return undefined;
+    const hint: { id: FeatureId; text: string } | null =
+      !features.roadmaps && conversation.nodeType === "roadmap" ? { id: "roadmaps", text: "This page is a roadmap. Roadmaps shows its steps on the map and drafts more." }
+      : !features.flashcards && (flashcardCountByDoc.get(conversation.id) ?? 0) > 0 ? { id: "flashcards", text: "This page has flashcards (lines like Question :: Answer)." }
+      : null;
+    if (!hint || dismissedFeatureHints.has(hint.id)) return undefined;
+    const name = FEATURES.find((feature) => feature.id === hint.id)!.name;
+    return <p className="feature-hint" role="status">
+      <span>{hint.text}</span>
+      <button type="button" onClick={() => setFeature(hint.id, true)}>Turn on {name}</button>
+      <button type="button" className="feature-hint-dismiss" aria-label={`Dismiss: keep ${name} off`} onClick={() => dismissFeatureHint(hint.id)}>×</button>
+    </p>;
+  }
+  /** "More features…" at the end of each ⋯ menu: Settings → Features. */
+  const openFeatureSettings = () => { setProfileInitialTab("features"); setProfileModalOpen(true); };
   useEffect(() => (guest ? undefined : startInterfaceSettingsSync(user.id)), [guest, user.id]);
   const settingsLoaded = useSyncExternalStore(onInterfaceSettingsLoaded, interfaceSettingsLoaded, () => false);
   // An account from before features existed keeps on what it already uses; new accounts start on Simple.
@@ -6375,6 +6397,7 @@ function WorkspaceAppContent({
         onReviewFlashcards={!features.flashcards ? undefined : (id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id), docId: id })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
+        onMoreFeatures={openFeatureSettings}
         pageView={quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && conversation.nodeType !== "board"}
         languageLearning={quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && conversation.nodeType !== "board" ? {
           on: Boolean(conversation.languageLearning),
@@ -6528,7 +6551,7 @@ function WorkspaceAppContent({
         <button type="button" onClick={() => setVersionHistory({ id: conversation.id })}>See both versions</button>
         <button type="button" className="version-clash-dismiss" aria-label="Dismiss: keep the document as it is"
           onClick={() => void vault.resolveConflict(vault.clashedDocuments?.[conversation.id], "current").catch(() => undefined)}>×</button>
-      </p> : undefined}
+      </p> : view === "chat" && !embedded && !inMargin ? renderFeatureHint(conversation) : undefined}
       // A note in the margin sits on the page it would point back to, so it has no "Keep reading".
       bodyFooter={!embedded && !inMargin && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={{ ...documentNeighbors, children: getChildTabDocuments(conversation) }} onOpen={handleOpenNeighbor} /> : null}
@@ -6969,7 +6992,7 @@ function WorkspaceAppContent({
               vaultSwitcher={<VaultSwitcher vault={vault} cloudSync={cloudSyncEnabled}
                 onOpenSettings={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }} />}
               documentOrder={documentOrder}
-              groupsEnabled={features.groups} outlineEnabled={features.outline}
+              groupsEnabled={features.groups} outlineEnabled={features.outline} onMoreFeatures={openFeatureSettings}
               sessionsPanel={!features.spaces ? undefined : <SpacesPanel spaces={orderedSpaces} activeId={sessions?.activeId ?? null}
                 conversations={state.conversations} focusedDocumentId={activeConversation.id}
                 onOpen={handleSwitchSession}
@@ -7100,6 +7123,7 @@ function WorkspaceAppContent({
                 </ViewIntro> : null}
                 <Suspense fallback={<div className="workspace-view-loading" role="status">Opening Map View…</div>}>
                   <KnowledgeGraphWorkspace
+                    onMoreFeatures={openFeatureSettings}
                     isVisible={isGraphView || showMapModal}
                     onToggleSidebar={handleToggleLeftSidebar}
                     sidebarOpen={leftSidebarOpen}

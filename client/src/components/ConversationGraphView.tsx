@@ -330,6 +330,8 @@ export interface ConversationGraphViewProps {
   toolbarTrailing?: ReactNode;
   /** More actions for the map's ⋯ menu (explore, history, add). */
   menuItems?: ReactNode;
+  /** Shown last in the ⋯ menu ("More features…"). */
+  menuFooter?: ReactNode;
   /** Asks the map to show this much of itself, e.g. everything when a roadmap is turned on so all its steps are in view. */
   scopeRequest?: { choice: MapScopeChoice; requestId: number } | null;
   /** Offers other places to look for a map search; `matchedIds` are the documents it found, best first. */
@@ -1227,6 +1229,7 @@ export default function ConversationGraphView({
   toolbarLeading,
   toolbarTrailing,
   menuItems,
+  menuFooter,
   scopeRequest,
   renderSearchFallback,
   onSearchSubmit,
@@ -4522,6 +4525,7 @@ export default function ConversationGraphView({
                 {showRelated && relatedStatus === "ready" ? <small>Suggestions from up to 40 recent items; relevance is not a factual relationship.</small> : null}
               </div></fieldset> : null}
             </> : null}
+            {menuFooter}
           </div>
         </DismissibleDetails>
       </div>
