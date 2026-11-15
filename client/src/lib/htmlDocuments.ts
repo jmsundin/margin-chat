@@ -24,7 +24,8 @@ export type HtmlFrameMessage =
   | { marginHtml: 1; type: "marks"; marks: Array<HtmlRect & { id: string }> }
   | { marginHtml: 1; type: "open"; id: string }
   | { marginHtml: 1; type: "storage"; data: Record<string, string> }
-  | { marginHtml: 1; type: "screen"; requestId: string; screen: HtmlScreen };
+  | { marginHtml: 1; type: "screen"; requestId: string; screen: HtmlScreen }
+  | { marginHtml: 1; type: "content-request" };
 
 /**
  * What a page shows at one moment, for Play's notes and Ask AI: the words in view, what the person
@@ -71,6 +72,7 @@ export function readHtmlFrameMessage(data: unknown): HtmlFrameMessage | null {
   switch (message.type) {
     case "size": return finite(message.height) && message.height >= 0 ? { marginHtml: 1, type: "size", height: message.height } : null;
     case "clear": return { marginHtml: 1, type: "clear" };
+    case "content-request": return { marginHtml: 1, type: "content-request" };
     case "open": return typeof message.id === "string" && message.id.length <= 200 ? { marginHtml: 1, type: "open", id: message.id } : null;
     case "storage": {
       const data = readStorageData(message.data);
@@ -322,6 +324,34 @@ function bridge(savedStorage: Record<string, string>) {
   // A form the page doesn't handle itself would load something else into the frame.
   window.addEventListener("submit", (event) => { if (!event.defaultPrevented) event.preventDefault(); });
 
+  /*
+   * Games load their questions from the vault. `marginChat.getQuestions()` resolves with
+   * { questions: [{ id, question, answer, choices?, correct?, deck }], decks }, and
+   * `marginChat.onQuestions(listener)` is called again whenever the person's questions change.
+   */
+  let content: { questions: unknown[]; decks: unknown[] } = { questions: [], decks: [] };
+  let contentKnown = false;
+  let contentWaiters: Array<(value: unknown) => void> = [];
+  const contentListeners = new Set<(value: unknown) => void>();
+  const contentCopy = () => JSON.parse(JSON.stringify(content));
+  stand(window, "marginChat", Object.freeze({
+    version: 1,
+    getQuestions: () => new Promise((resolve) => {
+      if (contentKnown) { resolve(contentCopy()); return; }
+      contentWaiters.push(resolve);
+      post({ type: "content-request" });
+      // Outside Margin Chat's reach (or before it answers) a game still starts, with nothing to ask yet.
+      window.setTimeout(() => { if (contentWaiters.includes(resolve)) { contentWaiters = contentWaiters.filter((waiter) => waiter !== resolve); resolve(contentCopy()); } }, 3_000);
+    }),
+    onQuestions: (listener: (value: unknown) => void) => {
+      if (typeof listener !== "function") return () => {};
+      contentListeners.add(listener);
+      if (contentKnown) window.setTimeout(() => { if (contentListeners.has(listener)) listener(contentCopy()); }, 0);
+      else post({ type: "content-request" });
+      return () => { contentListeners.delete(listener); };
+    },
+  }));
+
   /**
    * The page as it looks now between `top` and `bottom` (frame pixels; the app scrolls the frame, not the page).
    * Lines are rebuilt from where each piece of text sits, so a screen drawn by scripts reads in order.
@@ -364,6 +394,15 @@ function bridge(savedStorage: Record<string, string>) {
 
   window.addEventListener("message", (event) => {
     if (event.source !== parentWindow || !event.data || event.data.marginHtml !== 1) return;
+    if (event.data.type === "content" && Array.isArray(event.data.questions)) {
+      content = { questions: event.data.questions, decks: Array.isArray(event.data.decks) ? event.data.decks : [] };
+      contentKnown = true;
+      const waiting = contentWaiters;
+      contentWaiters = [];
+      for (const resolve of waiting) resolve(contentCopy());
+      for (const listener of contentListeners) { try { listener(contentCopy()); } catch { /* A game's own mistake stays its own. */ } }
+      return;
+    }
     if (event.data.type === "read-screen" && typeof event.data.requestId === "string") {
       const top = Number(event.data.top) || 0;
       const bottom = Number.isFinite(Number(event.data.bottom)) ? Number(event.data.bottom) : Number.POSITIVE_INFINITY;

@@ -80,6 +80,9 @@ import VaultAnswerPanel, { type VaultAnswerState } from "./components/VaultAnswe
 import { changedAnswerSources, createVaultAnswerDocument, findSavedAnswer, isVaultAnswer, markCitedPassages, updateVaultAnswerDocument, vaultAnswerMessages, vaultAnswerSettings } from "./lib/vaultAnswer";
 import { buildNoteChatMessage, buildPlayChatMessage, findNoteChat } from "./lib/noteChat";
 import { momentNoteContent, readHtmlScreen, screenExcerpt } from "./lib/htmlScreens";
+import { decodePlaySources, encodePlaySources, playQuestions, playSourcesPath, setPlayContent } from "./lib/playContent";
+import { QUIZ_RUN_FILE_NAME, QUIZ_RUN_HTML } from "./lib/quizRunGame";
+import PlaySourcesDialog from "./components/PlaySourcesDialog";
 import type { HtmlScreen } from "./lib/htmlDocuments";
 import { pickProactivePassage, stanceQuestionPrompt, type EnterCaret } from "./lib/proactiveQuestions";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
@@ -1853,6 +1856,55 @@ function WorkspaceAppContent({
     }
     return ids;
   }, []);
+  /**
+   * Play: games load their questions from the vault. For each HTML page, the documents chosen for it
+   * (kept in the vault beside what the page saved) and the questions in its own notes become what
+   * `marginChat.getQuestions()` answers inside the page.
+   */
+  const [playSources, setPlaySources] = useState<Record<string, string[]>>({});
+  const [playCounts, setPlayCounts] = useState<Record<string, number>>({});
+  const [playSourcesFor, setPlaySourcesFor] = useState<string | null>(null);
+  /** Documents chosen for a game that was added a moment ago and isn't listed yet. */
+  const pendingPlaySources = useRef(new Map<string, string[]>());
+  const playPageKey = useMemo(() => Object.values(state.conversations).filter((conversation) => conversation.vaultFile?.kind === "html")
+    .map((conversation) => `${conversation.id}\n${conversation.vaultFile!.path}`).sort().join("\n\n"), [state.conversations]);
+  const playPages = useMemo(() => playPageKey ? playPageKey.split("\n\n").map((entry) => { const [id, path] = entry.split("\n"); return { id, path }; }) : [], [playPageKey]);
+  const vaultMediaRef = useRef(vault.media);
+  vaultMediaRef.current = vault.media;
+  useEffect(() => {
+    let cancelled = false;
+    for (const page of playPages) {
+      const pending = pendingPlaySources.current.get(page.id);
+      if (pending) {
+        pendingPlaySources.current.delete(page.id);
+        setPlaySources((current) => ({ ...current, [page.id]: pending }));
+        void vaultMediaRef.current.writeText?.(playSourcesPath(page.path), encodePlaySources(pending)).catch(() => undefined);
+        continue;
+      }
+      if (playSources[page.id]) continue;
+      Promise.resolve(vaultMediaRef.current.readText?.(playSourcesPath(page.path))).then(decodePlaySources, () => [] as string[]).then((ids) => {
+        if (!cancelled) setPlaySources((current) => current[page.id] ? current : { ...current, [page.id]: ids });
+      });
+    }
+    return () => { cancelled = true; };
+    // Each page's choice is read once; later changes are made here and written through.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [playPages]);
+  useEffect(() => {
+    if (!playPages.length) return;
+    const counts: Record<string, number> = {};
+    for (const page of playPages) {
+      const sources = playSources[page.id];
+      if (!sources) continue;
+      const allowed = new Set<string>();
+      for (const root of [page.id, ...sources]) for (const id of documentFamilyIds(root)) allowed.add(id);
+      const content = playQuestions(flashcards.scheduled.filter(({ card }) => allowed.has(card.docId)).map(({ card }) => card),
+        (docId) => state.conversations[docId]?.title);
+      setPlayContent(page.id, content);
+      counts[page.id] = content.questions.length;
+    }
+    setPlayCounts((current) => Object.keys(counts).length === Object.keys(current).length && Object.entries(counts).every(([id, count]) => current[id] === count) ? current : counts);
+  }, [playPages, playSources, flashcards.scheduled, state.conversations, documentFamilyIds]);
   const [vaultAnswer, setVaultAnswer] = useState<VaultAnswerState | null>(null);
   const [mapSpotlight, setMapSpotlight] = useState<MapSpotlight | null>(null);
   /** Show on Map: lights these documents on the Map, brightest the strongest match. */
@@ -4524,9 +4576,58 @@ function WorkspaceAppContent({
       content: screen ? momentNoteContent(screen) : "" });
   }
 
+  /** Chooses the documents a game asks its questions from, and keeps the choice in the vault. */
+  function handleSetPlaySources(pageId: string, documentIds: string[]) {
+    const ids = [...new Set(documentIds)].filter((id) => id !== pageId);
+    setPlaySources((current) => ({ ...current, [pageId]: ids }));
+    const path = currentStateRef.current.conversations[pageId]?.vaultFile?.path;
+    if (path) void vault.media.writeText?.(playSourcesPath(path), encodePlaySources(ids)).catch(() => undefined);
+    else pendingPlaySources.current.set(pageId, ids);
+  }
+
+  /** The note under a game where AI-made questions for it are written; made the first time it is needed. */
+  function playQuestionsNote(pageId: string) {
+    const current = currentStateRef.current.conversations;
+    const page = current[pageId];
+    if (!page) return null;
+    const title = excerpt(`Questions for ${page.title.replace(/\.html?$/iu, "")}`, 80);
+    const existing = page.childIds.map((id) => current[id]).find((child) => child && child.parentId === pageId && child.title === title && !child.noteChat);
+    return existing?.id ?? handleCreateNote({ conversationId: pageId, content: "", sourceMessageId: null, title });
+  }
+
+  /** AI drafts questions about what the game shows now (or a topic the person names); chosen ones join the game. */
+  async function handleMakePlayQuestions(pageId: string) {
+    const screen = await readHtmlScreen(pageId);
+    const noteId = playQuestionsNote(pageId);
+    if (!noteId) return;
+    const passage = screen ? (screen.visible || screen.page).slice(0, 4_000).trim() : "";
+    setPlaySourcesFor(null);
+    setMakeCards({ docId: noteId, style: "quiz", ...(passage ? { passage } : {}) });
+  }
+
+  /** Plays a document's questions as a game: Quiz Run is added to the vault once, pointed at the document and opened. */
+  function handlePlayAsGame(documentId: string) {
+    const game = Object.values(currentStateRef.current.conversations).find((conversation) => conversation.vaultFile?.kind === "html"
+      && conversation.vaultFile.path.split("/").pop() === QUIZ_RUN_FILE_NAME);
+    if (game) {
+      handleSetPlaySources(game.id, [documentId]);
+      handleSelectConversation(game.id, { nextViewMode: "chat" });
+      return;
+    }
+    vault.uploadFiles([new File([QUIZ_RUN_HTML], QUIZ_RUN_FILE_NAME, { type: "text/html" })]).then(({ documentIds }) => {
+      const id = documentIds[0];
+      if (!id) { setUploadNotice({ message: "The game couldn’t be added to your vault. Try again.", kind: "error" }); return; }
+      handleSetPlaySources(id, [documentId]);
+      handleSelectConversation(id, { nextViewMode: "chat" });
+    }, (failure: unknown) => {
+      setUploadNotice({ message: failure instanceof Error ? failure.message : "The game couldn’t be added to your vault. Try again.", kind: "error" });
+    });
+  }
+
   /** Play's bar above a game: note the moment, ask AI about the screen, or ask for a hint. */
   function renderPlayBar(conversation: Conversation) {
     const aiOff = isHiddenFromAI(conversation);
+    const questionCount = playCounts[conversation.id] ?? 0;
     const open = () => setNoteChatFor(conversation.id);
     return <div className="play-bar" role="toolbar" aria-label="Play">
       <span className="play-bar-label" title="Play the page with your notes beside it and AI that sees the screen">Play</span>
@@ -4537,6 +4638,9 @@ function WorkspaceAppContent({
         <button type="button" title="One step toward the answer, without the answer"
           onClick={() => { open(); void handleAskAboutPage(conversation.id, "Give me a hint, not the answer"); }}>Hint</button>
       </>}
+      <button type="button" className="play-bar-questions" aria-haspopup="dialog"
+        title="The notes this game asks its questions from. Add more, or have AI write some."
+        onClick={() => setPlaySourcesFor(conversation.id)}>Questions{questionCount ? <span>{questionCount}</span> : null}</button>
     </div>;
   }
 
@@ -6647,6 +6751,7 @@ function WorkspaceAppContent({
         showRoadmapOnMap(learnPathId, true);
       } : undefined}
       onNewLesson={features.language || conversation.languageLearning ? () => setLessonDialog({ fromId: conversation.id }) : undefined}
+      onPlay={features.flashcards && cards ? () => handlePlayAsGame(conversation.id) : undefined}
       review={features.flashcards && cards ? { count: cards, onOpen: () => setFlashcardReview({ title: conversation.title || "Untitled", docIds: documentFamilyIds(conversation.id), docId: conversation.id }) } : undefined} />;
   }
 
@@ -8002,6 +8107,18 @@ function WorkspaceAppContent({
         handleNavigateDocumentConnector({ conversationId: claim.documentId, blockId: anchor?.state === "ok" ? anchor.blockId : claim.anchor.blockId });
       }}
       onClose={() => setClaimsView(null)}/> : null}
+    {playSourcesFor && state.conversations[playSourcesFor] ? (() => {
+      const page = state.conversations[playSourcesFor];
+      const own = documentFamilyIds(page.id);
+      return <PlaySourcesDialog title={page.title}
+        decks={[...flashcardCountByDoc].filter(([id]) => !own.has(id) && state.conversations[id] && !state.conversations[id].vaultFile)
+          .map(([id, count]) => ({ id, title: state.conversations[id].title, count })).sort((a, b) => a.title.localeCompare(b.title))}
+        chosen={playSources[page.id] ?? []}
+        ownCount={[...own].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
+        onSave={(ids) => handleSetPlaySources(page.id, ids)}
+        onMake={isHiddenFromAI(page) ? undefined : () => void handleMakePlayQuestions(page.id)}
+        onClose={() => setPlaySourcesFor(null)}/>;
+    })() : null}
     {makeCards && (!makeCards.docId || state.conversations[makeCards.docId]) ? <MakeCardsDialog
       title={makeCards.docId ? state.conversations[makeCards.docId].title : undefined}
       decks={makeCards.docId ? undefined : flashcardDecks}

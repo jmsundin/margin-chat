@@ -9,6 +9,7 @@ import { publishPdfNavigation } from "../lib/pdfNavigation";
 import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
 import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
 import { registerHtmlScreen } from "../lib/htmlScreens";
+import { getPlayContent, hasPlayContent, subscribePlayContent } from "../lib/playContent";
 import { decodeHtmlPageData, encodeHtmlPageData, htmlPageDataPath, newerHtmlPageData, sameHtmlPageData, type HtmlPageData } from "../lib/htmlPageData";
 import {
   imageAreaFromSourceId, imageAreaQuote, imageAreaSourceId, pdfPageFromSourceId, pdfPageSourceId, pdfPageText, vaultFileTitle,
@@ -741,6 +742,14 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   const sendAnchors = () => frameRef.current?.contentWindow?.postMessage({ marginHtml: 1, type: "anchors", anchors: anchorsRef.current }, "*");
   useEffect(sendAnchors, [anchors]);
 
+  // A game's questions come from the vault: sent when the page asks, and again whenever they change.
+  const sendContent = () => {
+    if (!hasPlayContent(latest.current.conversation.id)) return;
+    const { questions, decks } = getPlayContent(latest.current.conversation.id);
+    frameRef.current?.contentWindow?.postMessage({ marginHtml: 1, type: "content", questions, decks }, "*");
+  };
+  useEffect(() => subscribePlayContent(props.conversation.id, sendContent), [props.conversation.id]);
+
   // Play asks what the page shows now: the part of the frame inside the window, read by the bridge.
   const screenRequests = useRef(new Map<string, (screen: HtmlScreen | null) => void>());
   useEffect(() => registerHtmlScreen(props.conversation.id, () => new Promise((resolve) => {
@@ -777,6 +786,8 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
         setMarks(message.marks.filter((mark) => anchorsRef.current.some((anchor) => anchor.id === mark.id)));
       } else if (message.type === "open") {
         if (anchorsRef.current.some((anchor) => anchor.id === message.id)) current.onOpenBranch(message.id);
+      } else if (message.type === "content-request") {
+        sendContent();
       } else if (message.type === "screen") {
         const answer = screenRequests.current.get(message.requestId);
         screenRequests.current.delete(message.requestId);

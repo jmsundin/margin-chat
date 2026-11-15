@@ -16,6 +16,8 @@ export interface DocumentModeSwitchProps {
   onLearn?: () => void;
   /** This document's flashcards, in their own full-screen review. */
   review?: { count: number; onOpen: () => void };
+  /** This document's questions as a game (Quiz Run, in the vault). Offered when it has cards. */
+  onPlay?: () => void;
   /** Makes a new document to read in the language being learned. Offered with the Language learning feature. */
   onNewLesson?: () => void;
   /** The mode this document opens in by itself, marked Automatic in the menu. */
@@ -33,7 +35,7 @@ export interface DocumentModeSwitchProps {
  * The button at the top of a document that names its mode and switches it. Each mode is a
  * different interface for the same document, so it lives here instead of among the ⋯ menu's settings.
  */
-export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap, onLearn, review, onNewLesson, automatic, onAutomatic, firstNote }: DocumentModeSwitchProps) {
+export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap, onLearn, review, onPlay, onNewLesson, automatic, onAutomatic, firstNote }: DocumentModeSwitchProps) {
   const popupId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
@@ -140,6 +142,11 @@ export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap
         <span className="document-mode-dot" aria-hidden="true" />
         <span className="document-mode-name">Review<span className="document-mode-count">{review.count}</span></span>
         <span className="document-mode-hint">This document's flashcards, one at a time</span>
+      </button> : null}
+      {onPlay ? <button type="button" role="menuitem" data-mode="play" onClick={() => { close(); onPlay(); }}>
+        <span className="document-mode-dot" aria-hidden="true" />
+        <span className="document-mode-name">Play</span>
+        <span className="document-mode-hint">This document's questions as a game</span>
       </button> : null}
       {onNewLesson ? <button type="button" role="menuitem" data-mode="lesson" onClick={() => { close(); onNewLesson(); }}>
         <span className="document-mode-dot" aria-hidden="true" />
