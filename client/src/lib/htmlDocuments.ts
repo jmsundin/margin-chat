@@ -23,7 +23,26 @@ export type HtmlFrameMessage =
   | { marginHtml: 1; type: "clear" }
   | { marginHtml: 1; type: "marks"; marks: Array<HtmlRect & { id: string }> }
   | { marginHtml: 1; type: "open"; id: string }
-  | { marginHtml: 1; type: "storage"; data: Record<string, string> };
+  | { marginHtml: 1; type: "storage"; data: Record<string, string> }
+  | { marginHtml: 1; type: "screen"; requestId: string; screen: HtmlScreen };
+
+/**
+ * What a page shows at one moment, for Play's notes and Ask AI: the words in view, what the person
+ * typed into its boxes, and the whole page's text, since a game draws its screen with scripts and
+ * the saved file holds little of it.
+ */
+export interface HtmlScreen {
+  /** The text in view, line by line. */
+  visible: string;
+  /** What is typed or picked in the boxes in view, each with its label. */
+  fields: Array<{ label: string; value: string }>;
+  /** All the text on the page now, shortened if long. */
+  page: string;
+}
+
+export const MAX_SCREEN_TEXT = 12_000;
+export const MAX_SCREEN_PAGE = 30_000;
+const MAX_SCREEN_FIELDS = 20;
 
 /** What a page keeps in its own `localStorage`, at most this much, so it remembers its state the next time it opens. */
 export const MAX_HTML_STORAGE_CHARS = 1_000_000;
@@ -63,6 +82,7 @@ export function readHtmlFrameMessage(data: unknown): HtmlFrameMessage | null {
       if (!finite(start) || !finite(end) || start < 0 || end < start || !isRect(rect)) return null;
       return { marginHtml: 1, type: "selection", quote, start, end, context, rect };
     }
+    case "screen": return readScreenMessage(message);
     case "marks": {
       if (!Array.isArray(message.marks) || message.marks.length > 2_000) return null;
       const marks = message.marks.filter((mark): mark is HtmlRect & { id: string } => isRect(mark) && typeof (mark as { id?: unknown }).id === "string");
@@ -70,6 +90,19 @@ export function readHtmlFrameMessage(data: unknown): HtmlFrameMessage | null {
     }
     default: return null;
   }
+}
+
+function readScreenMessage(message: Record<string, unknown>): HtmlFrameMessage | null {
+  const { requestId, screen } = message;
+  if (typeof requestId !== "string" || requestId.length > 100 || !screen || typeof screen !== "object") return null;
+  const { visible, page, fields } = screen as Record<string, unknown>;
+  if (typeof visible !== "string" || typeof page !== "string" || !Array.isArray(fields)) return null;
+  const clean = fields.slice(0, MAX_SCREEN_FIELDS).flatMap((field) => {
+    const { label, value } = (field ?? {}) as Record<string, unknown>;
+    return typeof label === "string" && typeof value === "string" ? [{ label: label.slice(0, 200), value: value.slice(0, MAX_SCREEN_TEXT) }] : [];
+  });
+  return { marginHtml: 1, type: "screen", requestId,
+    screen: { visible: visible.slice(0, MAX_SCREEN_TEXT), page: page.slice(0, MAX_SCREEN_PAGE), fields: clean } };
 }
 
 /**
@@ -289,8 +322,56 @@ function bridge(savedStorage: Record<string, string>) {
   // A form the page doesn't handle itself would load something else into the frame.
   window.addEventListener("submit", (event) => { if (!event.defaultPrevented) event.preventDefault(); });
 
+  /**
+   * The page as it looks now between `top` and `bottom` (frame pixels; the app scrolls the frame, not the page).
+   * Lines are rebuilt from where each piece of text sits, so a screen drawn by scripts reads in order.
+   */
+  function readScreen(top: number, bottom: number) {
+    const lines: string[] = [];
+    let line = "";
+    let lineTop = Number.NaN;
+    let lastParent: Element | null = null;
+    const view = (rect: DOMRect) => rect.width > 0 && rect.height > 0 && rect.bottom + window.scrollY > top && rect.top + window.scrollY < bottom;
+    for (const node of textNodes()) {
+      const words = node.data.replace(/\s+/gu, " ");
+      if (!words.trim()) continue;
+      const range = document.createRange();
+      range.selectNodeContents(node);
+      const rect = range.getBoundingClientRect();
+      if (!view(rect)) continue;
+      if (!Number.isNaN(lineTop) && Math.abs(rect.top - lineTop) > rect.height / 2) { lines.push(line.trim()); line = ""; }
+      if (Number.isNaN(lineTop) || !line) lineTop = rect.top;
+      // Pieces side by side (a score, a button, a label) are separate words even with no space in the markup.
+      line += line && !/\s$/u.test(line) && !/^\s/u.test(words) && range.startContainer.parentElement !== lastParent ? ` ${words}` : words;
+      lastParent = range.startContainer.parentElement;
+    }
+    if (line.trim()) lines.push(line.trim());
+    const fields: Array<{ label: string; value: string }> = [];
+    for (const element of document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>("textarea, input, select")) {
+      if (fields.length >= 20 || !view(element.getBoundingClientRect())) continue;
+      const type = element instanceof HTMLInputElement ? element.type : "";
+      if (/^(?:password|hidden|file|submit|button|reset|image)$/u.test(type)) continue;
+      const value = element instanceof HTMLSelectElement ? element.selectedOptions[0]?.text ?? ""
+        : /^(?:checkbox|radio)$/u.test(type) ? ((element as HTMLInputElement).checked ? "checked" : "") : element.value;
+      if (!value.trim()) continue;
+      const label = element.getAttribute("aria-label") || (element.id && document.querySelector(`label[for="${CSS.escape(element.id)}"]`)?.textContent)
+        || element.getAttribute("placeholder") || element.getAttribute("name") || element.tagName.toLowerCase();
+      fields.push({ label: collapse(label || ""), value: value.slice(0, 12_000) });
+    }
+    const page = (document.body?.innerText ?? "").replace(/\n{3,}/gu, "\n\n").trim();
+    return { visible: lines.filter(Boolean).join("\n").slice(0, 12_000), fields, page: page.slice(0, 30_000) };
+  }
+
   window.addEventListener("message", (event) => {
     if (event.source !== parentWindow || !event.data || event.data.marginHtml !== 1) return;
+    if (event.data.type === "read-screen" && typeof event.data.requestId === "string") {
+      const top = Number(event.data.top) || 0;
+      const bottom = Number.isFinite(Number(event.data.bottom)) ? Number(event.data.bottom) : Number.POSITIVE_INFINITY;
+      let screen;
+      try { screen = readScreen(top, bottom); } catch { screen = { visible: "", fields: [], page: "" }; }
+      post({ type: "screen", requestId: event.data.requestId, screen });
+      return;
+    }
     if (event.data.type === "anchors" && Array.isArray(event.data.anchors)) { anchors = event.data.anchors; reportMarks(); }
     if (event.data.type === "clear-selection") { selected = false; document.getSelection()?.removeAllRanges(); }
   });
