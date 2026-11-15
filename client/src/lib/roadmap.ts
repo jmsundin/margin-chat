@@ -194,6 +194,7 @@ function withRoadmap(state: AppState, roadmapId: string, change: (roadmap: Roadm
 export type RoadmapChange =
   | { kind: "status"; nodeId: string; status: RoadmapStatus }
   | { kind: "proof"; nodeId: string; proof: string }
+  | { kind: "optional"; nodeId: string; optional: boolean }
   | { kind: "add-node"; stageId: string; target: RoadmapNode["target"]; nodeId?: string }
   | { kind: "relink"; nodeId: string; target: RoadmapNode["target"] }
   | { kind: "remove-node"; nodeId: string }
@@ -234,6 +235,8 @@ export function applyRoadmapChange(state: AppState, roadmapId: string, change: R
         const { status: _status, ...rest } = node;
         return change.status === "not-started" ? rest : { ...rest, status: change.status };
       }) };
+    case "optional":
+      return { state: nodes((node) => node.id !== change.nodeId ? node : (({ optional: _optional, ...rest }) => change.optional ? { ...rest, optional: true as const } : rest)(node)) };
     case "proof":
       return { state: nodes((node) => node.id !== change.nodeId ? node : (({ proof: _proof, ...rest }) => change.proof.trim() ? { ...rest, proof: change.proof } : rest)(node)) };
     case "rename-node":
