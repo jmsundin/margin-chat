@@ -133,7 +133,7 @@ export function MapRoadmapFlags({ context, starts, onPick }: { context: MapOverl
       used.add(`${start.docId}:${offset}`);
       return <button key={start.id} type="button" className="map-roadmap-flag" title={`Turn on the roadmap “${start.name}”`}
         style={{ left: box.x + Math.min(box.width / 2, 10), top: box.y - 26 - offset * 24 }} onClick={() => onPick(start.id)}>
-        <PathIcon /><span>{start.name}</span><em>{start.finished}/{start.total}</em>
+        <PathIcon /><span>{start.name}</span>
       </button>;
     })}
   </div>;

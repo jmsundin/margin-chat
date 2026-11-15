@@ -29,7 +29,7 @@ describe("Map themes", () => {
     const field = whole.topicIds[0].slice(0, -1);
     expect(whole.topicIds).toEqual([`${field}2`, `${field}1`, `${field}0`]);
     expect(whole.id).toBe(`theme:${field}2`);
-    expect(whole.label).toBe(`${field} 2, ${field} 1 and 1 more`);
+    expect(whole.label).toBe(`${field} 2 and ${field} 1`);
     expect(whole.memberIds).toHaveLength(9);
   });
 
@@ -50,7 +50,10 @@ describe("Map themes", () => {
   test("stand-in names", () => {
     expect(themeFallbackLabel(["Angular"])).toBe("Angular");
     expect(themeFallbackLabel(["Angular", "React"])).toBe("Angular and React");
-    expect(themeFallbackLabel(["Angular", "React", "Vue", "Svelte"])).toBe("Angular, React and 2 more");
+    expect(themeFallbackLabel(["Angular", "React", "Vue", "Svelte"])).toBe("Angular and React");
+    expect(themeFallbackLabel(["Cellular senescence", "Mitochondria", "Epigenetics"])).toBe("Cellular senescence");
+    expect(themeFallbackLabel([])).toBe("Theme");
+    expect(themeFallbackLabel(["Launch", "Map and search"])).toBe("Launch");
     expect(blockFallbackName(["Rapamycin dosing for longevity", "My rapamycin side-effects log", "ITP rapamycin results"])).toBe("Rapamycin");
     expect(blockFallbackName(["Sleep tracker comparison", "Sleep trackers I tried", "Oura vs Whoop"])).toBe("Sleep tracker");
     expect(blockFallbackName(["Horvath clock", "GrimAge vs PhenoAge", "DunedinPACE"])).toBe("Horvath clock +2");

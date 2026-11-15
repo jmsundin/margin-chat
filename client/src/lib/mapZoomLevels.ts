@@ -34,11 +34,19 @@ export interface MapTheme {
   memberIds: string[];
 }
 
-/** "Angular", "Angular and React", "Angular, React and 3 more". */
+/** Longest theme name made from two topics; longer pairs keep just the biggest topic's name. */
+const THEME_LABEL_MAX = 28;
+
+/**
+ * A short name until AI names the theme: its biggest topic's name, joined with the next one's when
+ * both fit ("Angular and React"). Never a list with "and 3 more", which reads as no name at all.
+ */
 export function themeFallbackLabel(labels: string[]) {
-  if (labels.length <= 1) return labels[0] ?? "Theme";
-  if (labels.length === 2) return `${labels[0]} and ${labels[1]}`;
-  return `${labels[0]}, ${labels[1]} and ${labels.length - 2} more`;
+  const [first, second] = labels;
+  if (!first) return "Theme";
+  // Two names that already hold "and" read as a list ("Launch and Map and search"): keep the first.
+  const pair = second && !/ and /i.test(first + " " + second) ? `${first} and ${second}` : first;
+  return pair.length <= THEME_LABEL_MAX ? pair : first;
 }
 
 /**

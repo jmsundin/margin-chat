@@ -150,15 +150,18 @@ export default function CanvasGroupBoxes({ boxes, themes = NO_THEMES, level, col
       if (!element) return;
       const frame = boxFrame(theme, camera);
       if (!frameOn(element, frame)) return;
+      // An open theme's frame reaches up past its topics to hold its whole name tab.
+      if (!current.themesClosed) { element.style.top = `${frame.top - THEME_TAB_ROOM}px`; element.style.height = `${frame.height + THEME_TAB_ROOM}px`; }
       // As a tile, a theme shows as much as fits: its name, then its summary, then its topics.
       const summary = !!current.summaries?.get(theme.id);
       element.classList.toggle("is-tiny", frame.width < 24 || frame.height < 28);
       element.classList.toggle("is-narrow", frame.width < 150);
-      // Too narrow for words side by side: the name runs down the tile, like a book's spine.
-      element.classList.toggle("is-spine", frame.width < 76 && frame.height > frame.width * 1.6);
       element.classList.toggle("has-summary", summary && frame.width >= 190 && frame.height >= 104);
-      element.classList.toggle("has-topics", frame.width >= 170 && frame.height >= (summary ? 168 : 96));
-      element.style.setProperty("--label-size", `${Math.round(Math.min(24, Math.max(13, Math.min(frame.height * 0.16, frame.width * 0.085))))}px`);
+      // The name always reads across and fits whole: a narrow tile sets it smaller, so its longest
+      // word fits the tile's width, instead of turning it sideways or cutting it off.
+      const longestWord = Math.max(4, ...theme.label.split(/\s+/).map((word) => word.length));
+      const fitsWidth = (frame.width - 16) / (longestWord * 0.6);
+      element.style.setProperty("--label-size", `${Math.round(Math.max(9, Math.min(24, fitsWidth, Math.max(13, Math.min(frame.height * 0.16, frame.width * 0.085)))))}px`);
     });
     const shownBoxes = current.themesClosed ? current.boxes.filter((box) => !box.themeId) : current.boxes;
     const labels = current.collapsed ? planCollapsedLabels(shownBoxes, camera) : null;
@@ -204,7 +207,6 @@ export default function CanvasGroupBoxes({ boxes, themes = NO_THEMES, level, col
     place(liveCamera?.() ?? viewport);
   });
   useEffect(() => subscribeCamera?.(place), [subscribeCamera, place]);
-  const boxById = useMemo(() => new Map(boxes.map((box) => [box.id, box])), [boxes]);
   return <div ref={hostRef} className={`canvas-group-boxes${collapsed ? " is-collapsed" : ""}${themesClosed ? " is-themes-closed" : ""}${level ? ` is-level-${level}` : ""}`} aria-label="Map boxes">
     <div ref={themeLayerRef} className="canvas-theme-boxes">
       {themes.map((theme) => {
@@ -216,7 +218,6 @@ export default function CanvasGroupBoxes({ boxes, themes = NO_THEMES, level, col
             onClick={(event) => { event.stopPropagation(); onOpenTheme?.(theme); }}>
             <strong>{theme.label}</strong><span>{count}</span>
             {summary ? <em>{summary}</em> : null}
-            <span className="canvas-theme-topics" aria-hidden="true">{theme.boxIds.slice(0, 8).map((id) => <i key={id}>{boxById.get(id)?.label}</i>)}</span>
           </button>
         </div>;
       })}
@@ -246,6 +247,9 @@ export default function CanvasGroupBoxes({ boxes, themes = NO_THEMES, level, col
     </div>
   </div>;
 }
+
+/** Screen pixels added above an open theme's topics for its name tab. */
+const THEME_TAB_ROOM = 28;
 
 const NO_THEMES: CanvasThemeBox[] = [];
 const NO_BLOCKS: Array<{ block: CanvasBlock; color: string; name: string }> = [];
