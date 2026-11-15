@@ -53,10 +53,11 @@ export function tokenize(text: string, language?: string): ReaderToken[] {
     const parts = [...new Intl.Segmenter(language, { granularity: "word" }).segment(text)];
     for (let index = 0; index < parts.length; index++) {
       const part = parts[index];
-      const wordLike = Boolean(part.isWordLike) && WORDISH.test(part.segment);
+      // Not `isWordLike`: some engines (older Safari among them) say no for a word with a digit in it.
+      const wordLike = WORDISH.test(part.segment);
       if (wordLike) { pending += part.segment; continue; }
       const next = parts[index + 1];
-      if (pending && /^['’-]$/u.test(part.segment) && next?.isWordLike && WORDISH.test(next.segment)) { pending += part.segment; continue; }
+      if (pending && /^['’-]$/u.test(part.segment) && next && WORDISH.test(next.segment)) { pending += part.segment; continue; }
       push(pending, true); pending = "";
       push(part.segment, false);
     }
