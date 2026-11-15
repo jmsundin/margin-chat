@@ -1039,6 +1039,22 @@ export function useMarkdownVault(args: {
       scheduleAutomaticRefresh();
       return markdown;
     },
+    async readText(path) {
+      let snapshot = await engine.read();
+      const deferred = snapshot.deferred?.[path];
+      if (!snapshot.files[path] && deferred && !deferred.deleted) snapshot = await engine.pull([[path, deferred]]) ?? await engine.read();
+      const file = snapshot.files[path];
+      return file && !file.encoding ? file.content : null;
+    },
+    async writeText(path, text, contentType = "application/json") {
+      await enqueue(async () => {
+        const current = (await engine.read()).files[path];
+        if (current && !current.encoding && current.content === text) return;
+        // Replacing the copy this device holds: the edit is a plain change, not a second version of the file.
+        await engine.edit({ [path]: { content: text, contentType } }, current ? { [path]: current } : {});
+      });
+      scheduleAutomaticRefresh();
+    },
   }), [engine]);
 
   return {
