@@ -141,7 +141,7 @@ import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
-import { applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapOutlinePrompt, roadmapOutlineProposal, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
+import { plainPreview, applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapOutlinePrompt, roadmapOutlineProposal, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
 import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/boardDocument";
 import { buildBoardNoteMessage, type BoardNoteRequest } from "./lib/boardAI";
 import RoadmapView from "./components/RoadmapView";
@@ -6230,9 +6230,11 @@ function WorkspaceAppContent({
     const last = getEditableDocument(conversation).blocks.at(-1);
     if (!last) return "That document can't take an AI reply yet. Open it and type something, then try again.";
     const topic = conversation.title || "this topic";
+    // Explain runs as an agent where the model can, so it can check the vault and search the web for sources.
+    const agent = action === "deeper" || supportsAgentMode(conversation.serviceId);
     handleDocumentSubmit(docId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", background: true,
-      ...(action === "deeper" ? { agent: true as const } : {}),
-      prompt: action === "deeper" ? roadmapDiveDeeperPrompt(topic, roadmapDocument?.title ?? "") : roadmapExplainPrompt(topic, roadmapDocument?.title ?? "", context) });
+      ...(agent ? { agent: true as const } : {}),
+      prompt: action === "deeper" ? roadmapDiveDeeperPrompt(topic, roadmapDocument?.title ?? "") : roadmapExplainPrompt(topic, roadmapDocument?.title ?? "", context, { web: agent }) });
     // The sub-roadmap is proposed under the answer in the step's document, which is open beside the roadmap.
     return null;
   }
@@ -6273,6 +6275,23 @@ function WorkspaceAppContent({
     showRoadmapOnMap(made.id);
   }
 
+  /** Lessons whose content AI was asked to write when they were first opened. */
+  const roadmapLessonsAsked = useRef(new Set<string>());
+  /** A lesson just opened from Learn: when it has nothing to read yet (a note the roadmap made), AI writes the lesson, once. */
+  const [lessonToWrite, setLessonToWrite] = useState<{ pathId: string; docId: string; context: string } | null>(null);
+  useEffect(() => {
+    if (!lessonToWrite) return;
+    const { pathId, docId, context } = lessonToWrite;
+    // Wait until the lesson is the open document, so writing into it can't pull the page back to the one before.
+    if (activeConversation.id !== docId) return;
+    setLessonToWrite(null);
+    const conversation = currentStateRef.current.conversations[docId];
+    if (!conversation || roadmapLessonsAsked.current.has(docId) || isHiddenFromAI(conversation) || pendingConversationIds[docId] || chatExecutions.has(docId)) return;
+    const editable = getEditableDocument(conversation);
+    if (editable.generations.length || plainPreview(editable.blocks.map((block) => block.content).join("\n\n")).length >= 600) return;
+    roadmapLessonsAsked.current.add(docId);
+    if (handleRoadmapStepAI(pathId, docId, "explain", context)) roadmapLessonsAsked.current.delete(docId);
+  }, [lessonToWrite, activeConversation.id]);
   const mapPathActions: MapPathActions = {
     onCreatePath: (title, docIds) => {
       if (!docIds.length) return { error: "Click at least one note to make a path." };
@@ -6289,6 +6308,8 @@ function WorkspaceAppContent({
     },
     onChange: handleRoadmapChange,
     onStepAI: (pathId, docId, action) => handleRoadmapStepAI(pathId, docId, action),
+    // Handled after the lesson has opened, so it runs on the state that opened it.
+    onLessonOpened: (pathId, docId, context) => setLessonToWrite({ pathId, docId, context }),
     onDraftDecision: (pathId, messageId, proposalId, action) => handleAgentProposal(pathId, messageId, proposalId, action),
     onStopDraft: (pathId) => stopChatStream(pathId),
     writingIds: pendingConversationIds,
