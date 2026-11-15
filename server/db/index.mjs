@@ -2,8 +2,10 @@ import pg from "pg";
 import { assertMigrationsReady, loadMigrations, migrateDatabase } from "./migrations.mjs";
 import {
   changeUserPassword,
+  createEmailVerificationToken,
   deleteUserAccount,
   hasAccountForCanonicalEmail,
+  verifyEmailWithToken,
   createAuthSession,
   createPasswordResetToken,
   createUser,
@@ -391,6 +393,8 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     changeUserPassword: changeUserPasswordRecord,
     deleteUserAccount: deleteUserAccountRecord,
     hasAccountForCanonicalEmail: (canonical) => withClient((client) => hasAccountForCanonicalEmail(client, canonical)),
+    createEmailVerificationToken: (args) => withClient((client) => createEmailVerificationToken(client, args)),
+    verifyEmailWithToken: (args) => withClient((client) => verifyEmailWithToken(client, args)),
     settleHostedRequest: (args) => withClient((client) => settleHostedRequest(client, args)),
     findStripeCredits: (args) => withClient((client) => findStripeCredits(client, args)),
     reverseStripeCredit: (args) => withClient((client) => reverseStripeCredit(client, args)),

@@ -29,7 +29,8 @@ export async function createUser(
           billing_cancel_at_period_end,
           trial_api_calls_used,
           trial_api_calls_limit,
-          hosted_credit_balance_micros
+          hosted_credit_balance_micros,
+          email_verified_at
       `,
       [id, email, passwordHash, displayName, role],
     );
@@ -208,7 +209,9 @@ export async function updateUserProfile(
         update marginchat_users
         set
           display_name = $1,
-          email = $2
+          email = $2,
+          -- A new address isn't confirmed yet; the old value is what "email" means on the right.
+          email_verified_at = case when email = $2 then email_verified_at else null end
         where id = $3
         returning
           id,
@@ -222,7 +225,8 @@ export async function updateUserProfile(
           billing_cancel_at_period_end,
           trial_api_calls_used,
           trial_api_calls_limit,
-          hosted_credit_balance_micros
+          hosted_credit_balance_micros,
+          email_verified_at
       `,
       [displayName, email, userId],
     );
@@ -257,7 +261,8 @@ export async function findUserForLogin(client, email) {
         billing_cancel_at_period_end,
         trial_api_calls_used,
         trial_api_calls_limit,
-        hosted_credit_balance_micros
+        hosted_credit_balance_micros,
+        email_verified_at
       from marginchat_users
       where email = $1
     `,
@@ -297,6 +302,7 @@ export async function getUserByAuthSession(client, sessionId) {
         marginchat_users.trial_api_calls_used,
         marginchat_users.trial_api_calls_limit,
         marginchat_users.hosted_credit_balance_micros,
+        marginchat_users.email_verified_at,
         marginchat_user_sessions.last_seen_at < now() - interval '${SESSION_TOUCH_INTERVAL}' as needs_touch
       from marginchat_user_sessions
       join marginchat_users on marginchat_users.id = marginchat_user_sessions.user_id
@@ -328,6 +334,7 @@ function mapUserRow(row) {
     billing: mapBillingRow(row),
     displayName: row.display_name,
     email: row.email,
+    emailVerified: row.email_verified_at !== null && row.email_verified_at !== undefined,
     id: row.id,
     role: row.role,
   };
@@ -340,4 +347,32 @@ export async function hasAccountForCanonicalEmail(client, canonical) {
     [canonical],
   );
   return result.rowCount > 0;
+}
+
+/** One live confirmation link per account: a new one replaces the last. */
+export async function createEmailVerificationToken(client, { email, expiresAt, tokenHash, userId }) {
+  await client.query("delete from marginchat_email_verification_tokens where user_id = $1 or expires_at <= now()", [userId]);
+  await client.query(
+    "insert into marginchat_email_verification_tokens (token_hash, user_id, email, expires_at) values ($1, $2, $3, $4)",
+    [tokenHash, userId, email, expiresAt],
+  );
+}
+
+/**
+ * Uses a confirmation link once. It confirms only the address it was sent to, so a link
+ * for an address the account has since moved away from confirms nothing.
+ */
+export async function verifyEmailWithToken(client, { tokenHash }) {
+  const token = await client.query(
+    "delete from marginchat_email_verification_tokens where token_hash = $1 and expires_at > now() returning user_id, email",
+    [tokenHash],
+  );
+  if (!token.rowCount) throw createStatusError(400, "This confirmation link is invalid or has expired. Send a new one from Settings.");
+  const { user_id: userId, email } = token.rows[0];
+  const result = await client.query(
+    "update marginchat_users set email_verified_at = coalesce(email_verified_at, now()) where id = $1 and email = $2 returning id",
+    [userId, email],
+  );
+  if (!result.rowCount) throw createStatusError(400, "This link was for an email address the account no longer uses.");
+  return { userId };
 }

@@ -39,6 +39,7 @@ const noKeys = { byProvider: Object.fromEntries(["openai", "anthropic", "gemini"
 function user() {
   return {
     id: controls.userId, displayName: "Vault Preview", email: `${controls.userId}@example.test`,
+    emailVerified: controls.emailVerified !== false,
     role: controls.free ? "member" : "admin", apiKeys: noKeys,
     billing: {
       accessKind: controls.free ? "trial" : "admin", status: controls.free ? "inactive" : "active",
@@ -322,7 +323,7 @@ const server = createServer(async (request, response) => {
             path: body.path, content: body.content, baseRevision: current.files[body.path]?.revision ?? null,
           }]);
         } else if (body.action === "controls") {
-          for (const field of ["offline", "signedIn", "free", "jev", "chat", "web"]) if (typeof body[field] === "boolean") controls[field] = body[field];
+          for (const field of ["offline", "signedIn", "free", "jev", "chat", "web", "emailVerified"]) if (typeof body[field] === "boolean") controls[field] = body[field];
           for (const field of ["delayMs", "authDelayMs", "chatDelayMs"]) if (Number.isSafeInteger(body[field]) && body[field] >= 0 && body[field] <= 120000) controls[field] = body[field];
           if (typeof body.userId === "string" && /^preview-[a-z0-9_-]+$/u.test(body.userId)) controls.userId = body.userId;
           if (body.seed !== false) await seed(controls.userId);
@@ -337,6 +338,7 @@ const server = createServer(async (request, response) => {
         const delay = url.pathname === "/api/auth/session" ? controls.authDelayMs : controls.delayMs;
         if (delay) await new Promise((done) => setTimeout(done, delay));
         if (controls.offline) return sendJson(response, 503, { error: "The fixture is simulating an offline API." });
+        if (url.pathname === "/api/auth/email/verification" && request.method === "POST") return sendJson(response, 200, { ok: true });
         if (url.pathname === "/api/dictation/transcribe" && request.method === "POST") {
           // Each piece of a recording comes back as a made-up Spanish line that says how large it was.
           let bytes = 0;

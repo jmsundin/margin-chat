@@ -123,3 +123,44 @@ export async function sendEmailChangedNotice({ previousEmail, newEmail, env, not
   }
   return { delivered: true };
 }
+
+/** The link that confirms an account's email address; it opens Margin Chat, which confirms it. */
+export async function sendEmailVerification({ email, env, token, tokenHash, ttlMs = 24 * 60 * 60 * 1000, timeoutMs = 10_000 }) {
+  const config = getPasswordResetEmailConfiguration(env);
+  if (!config.configured) return { delivered: false, reason: config.reason };
+
+  const confirmUrl = new URL("/", config.appUrl);
+  confirmUrl.searchParams.set("verify_email", token);
+  const hours = Math.max(1, Math.round(ttlMs / 3_600_000));
+  const expiryText = `This link works for ${hours} ${hours === 1 ? "hour" : "hours"}. If you didn't sign up for Margin Chat, you can ignore this email.`;
+  let response;
+  try {
+    response = await fetch("https://api.resend.com/emails", {
+      body: JSON.stringify({
+        from: config.from,
+        html: `<p>Confirm that this is your email address for Margin Chat, so you can always get back into your account.</p><p><a href="${escapeHtml(confirmUrl.toString())}">Confirm your email</a></p><p>${expiryText}</p>`,
+        subject: "Confirm your email for Margin Chat",
+        text: `Confirm your email for Margin Chat: ${confirmUrl}\n\n${expiryText}`,
+        to: [email],
+      }),
+      headers: {
+        Authorization: `Bearer ${config.apiKey}`,
+        "Content-Type": "application/json",
+        "Idempotency-Key": `email-verification-${tokenHash}`,
+        "User-Agent": "margin-chat/1.0",
+      },
+      method: "POST",
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch {
+    throw new Error("Email confirmation request failed or timed out.");
+  }
+  const result = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(`Email provider rejected the confirmation email (HTTP ${response.status}).`);
+  }
+  if (typeof result?.id !== "string" || !result.id) {
+    throw new Error("Email provider did not confirm accepting the confirmation email.");
+  }
+  return { delivered: true, messageId: result.id };
+}

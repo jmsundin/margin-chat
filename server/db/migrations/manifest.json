@@ -160,6 +160,11 @@
       "id": "0032_rate_limit_hits",
       "file": "0032_rate_limit_hits.sql",
       "transaction": true
+    },
+    {
+      "id": "0033_email_verification",
+      "file": "0033_email_verification.sql",
+      "transaction": true
     }
   ]
 }
