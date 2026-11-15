@@ -106,6 +106,8 @@ export interface DocumentPanelProps {
    * the view menu and authorship. With it, the instruction line moves into the row.
    */
   pageBar?: ReactNode;
+  /** A bar above a file's view, for the way of working that fits it (Play on an HTML page). */
+  fileBar?: ReactNode;
   /**
    * The quiet page: nothing above the text unless it has something to say (an instruction the AI
    * follows here, or authorship marks that are on). The view and authorship switches are in ⋯.
@@ -662,6 +664,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
     <div className={`panel-body document-body${board ? " is-board" : ""}`} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
+        {props.fileBar}
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}/>
         <div className="vault-file-notes-label">Notes</div>

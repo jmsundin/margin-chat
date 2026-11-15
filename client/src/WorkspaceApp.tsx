@@ -77,7 +77,9 @@ import NoteChatPanel from "./components/NoteChatPanel";
 import type { MapSpotlight } from "./lib/mapSpotlight";
 import VaultAnswerPanel, { type VaultAnswerState } from "./components/VaultAnswerPanel";
 import { changedAnswerSources, createVaultAnswerDocument, findSavedAnswer, isVaultAnswer, markCitedPassages, updateVaultAnswerDocument, vaultAnswerMessages, vaultAnswerSettings } from "./lib/vaultAnswer";
-import { buildNoteChatMessage, findNoteChat } from "./lib/noteChat";
+import { buildNoteChatMessage, buildPlayChatMessage, findNoteChat } from "./lib/noteChat";
+import { momentNoteContent, readHtmlScreen, screenExcerpt } from "./lib/htmlScreens";
+import type { HtmlScreen } from "./lib/htmlDocuments";
 import { pickProactivePassage, stanceQuestionPrompt, type EnterCaret } from "./lib/proactiveQuestions";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "./lib/notebookPrefs";
 import MinimizedChildNodes, { getMinimizedChildNodesWidth, type MinimizedChildNode } from "./components/MinimizedChildNodes";
@@ -4460,7 +4462,7 @@ function WorkspaceAppContent({
    * Ask about this note: the question goes into the document's note chat (made on the first
    * question), and the AI answers from the whole current document.
    */
-  function handleAskAboutNote(documentId: string, question: string) {
+  function handleAskAboutNote(documentId: string, question: string, play?: { screen: HtmlScreen | null }) {
     const current = currentStateRef.current;
     const source = current.conversations[documentId];
     if (!source || !question.trim()) return;
@@ -4481,10 +4483,57 @@ function WorkspaceAppContent({
     });
     if (isHiddenFromAI(source)) { appendAssistantMessage(updated.id, HIDDEN_FROM_AI_MESSAGE); return; }
     const history = chat.messages.filter((message) => message.role === "user" || message.role === "assistant").slice(-10);
-    const request = buildNoteChatMessage(source, userMessage, {
-      instruction: documentAIInstruction(currentStateRef.current.conversations, source),
-    });
+    const instruction = documentAIInstruction(currentStateRef.current.conversations, source);
+    const request = play
+      ? buildPlayChatMessage(source, userMessage, { screen: play.screen, instruction, notes: playNotes(source.id) })
+      : buildNoteChatMessage(source, userMessage, { instruction });
     startAssistantStream(updated, [...history, request]);
+  }
+
+  /** An HTML page is played: games, quizzes and exercises, with notes beside and AI that sees the screen. */
+  function isPlayPage(conversation: Conversation | undefined | null) {
+    return conversation?.vaultFile?.kind === "html";
+  }
+
+  /** The person's own notes on a page, for Play's AI: what they understood and found hard. */
+  function playNotes(documentId: string) {
+    const current = currentStateRef.current.conversations;
+    return (current[documentId]?.childIds ?? []).map((id) => current[id])
+      .filter((child): child is Conversation => Boolean(child && child.parentId === documentId && isCompactDocument(child) && !isHiddenFromAI(child)))
+      .map((note) => ({ title: note.title, text: excerpt(getEditableDocumentText(note), 2_000) }))
+      .filter((note) => note.text.trim())
+      .slice(-20);
+  }
+
+  /** Asks about a page; on a played page the question carries what its screen shows now. */
+  async function handleAskAboutPage(documentId: string, question: string) {
+    if (!isPlayPage(currentStateRef.current.conversations[documentId])) { handleAskAboutNote(documentId, question); return; }
+    const screen = await readHtmlScreen(documentId);
+    handleAskAboutNote(documentId, question, { screen });
+  }
+
+  /** A note on this moment of the game: what the screen shows, quoted, and room to write under it. */
+  async function handleNoteThisMoment(documentId: string) {
+    const screen = await readHtmlScreen(documentId);
+    const title = screen ? `Moment: ${screenExcerpt(screen, 48)}` : "Moment";
+    handleCreateNote({ conversationId: documentId, sourceMessageId: null, title,
+      content: screen ? momentNoteContent(screen) : "" });
+  }
+
+  /** Play's bar above a game: note the moment, ask AI about the screen, or ask for a hint. */
+  function renderPlayBar(conversation: Conversation) {
+    const aiOff = isHiddenFromAI(conversation);
+    const open = () => setNoteChatFor(conversation.id);
+    return <div className="play-bar" role="toolbar" aria-label="Play">
+      <span className="play-bar-label" title="Play the page with your notes beside it and AI that sees the screen">Play</span>
+      <button type="button" title="A note with what the screen shows now, to write under" onClick={() => void handleNoteThisMoment(conversation.id)}>Note this moment</button>
+      {aiOff ? null : <>
+        <button type="button" className="is-primary" aria-expanded={noteChatFor === conversation.id} title="Ask AI about what's on screen"
+          onClick={() => setNoteChatFor((current) => current === conversation.id ? null : conversation.id)}>Ask AI</button>
+        <button type="button" title="One step toward the answer, without the answer"
+          onClick={() => { open(); void handleAskAboutPage(conversation.id, "Give me a hint, not the answer"); }}>Hint</button>
+      </>}
+    </div>;
   }
 
   /**
@@ -6763,6 +6812,7 @@ function WorkspaceAppContent({
         {conversation.aiInstruction || inheritedAIInstruction(conversation) ? <AIInstructionLine compact value={conversation.aiInstruction}
           inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : null}
       </div> : undefined}
+      fileBar={view === "chat" && isPlayPage(conversation) ? renderPlayBar(conversation) : undefined}
       roadmapFill={roadmapPage && view === "chat"}
       roadmap={roadmapPage ? <RoadmapView conversation={conversation} conversations={state.conversations} fill={view === "chat"}
         renderDocument={(docId) => state.conversations[docId] ? renderConversationChatPanel(state.conversations[docId], "chat", undefined, true) : null}
@@ -7387,6 +7437,7 @@ function WorkspaceAppContent({
                     onRemoveMapNote={handleRemoveMapNote}
                     onUndoMapEdit={handleUndoMapEdit}
                     mapEditMessage={mapEditMessage}
+                    onDismissMapEdit={() => { setMapEditMessage(""); mapUndoRef.current = null; }}
                     canUndoMapEdit={Boolean(mapUndoRef.current)}
                     key={`graph-${user.id}`}
                     workspaceKey={storageUserId}
@@ -7485,7 +7536,7 @@ function WorkspaceAppContent({
                       {isMobileViewport && maximizedDocument ? renderFullScreenButton() : null}
                       {isMobileViewport && !showSpaceStart ? renderDocumentModeSwitch(activeConversation) : null}
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
-                        {activeConversation.document || activeConversation.kind === "note" ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
+                        {activeConversation.document || activeConversation.kind === "note" || isPlayPage(activeConversation) ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
                           onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
                           title="Ask the AI about this whole note">Ask</button> : null}
                       </> : <>
@@ -7768,7 +7819,8 @@ function WorkspaceAppContent({
             return <NoteChatPanel key={noteChatFor} open title={state.conversations[noteChatFor].title} messages={chat?.messages ?? []}
               draftKey={`${storageUserId}:ask-note:${noteChatFor}`}
               pending={Boolean(chat && (pendingConversationIds[chat.id] || chatExecutions.has(chat.id)))}
-              onAsk={(question) => handleAskAboutNote(noteChatFor, question)}
+              onAsk={(question) => void handleAskAboutPage(noteChatFor, question)}
+              play={isPlayPage(state.conversations[noteChatFor])}
               onStop={chat ? () => chatExecutions.abort([chat.id]) : undefined}
               settings={state.conversations[noteChatFor].vaultFile ? undefined : <>
                 <AIInstructionLine value={state.conversations[noteChatFor].aiInstruction} inherited={inheritedAIInstruction(state.conversations[noteChatFor])}

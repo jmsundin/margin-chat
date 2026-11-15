@@ -1,5 +1,6 @@
 import { createMapNote } from "./graphWorkspaceEdits";
 import { applyRoadmapChange, buildRoadmapGraph, getRoadmap, makeRoadmapDocument, newRoadmapId, roadmapNodeTitle, roadmapStatus } from "./roadmap";
+import type { RoadmapDraftPreview } from "./chatStream";
 import type { AgentRoadmapProposal, AppState, Conversation, RoadmapStatus } from "../types";
 
 /**
@@ -22,6 +23,8 @@ export interface MapPathStep {
   /** Doc ids this step needs first, and doc ids it unlocks. */
   needs: string[];
   unlocks: string[];
+  /** A lesson AI is still writing: shown as it streams in, before the roadmap is saved. Not openable yet. */
+  drafting?: boolean;
 }
 
 export interface MapPath {
@@ -84,6 +87,39 @@ export function buildMapPath(conversation: Conversation, conversations: Record<s
   const nextUp = steps.find((step) => !step.optional && open(step) && ready(step)) ?? steps.find((step) => !step.optional && open(step))
     ?? steps.find((step) => graph.nextUp.has(step.nodeId)) ?? steps.find(open);
   return { id: conversation.id, name: conversation.title || "Untitled path", steps, arrows, finished, total: steps.length, nextUpDocId: nextUp?.docId ?? null };
+}
+
+/**
+ * The path with the roadmap AI is writing right now laid over it: each streamed stage and lesson
+ * appears as soon as it arrives, the way an answer's text streams in. Lessons already on the path
+ * are not repeated; a streamed stage with the same title as one already there joins it.
+ */
+export function withDraftPreview(path: MapPath, draft: RoadmapDraftPreview | null | undefined, conversations: Record<string, Conversation>): MapPath {
+  if (!draft?.stages.length) return path;
+  const steps = [...path.steps];
+  const seen = new Set(steps.map((step) => step.docId));
+  const titled = new Set(steps.map((step) => step.title.trim().toLowerCase()));
+  const stageIds = new Map<string, string>();
+  for (const step of path.steps) if (!stageIds.has(step.stageTitle.trim().toLowerCase())) stageIds.set(step.stageTitle.trim().toLowerCase(), step.stageId);
+  draft.stages.forEach((stage, stageIndex) => {
+    const key = stage.title.trim().toLowerCase();
+    const stageId = stageIds.get(key) ?? `draft-stage-${stageIndex}`;
+    stageIds.set(key, stageId);
+    const added: MapPathStep[] = [];
+    stage.steps.forEach((item, index) => {
+      const known = item.documentId && conversations[item.documentId] ? item.documentId : null;
+      const title = item.title?.trim() || (known ? conversations[known].title : "") || "Untitled";
+      if ((known && seen.has(known)) || (!known && titled.has(title.toLowerCase()))) return;
+      const docId = known ?? `draft:${stageIndex}:${index}`;
+      seen.add(docId); titled.add(title.toLowerCase());
+      added.push({ nodeId: docId, docId, title, status: "not-started", stageId, stageTitle: stage.title, number: 0, optional: false, needs: [], unlocks: [], drafting: true });
+    });
+    // A lesson joins the end of its stage, so stages stay together in reading order.
+    const lastOfStage = steps.map((step) => step.stageId).lastIndexOf(stageId);
+    if (lastOfStage >= 0) steps.splice(lastOfStage + 1, 0, ...added); else steps.push(...added);
+  });
+  steps.forEach((step, index) => { if (step.number !== index + 1) steps[index] = { ...step, number: index + 1 }; });
+  return { ...path, steps, total: steps.length };
 }
 
 /** A draft path AI finished for this path note, waiting to be kept or discarded. */
