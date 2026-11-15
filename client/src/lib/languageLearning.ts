@@ -129,6 +129,17 @@ export interface DocumentLanguageLearning {
   save: (saved: SavedMeaning) => string;
   /** The meaning already saved for this text, if any. */
   savedMeaning: (text: string, pair: LanguagePair) => string | null;
+  /** The document being read. */
+  docId: string;
+  /** Every term the reader has rated or given a meaning, by `language\nkey`. */
+  terms: ReadonlyMap<string, import("./languageReader").LanguageTerm>;
+  /** Rates a term, gives it a meaning or tags it; shows at once everywhere the term appears. */
+  setTerm: (language: string, text: string, patch: import("./languageTerms").TermPatch) => void;
+  /** False for a document hidden from AI: no meaning is asked for. */
+  aiAllowed: boolean;
+  /** Other documents whose text has this word or phrase. */
+  mentions: (text: string) => Array<{ id: string; title: string }>;
+  openDocument: (id: string) => void;
 }
 
 const LOOKUP_INSTRUCTION = [

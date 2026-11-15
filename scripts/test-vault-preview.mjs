@@ -50,6 +50,7 @@ function user() {
 }
 const key = (userId, documentId) => `${userId}/${documentId}`;
 const flashcardRows = { cards: new Map(), reviews: new Map(), seq: 0 };
+const languageTermRows = { terms: new Map(), seq: 0 };
 const ratchetRows = new Map();
 
 /**
@@ -184,6 +185,18 @@ const database = {
     for (const review of reviews) {
       if (!flashcardRows.reviews.has(key(userId, review.id))) flashcardRows.reviews.set(key(userId, review.id), { userId, review, seq: ++flashcardRows.seq });
     }
+  },
+  // Language terms, in memory: the newer copy of a term wins.
+  async saveLanguageTerms({ userId, terms }) {
+    for (const term of terms) {
+      const id = key(userId, `${term.language}\n${term.key}`);
+      const stored = languageTermRows.terms.get(id);
+      if (!stored || stored.term.updatedAt < term.updatedAt) languageTermRows.terms.set(id, { userId, term, seq: ++languageTermRows.seq });
+    }
+  },
+  async readLanguageTerms({ userId, since = 0, limit = 2000 }) {
+    const rows = [...languageTermRows.terms.values()].filter((row) => row.userId === userId && row.seq > since).sort((a, b) => a.seq - b.seq).slice(0, limit);
+    return { terms: rows.map((row) => row.term), cursor: rows.at(-1)?.seq ?? since, more: rows.length === limit };
   },
   async saveRatchetCheck({ userId, documentId, claims, run }) { ratchetRows.set(key(userId, documentId), { claims, run }); },
   async readRatchetCheck({ userId, documentId }) { return ratchetRows.get(key(userId, documentId)) ?? { claims: [], run: null }; },

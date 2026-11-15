@@ -56,6 +56,7 @@ import * as publicMap from "./publicMapRepository.mjs";
 import * as topics from "./topicRepository.mjs";
 import * as library from "./libraryRepository.mjs";
 import * as flashcards from "./flashcardRepository.mjs";
+import * as languageTerms from "./languageTermRepository.mjs";
 import * as ratchet from "./ratchetRepository.mjs";
 import * as interfaceSettings from "./interfaceSettingsRepository.mjs";
 import * as passages from "./passageRepository.mjs";
@@ -451,6 +452,8 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
       catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
     }),
     readFlashcardChanges: (args) => withClient((client) => flashcards.readFlashcardChanges(client, args)),
+    saveLanguageTerms: (args) => withClient((client) => languageTerms.saveLanguageTerms(client, args)),
+    readLanguageTerms: (args) => withClient((client) => languageTerms.readLanguageTerms(client, args)),
     saveRatchetCheck: (args) => withClient(async (client) => {
       // A check's claims replace the document's old ones only together with its receipt.
       await client.query("begin");
