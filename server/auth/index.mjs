@@ -6,6 +6,7 @@ import {
   readAuthSessionId,
 } from "./cookies.mjs";
 import { hashPassword, verifyPassword, verifyPasswordAgainstDecoy } from "./passwords.mjs";
+import { assertNoHoneypot, assertNotDisposable, canonicalEmail, verifyTurnstile } from "./botProtection.mjs";
 import { getPasswordResetEmailConfiguration, sendEmailChangedNotice, sendPasswordResetEmail } from "./passwordResetEmail.mjs";
 import {
   normalizeAccountDeletionPayload,
@@ -46,8 +47,15 @@ export function createAuthService({
     return createAuthSessionCookie(sessionId, runtimeConfig);
   }
 
-  async function signup(payload) {
+  async function signup(payload, { remoteIp = null, fetchImpl } = {}) {
+    assertNoHoneypot(payload);
     const input = normalizeSignupPayload(payload);
+    assertNotDisposable(input.email);
+    await verifyTurnstile({ token: payload?.turnstileToken, remoteIp, env, ...(fetchImpl ? { fetchImpl } : {}) });
+    // One account per inbox: "a.b+x@gmail.com" reaches the same person as "ab@gmail.com".
+    if (typeof database.hasAccountForCanonicalEmail === "function" && await database.hasAccountForCanonicalEmail(canonicalEmail(input.email))) {
+      throw createStatusError(409, "An account with that email already exists.");
+    }
     const passwordHash = await hashPassword(input.password);
     const user = await database.createUser({
       displayName: input.displayName,
@@ -95,8 +103,10 @@ export function createAuthService({
     };
   }
 
-  async function requestPasswordReset(payload) {
+  async function requestPasswordReset(payload, { remoteIp = null, fetchImpl } = {}) {
     const input = normalizePasswordResetRequestPayload(payload);
+    // Reset emails cost money and reach real inboxes, so scripts get the same check as sign-up.
+    await verifyTurnstile({ token: payload?.turnstileToken, remoteIp, env, ...(fetchImpl ? { fetchImpl } : {}) });
     const emailConfiguration = getPasswordResetEmailConfiguration(env);
     const allowDevelopmentToken = !emailConfiguration.configured
       && [undefined, "", "development", "test"].includes(env.NODE_ENV)

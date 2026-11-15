@@ -982,6 +982,8 @@ export async function requestSignup(args: {
   displayName: string;
   email: string;
   password: string;
+  website?: string;
+  turnstileToken?: string;
 }): Promise<AuthenticatedUser> {
   const response = await apiFetch("/api/auth/signup", {
     body: JSON.stringify(args),
@@ -1004,6 +1006,7 @@ export async function requestSignup(args: {
 
 export async function requestPasswordReset(args: {
   email: string;
+  turnstileToken?: string;
 }): Promise<PasswordResetRequestResponse> {
   const response = await apiFetch("/api/auth/password-reset/request", {
     body: JSON.stringify(args),

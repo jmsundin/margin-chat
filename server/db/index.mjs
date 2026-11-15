@@ -3,6 +3,7 @@ import { assertMigrationsReady, loadMigrations, migrateDatabase } from "./migrat
 import {
   changeUserPassword,
   deleteUserAccount,
+  hasAccountForCanonicalEmail,
   createAuthSession,
   createPasswordResetToken,
   createUser,
@@ -389,6 +390,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     chargeHostedRequest: chargeHostedRequestRecord,
     changeUserPassword: changeUserPasswordRecord,
     deleteUserAccount: deleteUserAccountRecord,
+    hasAccountForCanonicalEmail: (canonical) => withClient((client) => hasAccountForCanonicalEmail(client, canonical)),
     settleHostedRequest: (args) => withClient((client) => settleHostedRequest(client, args)),
     findStripeCredits: (args) => withClient((client) => findStripeCredits(client, args)),
     reverseStripeCredit: (args) => withClient((client) => reverseStripeCredit(client, args)),
