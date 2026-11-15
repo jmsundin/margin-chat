@@ -1,3 +1,4 @@
+import { writeSyncedSetting } from "./interfaceSettings";
 import { plainReadingText } from "./languageLearning";
 
 /**
@@ -175,7 +176,7 @@ export const READER_FONTS: ReadonlyArray<{ name: string; stack: string }> = [
   { name: "Rounded", stack: "ui-rounded, 'SF Pro Rounded', 'Hiragino Maru Gothic ProN', 'Nunito', system-ui, sans-serif" },
 ];
 export const DEFAULT_READER_LOOK: ReaderLook = { theme: "system", size: 4, font: 0 };
-const LOOK_KEY = "margin-chat:language-reader:look";
+const LOOK_KEY = "margin-chat:language-reader:look" as const;
 
 export function normalizeReaderLook(value: unknown): ReaderLook {
   const look = value && typeof value === "object" ? value as Partial<ReaderLook> : {};
@@ -189,5 +190,6 @@ export function loadReaderLook(): ReaderLook {
   try { return normalizeReaderLook(JSON.parse(localStorage.getItem(LOOK_KEY) ?? "null")); } catch { return { ...DEFAULT_READER_LOOK }; }
 }
 export function saveReaderLook(look: ReaderLook) {
-  try { localStorage.setItem(LOOK_KEY, JSON.stringify(look)); } catch { /* The look still holds until the page closes. */ }
+  // Saved to the account too, so the reader looks the same on every device.
+  writeSyncedSetting(LOOK_KEY, JSON.stringify(look));
 }
