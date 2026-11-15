@@ -3,12 +3,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReference } from "../types";
 import { useVaultMedia } from "../lib/vaultMedia";
+import { htmlPageTheme, loadHtmlPagePrefs, useAppTheme } from "../lib/htmlPagePrefs";
 import { htmlAssetContentType, htmlAssetPath, htmlPageHasAssets, inlineHtmlAssets } from "../lib/htmlAssets";
 import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
 import { publishPdfNavigation } from "../lib/pdfNavigation";
 import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
-import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
+import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, htmlThemeMessage, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
 import { registerHtmlScreen } from "../lib/htmlScreens";
 import { getPlayContent, hasPlayContent, subscribePlayContent } from "../lib/playContent";
 import { decodeHtmlPageData, encodeHtmlPageData, htmlPageDataPath, loadHtmlStorage, newerHtmlPageData, saveHtmlStorage, sameHtmlPageData, type HtmlPageData } from "../lib/htmlPageData";
@@ -688,6 +689,12 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   const media = useVaultMedia();
   const mediaRef = useRef(media);
   mediaRef.current = media;
+  // The page follows the app's theme unless it was pinned to one. A page with no dark styles of its own stays white.
+  const appTheme = useAppTheme();
+  const prefs = useMemo(() => loadHtmlPagePrefs(props.conversation.id), [props.conversation.id]);
+  const theme = htmlPageTheme(prefs.theme, appTheme);
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   // What the page saved and the vault doesn't hold yet; written after a pause, and at once when the page closes.
   const unsaved = useRef<{ path: string; value: HtmlPageData; timer: number } | null>(null);
   const flushPageData = () => {
@@ -734,7 +741,12 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   }, [props.blob, props.conversation.id, props.file.path]);
 
   // The page's saved storage is read once as it opens; later saves don't reload the frame.
-  const source = useMemo(() => html === null ? null : htmlFrameDocument(html.text, html.storage, htmlPageHasAssets(props.file.path)), [html]);
+  const source = useMemo(() => html === null ? null : htmlFrameDocument(html.text, html.storage,
+    { assets: htmlPageHasAssets(props.file.path), theme: themeRef.current }), [html]);
+  // A change of theme reaches the open page as a message: reloading it would lose where the person is in a game.
+  useEffect(() => {
+    frameRef.current?.contentWindow?.postMessage(htmlThemeMessage(theme), "*");
+  }, [theme]);
   const anchors = useMemo<HtmlAnchor[]>(() => props.anchors.filter((link) => link.anchor.sourceMessageId === HTML_SOURCE_ID)
     .map((link) => ({ id: link.branchConversationId, quote: link.anchor.quote, start: link.anchor.startOffset, end: link.anchor.endOffset })), [props.anchors]);
   const anchorsRef = useRef(anchors);
@@ -825,8 +837,8 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
     <div className="vault-html-stage">
       {/* No same-origin access: the page's scripts run, but can't reach the app, its sign-in or its storage. */}
       <iframe ref={frameRef} className="vault-html-frame" title={name} srcDoc={source} sandbox={HTML_FRAME_SANDBOX}
-        allow="fullscreen; clipboard-write" referrerPolicy="no-referrer" style={height ? { height } : undefined}
-        onLoad={() => { growth.current = { count: 0, at: 0 }; sendAnchors(); }} />
+        allow="fullscreen; clipboard-write" referrerPolicy="no-referrer" style={{ colorScheme: theme, ...(height ? { height } : {}) }} data-theme={theme}
+        onLoad={() => { growth.current = { count: 0, at: 0 }; sendAnchors(); frameRef.current?.contentWindow?.postMessage(htmlThemeMessage(themeRef.current), "*"); }} />
       <div className="vault-file-highlights" aria-hidden="true">
         {marks.map((mark, index) => {
           const first = !firstOfEach.has(mark.id);
