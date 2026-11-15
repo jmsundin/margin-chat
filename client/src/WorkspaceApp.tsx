@@ -5963,8 +5963,8 @@ function WorkspaceAppContent({
   }
 
   /** Show the map beside the document with this roadmap turned on. */
-  function showRoadmapOnMap(pathId: string) {
-    setPathRequest((current) => ({ id: pathId, requestId: (current?.requestId ?? 0) + 1 }));
+  function showRoadmapOnMap(pathId: string, learn = false) {
+    setPathRequest((current) => ({ id: pathId, requestId: (current?.requestId ?? 0) + 1, learn }));
     if (mainViewMode !== "chat") setMainViewMode("chat");
     if (shownSheet.mode === "page") handleExpandSheet();
   }
@@ -6435,10 +6435,16 @@ function WorkspaceAppContent({
   function renderDocumentModeSwitch(conversation: Conversation) {
     if (!hasDocumentModes(conversation)) return null;
     const cards = [...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0);
+    // A roadmap, or a step of one, opens as a course: one step at a time beside the page.
+    const learnPathId = !features.roadmaps ? null : isPathDocument(conversation) ? conversation.id : roadmapSteps.get(conversation.id)?.[0]?.pathId ?? null;
     return <DocumentModeSwitch title={conversation.title} mode={documentModeFor(conversation)}
       offered={{ code: codeShareOf(getEditableDocument(conversation).blocks).cells > 0, language: features.language, board: features.boards }}
       onPick={(mode) => handlePickDocumentMode(conversation, mode)}
       onMap={() => handleShowOnMap(conversation.id)}
+      onLearn={learnPathId ? () => {
+        if (conversation.id !== activeConversation.id) handleSelectConversation(conversation.id, { nextViewMode: "chat" });
+        showRoadmapOnMap(learnPathId, true);
+      } : undefined}
       review={features.flashcards && cards ? { count: cards, onOpen: () => setFlashcardReview({ title: conversation.title || "Untitled", docIds: documentFamilyIds(conversation.id), docId: conversation.id }) } : undefined} />;
   }
 

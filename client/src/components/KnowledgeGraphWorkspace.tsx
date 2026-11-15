@@ -58,7 +58,8 @@ interface Props extends ConversationGraphViewProps {
   /** Paths (roadmaps drawn on the map): making, changing and drafting them. */
   paths?: MapPathActions;
   /** Turn this roadmap on (a new requestId asks again). */
-  pathRequest?: { id: string; requestId: number } | null;
+  /** Turns a roadmap on; `learn` opens it as a course instead of on the map. */
+  pathRequest?: { id: string; requestId: number; learn?: boolean } | null;
 }
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
@@ -212,6 +213,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     if (!pathRequest) return;
     if (openedFromCourse.current === pathRequest.id) { openedFromCourse.current = null; return; }
     setPicking(null); setActivePath(pathRequest.id);
+    if (pathRequest.learn) setPathLayout("list");
   }, [pathRequest?.requestId]);
   // A path that was deleted turns itself off.
   useEffect(() => { if (activePathId && conversations[activePathId] && !isPathDocument(conversations[activePathId])) setActivePath(null); }, [activePathId, conversations]);

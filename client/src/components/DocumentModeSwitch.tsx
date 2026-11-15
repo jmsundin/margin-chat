@@ -12,6 +12,8 @@ export interface DocumentModeSwitchProps {
   onPick: (mode: DocumentMode) => void;
   /** The map around this document, beside it. */
   onMap?: () => void;
+  /** The roadmap this document is (or is a step of), as a course. */
+  onLearn?: () => void;
   /** This document's flashcards, in their own full-screen review. */
   review?: { count: number; onOpen: () => void };
 }
@@ -20,7 +22,7 @@ export interface DocumentModeSwitchProps {
  * The button at the top of a document that names its mode and switches it. Each mode is a
  * different interface for the same document, so it lives here instead of among the ⋯ menu's settings.
  */
-export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap, review }: DocumentModeSwitchProps) {
+export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap, onLearn, review }: DocumentModeSwitchProps) {
   const popupId = useId();
   const trigger = useRef<HTMLButtonElement>(null);
   const popup = useRef<HTMLDivElement>(null);
@@ -87,11 +89,16 @@ export default function DocumentModeSwitch({ title, mode, offered, onPick, onMap
         <span className="document-mode-name">{DOCUMENT_MODE_LABELS[candidate]}{candidate === "read" ? <kbd>⌘E</kbd> : null}</span>
         <span className="document-mode-hint">{DOCUMENT_MODE_HINTS[candidate]}</span>
       </button>)}
-      {onMap || (review && review.count > 0) ? <div className="document-mode-separator" role="separator" /> : null}
+      {onMap || onLearn || (review && review.count > 0) ? <div className="document-mode-separator" role="separator" /> : null}
       {onMap ? <button type="button" role="menuitem" data-mode="map" onClick={() => { close(); onMap(); }}>
         <span className="document-mode-dot" aria-hidden="true" />
         <span className="document-mode-name">Map<kbd>⌘G</kbd></span>
         <span className="document-mode-hint">What this document connects to, beside it</span>
+      </button> : null}
+      {onLearn ? <button type="button" role="menuitem" data-mode="learn" onClick={() => { close(); onLearn(); }}>
+        <span className="document-mode-dot" aria-hidden="true" />
+        <span className="document-mode-name">Learn</span>
+        <span className="document-mode-hint">This roadmap as a course, one step at a time</span>
       </button> : null}
       {review && review.count > 0 ? <button type="button" role="menuitem" data-mode="review" onClick={() => { close(); review.onOpen(); }}>
         <span className="document-mode-dot" aria-hidden="true" />
