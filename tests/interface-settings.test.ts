@@ -119,7 +119,7 @@ describe("interface settings sync on a device", () => {
     const last = browser.sent.at(-1)!;
     expect(Object.keys(last).sort()).toEqual(["margin-chat-theme", FEATURES_KEY].sort());
     expect(last["margin-chat-theme"]).toBe("dark");
-    expect(parseFeatures(last[FEATURES_KEY])).toEqual({ flashcards: false, roadmaps: false, boards: false, claims: false, voice: true, groups: false, spaces: false, outline: false, tiles: false, mapTools: false });
+    expect(parseFeatures(last[FEATURES_KEY])).toEqual({ flashcards: false, roadmaps: false, boards: false, claims: false, voice: true, groups: false, spaces: false, outline: false, tiles: false, mapTools: false, language: false });
     // Writing the value the account already has sends nothing.
     const before = browser.sent.length;
     writeSyncedSetting("margin-chat-theme", "dark");
@@ -144,7 +144,7 @@ describe("features", () => {
     browser = fakeBrowser({});
     expect(hasFeatureChoices()).toBe(false);
     expect(Object.values(readFeatures()).every((on) => !on)).toBe(true);
-    expect(parseFeatures("{\"voice\":\"yes\",\"boards\":true,\"sparkles\":true}")).toEqual({ flashcards: false, roadmaps: false, boards: true, claims: false, voice: false, groups: false, spaces: false, outline: false, tiles: false, mapTools: false });
+    expect(parseFeatures("{\"voice\":\"yes\",\"boards\":true,\"sparkles\":true}")).toEqual({ flashcards: false, roadmaps: false, boards: true, claims: false, voice: false, groups: false, spaces: false, outline: false, tiles: false, mapTools: false, language: false });
     expect(parseFeatures("not json").boards).toBe(false);
     expect(parseFeatures("[true]").boards).toBe(false);
   });
@@ -152,7 +152,7 @@ describe("features", () => {
   test("presets set every switch, and the matching preset is found again", () => {
     browser = fakeBrowser({});
     applyFeaturePreset("student");
-    expect(readFeatures()).toEqual({ flashcards: true, roadmaps: false, boards: false, claims: false, voice: true, groups: false, spaces: false, outline: true, tiles: false, mapTools: false });
+    expect(readFeatures()).toEqual({ flashcards: true, roadmaps: false, boards: false, claims: false, voice: true, groups: false, spaces: false, outline: true, tiles: false, mapTools: false, language: true });
     expect(matchingPreset(readFeatures())).toBe("student");
     setFeature("boards", true);
     expect(matchingPreset(readFeatures())).toBeNull();
@@ -173,15 +173,15 @@ describe("features", () => {
 
   test("an existing account keeps on only what it already uses", () => {
     expect(featuresFromUsage({ roadmaps: true, boards: false, flashcards: true, groups: true }))
-      .toEqual({ flashcards: true, roadmaps: true, boards: false, claims: false, voice: false, groups: true, spaces: false, outline: false, tiles: false, mapTools: false });
+      .toEqual({ flashcards: true, roadmaps: true, boards: false, claims: false, voice: false, groups: true, spaces: false, outline: false, tiles: false, mapTools: false, language: false });
   });
 
   test("a feature added after the choice was saved is still unchosen, and only it", () => {
     browser = fakeBrowser({});
-    expect(unchosenFeatures().length).toBe(10);
+    expect(unchosenFeatures().length).toBe(11);
     localStorage.setItem(FEATURES_KEY, JSON.stringify({ flashcards: true, roadmaps: false, boards: false, claims: false, voice: false }));
-    expect(unchosenFeatures().sort()).toEqual(["groups", "mapTools", "outline", "spaces", "tiles"]);
-    saveFeatures({ groups: true, spaces: false, outline: false, tiles: false, mapTools: false });
+    expect(unchosenFeatures().sort()).toEqual(["groups", "language", "mapTools", "outline", "spaces", "tiles"]);
+    saveFeatures({ groups: true, spaces: false, outline: false, tiles: false, mapTools: false, language: false });
     expect(unchosenFeatures()).toEqual([]);
     expect(readFeatures().flashcards).toBe(true);
   });

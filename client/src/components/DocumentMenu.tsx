@@ -72,6 +72,11 @@ export interface DocumentMenuProps {
   onMoreFeatures?: () => void;
   /** Language learning on this page: tap a word to see what it means. */
   languageLearning?: { on: boolean; onToggle: (on: boolean) => void };
+  /**
+   * The document has its own mode button (Write, Read, Language, Board), so Page view offers only
+   * how Write shows its Markdown, and picking one switches the document to Write.
+   */
+  onPickWritingView?: () => void;
 }
 
 const PAGE_MODES = [
@@ -92,7 +97,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning, onMoreFeatures }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning, onPickWritingView, onMoreFeatures }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -345,10 +350,10 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <span aria-hidden="true">{pageViewOpen ? "⌄" : "›"}</span>
         </button>
         {pageViewOpen ? <div role="group" aria-label="Page view" className="document-menu-choices">
-          {PAGE_MODES.map((option) => {
+          {PAGE_MODES.filter((option) => !onPickWritingView || option.mode !== "reading").map((option) => {
             const checked = !languageLearning?.on && readDocumentViewMode() === option.mode;
             return <button key={option.mode} type="button" role="menuitemradio" aria-checked={checked}
-              title={option.title} onClick={() => { close(true); if (languageLearning?.on) languageLearning.onToggle(false); saveDocumentViewMode(option.mode); }}>
+              title={option.title} onClick={() => { close(true); if (languageLearning?.on) languageLearning.onToggle(false); saveDocumentViewMode(option.mode); onPickWritingView?.(); }}>
               <span>{option.label}</span>
               <span className="document-menu-check" aria-hidden="true">{checked ? "✓" : ""}</span>
             </button>;

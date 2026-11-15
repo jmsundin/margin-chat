@@ -128,6 +128,9 @@ export interface DocumentPanelProps {
   onAskDiagram?: (request: DiagramAIRequest) => Promise<string>;
   /** Language learning mode: tapping or selecting text shows what it means. */
   languageLearning?: DocumentLanguageLearning;
+  /** Write or Read for this document; see lib/documentModes.ts. */
+  pageMode?: "write" | "read";
+  onPageModeChange?: (mode: "write" | "read") => void;
   onStop: () => void;
   onSelection: (selection: SelectionDraft) => void;
   onClearSelection?: () => void;
@@ -673,6 +676,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {!showEditor ? null : editorMounted ? <RichDocumentEditor conversationId={conversation.id} blocks={editorBlocks} sourceMessages={conversation.messages} readOnlyBlockIds={streamingIds} decorations={decorations} hidePlaceholder={Boolean(invocation)}
         moveTargets={props.moveTargets} onMoveBlock={props.onMoveBlock} linkSuggestions={props.linkSuggestions}
         resolveWikiLink={props.resolveWikiLink} onOpenWikiLink={props.onOpenWikiLink} onAskDiagram={props.onAskDiagram} languageLearning={props.languageLearning}
+        pageMode={props.pageMode} onPageModeChange={props.onPageModeChange}
         authorship={authorship ? { mode: authorshipView.mode, onlyMine: authorshipView.onlyMine, runs: authorship.runs } : null}
         compactModes={Boolean(props.pageBar || props.quiet)}
         toolbarStart={props.pageBar || historyPrompts.length || (authorship?.summary.totalLines && authorshipShown) ? <>

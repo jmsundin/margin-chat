@@ -48,6 +48,10 @@
   .is-quiet-page .document-panel > .document-header .document-header-actions:has(.document-roadmap-chip) { opacity: 1; }
   .is-quiet-page .document-panel > .document-header .document-header-actions:has(.document-roadmap-chip) > :not(.document-roadmap-chip) { opacity: 0; transition: opacity .15s ease; }
   .is-quiet-page .document-panel:is(:hover, :focus-within) > .document-header .document-header-actions > :not(.document-roadmap-chip) { opacity: 1; }
+  /* Write is the plain page, so its mode button waits with the rest; Read, Language and Board stay named, so you know where you are. */
+  .is-quiet-page .document-panel > .document-header .document-header-actions:has(.document-mode-trigger:not([data-mode="write"])) { opacity: 1; }
+  .is-quiet-page .document-panel > .document-header .document-header-actions:has(.document-mode-trigger:not([data-mode="write"])) > :not(.document-mode-switch, .document-roadmap-chip) { opacity: 0; transition: opacity .15s ease; }
+  .is-quiet-page .document-panel:is(:hover, :focus-within) > .document-header .document-header-actions:has(.document-mode-trigger:not([data-mode="write"])) > * { opacity: 1; }
 
   /* Authorship and Live Preview / Source / Reading show only when you point at their row. ⌘E still switches views. */
   .is-quiet-page .live-document-modes { opacity: 0; }

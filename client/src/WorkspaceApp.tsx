@@ -84,6 +84,9 @@ import MinimizedChildNodes, { getMinimizedChildNodesWidth, type MinimizedChildNo
 import DocumentBreadcrumbs from "./components/DocumentBreadcrumbs";
 import type { GraphDockControls } from "./components/ConversationGraphView";
 import DocumentMenu from "./components/DocumentMenu";
+import DocumentModeSwitch from "./components/DocumentModeSwitch";
+import { documentModeOf, saveDocumentModePick, useDocumentModePicks, type DocumentMode } from "./lib/documentModes";
+import { readDocumentViewMode, subscribeDocumentEditorPreference } from "./lib/documentEditorPreference";
 import DocumentViewsMenu from "./components/DocumentViewsMenu";
 import WorkspaceModeToggle from "./components/WorkspaceModeToggle";
 import { viewForShortcut } from "./lib/workspaceViewShortcuts";
@@ -1549,6 +1552,9 @@ function WorkspaceAppContent({
   }, [flashcards.scheduled]);
   /** Which opt-in features are on (Settings → Features); every device of the account matches. */
   const features = useFeatures();
+  /** Write or Read as last picked per document, and the device's page view for documents never picked. */
+  const documentModePicks = useDocumentModePicks();
+  const deviceDocumentView = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentViewMode, () => "live" as const);
   const dismissedFeatureHints = useDismissedFeatureHints();
   /**
    * When a page uses a feature that is off (flashcard lines, a roadmap), one quiet line says so
@@ -1592,6 +1598,7 @@ function WorkspaceAppContent({
       groups: Object.keys(current.groups ?? {}).some((id) => !id.startsWith("example-")),
       spaces: Object.keys(current.sessions?.items ?? {}).some((id) => !id.startsWith("example-")),
       tiles: mainViewMode === "tiles",
+      language: conversations.some((conversation) => Boolean(conversation.languageLearning)),
     });
     saveFeatures(Object.fromEntries(unchosen.map((id) => [id, usage[id]])));
   }, [guest, settingsLoaded, vault.ready, flashcards.totalCards]);
@@ -6383,6 +6390,40 @@ function WorkspaceAppContent({
     return getPresentedParentId(state.conversations, id) === null;
   }
 
+  /** Documents with a page to write in can switch modes; files, margin notes and chats keep their own view. */
+  function hasDocumentModes(conversation: Conversation) {
+    return !conversation.vaultFile && !isCompactDocument(conversation) && Boolean(conversation.document || conversation.kind === "note");
+  }
+
+  function documentModeFor(conversation: Conversation): DocumentMode {
+    return documentModeOf(conversation, documentModePicks, deviceDocumentView);
+  }
+
+  /** Moves a document to another mode, leaving the one it was in: a board stops being a board, Language turns off. */
+  function handlePickDocumentMode(conversation: Conversation, mode: DocumentMode) {
+    const current = documentModeFor(conversation);
+    if (mode === current) return;
+    if (current === "board") handleToggleBoard(conversation.id);
+    if (current === "language") handleLanguageLearningChange(conversation.id, null);
+    if (mode === "write" || mode === "read") saveDocumentModePick(conversation.id, mode);
+    if (mode === "board") handleToggleBoard(conversation.id);
+    if (mode === "language") {
+      const pair = conversation.languageLearning ?? defaultLanguagePair();
+      rememberLanguagePair(pair);
+      handleLanguageLearningChange(conversation.id, pair);
+    }
+  }
+
+  function renderDocumentModeSwitch(conversation: Conversation) {
+    if (!hasDocumentModes(conversation)) return null;
+    const cards = [...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0);
+    return <DocumentModeSwitch title={conversation.title} mode={documentModeFor(conversation)}
+      offered={{ language: features.language, board: features.boards }}
+      onPick={(mode) => handlePickDocumentMode(conversation, mode)}
+      onMap={() => handleShowOnMap(conversation.id)}
+      review={features.flashcards && cards ? { count: cards, onOpen: () => setFlashcardReview({ title: conversation.title || "Untitled", docIds: documentFamilyIds(conversation.id), docId: conversation.id }) } : undefined} />;
+  }
+
   function renderDocumentMenu(conversation: Conversation) {
     return <DocumentMenu conversation={conversation}
         className="document-header-menu-trigger"
@@ -6396,20 +6437,21 @@ function WorkspaceAppContent({
         onAskAboutNote={conversation.document || conversation.kind === "note" ? (id) => setNoteChatFor(id) : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI}
-        // With Boards off, a board keeps its way back to a plain document.
-        onToggleBoard={features.boards || conversation.nodeType === "board" ? handleToggleBoard : undefined}
+        // Board, Language, Read and Review are modes now, switched from the button in the document's header.
+        onToggleBoard={hasDocumentModes(conversation) ? undefined : features.boards || conversation.nodeType === "board" ? handleToggleBoard : undefined}
         onMakeRoadmap={features.roadmaps && conversation.nodeType !== "roadmap" && !isHiddenFromAI(conversation) ? handleMakeRoadmapFrom : undefined}
         onShowOnMap={handleShowOnMap}
         flashcardCount={[...documentFamilyIds(conversation.id)].reduce((total, id) => total + (flashcardCountByDoc.get(id) ?? 0), 0)}
         onMakeFlashcards={canMakeCards(conversation) ? (id) => setMakeCards({ docId: id }) : undefined}
         onCheckClaims={features.claims && (conversation.document || conversation.kind === "note") && !conversation.vaultFile && !isHiddenFromAI(conversation)
           ? (id) => { ratchet.load(id); setClaimsView({ id, focus: null }); } : undefined}
-        onReviewFlashcards={!features.flashcards ? undefined : (id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id), docId: id })}
+        onReviewFlashcards={!features.flashcards || hasDocumentModes(conversation) ? undefined : (id) => setFlashcardReview({ title: state.conversations[id]?.title || "Untitled", docIds: documentFamilyIds(id), docId: id })}
         onSetAgentEdit={(conversation.document || conversation.kind === "note") && !conversation.vaultFile ? handleSetAgentEdit : undefined}
         onRevealInFolder={vault.revealInFolder ? handleRevealInFolder : undefined}
         onMoreFeatures={openFeatureSettings}
         pageView={quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && conversation.nodeType !== "board"}
-        languageLearning={quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && conversation.nodeType !== "board" ? {
+        onPickWritingView={hasDocumentModes(conversation) ? () => handlePickDocumentMode(conversation, "write") : undefined}
+        languageLearning={quietPage && !hasDocumentModes(conversation) && !conversation.vaultFile && !isCompactDocument(conversation) && conversation.nodeType !== "board" ? {
           on: Boolean(conversation.languageLearning),
           onToggle: (on) => {
             if (!on) { handleLanguageLearningChange(conversation.id, null); return; }
@@ -6437,8 +6479,10 @@ function WorkspaceAppContent({
     const claimCount = view === "chat" ? ratchet.documents[conversation.id]?.claims.length ?? 0 : 0;
     const roadmap = view === "chat" && isPathDocument(conversation) ? buildMapPath(conversation, state.conversations) : null;
     const steps = view === "chat" ? (roadmapSteps.get(conversation.id) ?? []).filter((step) => step.pathId !== conversation.id).slice(0, 2) : [];
-    if (!(view === "chat" && noteCount) && !claimCount && !roadmap && !steps.length) return null;
+    const modeSwitch = view === "chat" && !isMobileViewport ? renderDocumentModeSwitch(conversation) : null;
+    if (!(view === "chat" && noteCount) && !claimCount && !roadmap && !steps.length && !modeSwitch) return null;
     return <>
+      {modeSwitch}
       {roadmap ? <button type="button" className="document-roadmap-chip" title="Show this roadmap on the map"
         onClick={() => showRoadmapOnMap(conversation.id)}>Roadmap <span>{roadmap.finished}/{roadmap.total}</span></button> : null}
       {steps.map((step) => <button key={step.pathId} type="button" className="document-roadmap-chip" title={`Show “${step.name}” on the map`}
@@ -6508,6 +6552,10 @@ function WorkspaceAppContent({
     const bareHeader = !embedded && view === "chat" && isMobileViewport;
     // A roadmap is drawn on the Map beside its document now; its document reads like any other.
     const roadmapPage = false;
+    // Read, Language and Board show only their own controls: the AI instruction line belongs to Write.
+    const modes = hasDocumentModes(conversation);
+    const mode = modes ? documentModeFor(conversation) : "write";
+    const writing = mode === "write";
     return <DocumentPanel key={embedded ? `roadmap-sheet:${conversation.id}` : conversation.id} conversation={conversation}
       compact={isCompactDocument(conversation)} bareHeader={bareHeader}
       onMinimize={!embedded && view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
@@ -6529,13 +6577,15 @@ function WorkspaceAppContent({
       marginNotes={getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       marginMarks={marginMarks} marginNoteWidth={Math.min(320, Math.max(220, getMarginColumnWidth(conversation)))}
       activeMarginNoteId={activeConversation.id}
-      aiInstruction={!conversation.vaultFile && !isCompactDocument(conversation) ? <>{renderAnswerSourcesLine(conversation)}<AIInstructionLine value={conversation.aiInstruction}
+      pageMode={modes && (mode === "write" || mode === "read") ? mode : undefined}
+      onPageModeChange={modes ? (next) => handlePickDocumentMode(conversation, next) : undefined}
+      aiInstruction={writing && !conversation.vaultFile && !isCompactDocument(conversation) ? <>{renderAnswerSourcesLine(conversation)}<AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /></> : undefined}
       onWriteBack={(blockId, text) => handleWriteBack(conversation.id, blockId, text)}
       // The quiet page shows nothing above the text unless it has something to say: Tell the AI and
       // how the AI joins in are set in the Ask panel, and the page view in the document's ⋯ menu.
       quiet={quietPage && !conversation.vaultFile && !isCompactDocument(conversation)}
-      pageBar={quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && (renderAnswerSourcesLine(conversation) || conversation.aiInstruction || inheritedAIInstruction(conversation))
+      pageBar={writing && quietPage && !conversation.vaultFile && !isCompactDocument(conversation) && (renderAnswerSourcesLine(conversation) || conversation.aiInstruction || inheritedAIInstruction(conversation))
         ? <div className="document-page-bar">
         {renderAnswerSourcesLine(conversation)}
         {conversation.aiInstruction || inheritedAIInstruction(conversation) ? <AIInstructionLine compact value={conversation.aiInstruction}
@@ -7260,6 +7310,7 @@ function WorkspaceAppContent({
                       {/* On computers each document's own header holds it. */}
                       {showSpaceStart ? null : <DocumentMapButton open={shownSheet.mode !== "page"} onToggle={handleToggleDocumentMap} />}
                       {isMobileViewport && maximizedDocument ? renderFullScreenButton() : null}
+                      {isMobileViewport && !showSpaceStart ? renderDocumentModeSwitch(activeConversation) : null}
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
                         {activeConversation.document || activeConversation.kind === "note" ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
                           onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
