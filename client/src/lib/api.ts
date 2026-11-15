@@ -1078,6 +1078,18 @@ export async function requestLogout(): Promise<void> {
   ensureOk(response, payload, "Logout failed.");
 }
 
+/**
+ * What the account keeps outside the vault (billing history, flashcard reviews, language words,
+ * interface settings), for Download vault. Null when this version of the server has no export yet.
+ */
+export async function requestAccountExport(): Promise<unknown | null> {
+  const response = await apiFetch("/api/auth/account/export", { credentials: "same-origin", method: "GET" });
+  const payload = (await readJson(response)) as unknown;
+  if (response.status === 404) return null;
+  ensureOk(response, payload as ErrorPayload | null, "Unable to read your account data.");
+  return payload;
+}
+
 /** Deletes the signed-in account for good, after checking its password and the typed confirmation. */
 export async function requestDeleteAccount(args: { password: string; confirmation: string }): Promise<void> {
   const response = await apiFetch("/api/auth/account/delete", {
