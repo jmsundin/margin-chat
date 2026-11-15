@@ -17,3 +17,6 @@ export interface CodeCellScope {
 }
 
 export const CodeCellScopeContext = createContext<CodeCellScope | null>(null);
+
+/** Code mode's Run all: every cell of the document whose id is `detail.documentId` runs, in page order. */
+export const RUN_ALL_CELLS_EVENT = "margin-chat:run-code-cells";

@@ -12,7 +12,7 @@ import { java } from "@codemirror/lang-java";
 import { html } from "@codemirror/lang-html";
 import { css } from "@codemirror/lang-css";
 import { CODE_LANGUAGE_LABELS, codeCellKind, previewDocument, previewPage, sqlSetup, type CodeLanguage } from "../lib/codeRunner/languages";
-import { CodeCellScopeContext } from "../lib/codeRunner/codeCellScope";
+import { CodeCellScopeContext, RUN_ALL_CELLS_EVENT } from "../lib/codeRunner/codeCellScope";
 import { runCode, type RunEvent, type RunResult } from "../lib/codeRunner/runner";
 import { codeSuggestions } from "../lib/codeRunner/ghostText";
 import { requestCodeSuggestion } from "../lib/api";
@@ -79,7 +79,7 @@ export default function CodeCell({ language, source, index, dark }: CodeCellProp
   const [result, setResult] = useState<RunResult | null>(null);
   const [running, setRunning] = useState(false);
   const abort = useRef<AbortController | null>(null);
-  const latest = useRef({ scope, index, language, text, run: () => undefined as void });
+  const latest = useRef({ scope, index, language, text, running: false, run: () => undefined as void });
   const labelId = useId();
 
   /** The code as its fence keeps it: trailing blank lines aren't stored, so an Enter at the end is not a change. */
@@ -161,6 +161,17 @@ export default function CodeCell({ language, source, index, dark }: CodeCellProp
 
   useEffect(() => () => abort.current?.abort(), []);
 
+  // Code mode's Run all: every cell of that document runs, in page order, each runtime queuing its own.
+  useEffect(() => {
+    function onRunAll(event: Event) {
+      const documentId = (event as CustomEvent<{ documentId: string }>).detail?.documentId;
+      const owner = host.current?.closest<HTMLElement>("[data-block-editor-conversation-id]")?.dataset.blockEditorConversationId;
+      if (documentId && owner === documentId && !latest.current.running) latest.current.run();
+    }
+    window.addEventListener(RUN_ALL_CELLS_EVENT, onRunAll);
+    return () => window.removeEventListener(RUN_ALL_CELLS_EVENT, onRunAll);
+  }, []);
+
   async function run() {
     if (kind !== "run" || language === "html" || language === "css") return;
     if (running) { abort.current?.abort(); return; }
@@ -197,7 +208,7 @@ export default function CodeCell({ language, source, index, dark }: CodeCellProp
     setStatus("");
     setResult(outcome);
   }
-  latest.current = { scope, index, language, text, run: () => { void run(); } };
+  latest.current = { scope, index, language, text, running, run: () => { void run(); } };
 
   const page = useMemo(() => {
     if (kind !== "preview") return null;
