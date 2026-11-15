@@ -249,7 +249,7 @@ try {
   assert.equal(documentMenuTrigger(sideId).getAttribute("aria-label"), "Options for Side research");
   checks.push("New side document attaches a side document to the main document and exposes its renamed sidebar entry and breadcrumb");
 
-  const headerMenu = pane(sideId).querySelector('.document-header [aria-haspopup="menu"]');
+  const headerMenu = pane(sideId).querySelector('.document-header [aria-haspopup="menu"]:not(.document-mode-trigger)');
   assert(headerMenu, "Every document exposes its menu beside its title.");
   await click(headerMenu);
   const headerActions = [...browser.document.querySelectorAll('[role="menu"] [role^="menuitem"]')].map((item) => item.textContent?.trim());
