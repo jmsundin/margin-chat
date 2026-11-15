@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import DismissibleDetails from "./DismissibleDetails";
 import StatusMark, { ROADMAP_STATUSES } from "./RoadmapStatusMark";
 import type { MapOverlayContext } from "./ConversationGraphView";
 import { ROADMAP_STATUS_LABELS, roadmapDraftLink, type RoadmapChange } from "../lib/roadmap";
-import { waitingPathDraft, type MapPath, type MapPathStep, type MapPathSummary } from "../lib/mapPaths";
+import { waitingPathDraft, type MapPath, type MapPathSummary } from "../lib/mapPaths";
 import type { AgentProgress } from "../lib/useChatStreams";
 import type { AgentRoadmapProposal, Conversation, RoadmapStatus } from "../types";
 import "./MapPaths.css";
@@ -29,8 +29,6 @@ export interface MapPathActions {
 }
 
 const PathIcon = () => <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="18.5" r="2.4" /><circle cx="19" cy="5.5" r="2.4" /><path d="M7.2 17.2C14 15 9 9.5 16.8 6.8" /></svg>;
-const ListIcon = () => <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8.5 6.5h11M8.5 12h11M8.5 17.5h11" /><circle cx="4.5" cy="6.5" r=".9" /><circle cx="4.5" cy="12" r=".9" /><circle cx="4.5" cy="17.5" r=".9" /></svg>;
-const MapIcon = () => <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="7" r="2.2" /><circle cx="18" cy="9" r="2.2" /><circle cx="10" cy="17" r="2.2" /><path d="m8 8 8 .6M7.3 9l1.9 6.1M16.4 10.6l-4.6 5" /></svg>;
 
 /** The toolbar's Paths menu: turn a path on, start one by hand, or have AI draft one. */
 export function MapPathsMenu({ paths, activeId, onPick, onNew, onDraft }: {
@@ -173,17 +171,15 @@ export function MapPathPickBanner({ count, onCancel, onDone }: { count: number; 
  * The path bar at the bottom of the map: progress, ‹ step ›, Map | List and ✕,
  * with the current step's strip above it (status, needs first, unlocks, AI).
  */
-export function MapPathBar({ path, trail, conversations, currentDocId, layout, actions, message, onStep, onLayout, onClose, onOpenNote, onOpenStep, onGoIn, onGoTo, onMessage }: {
+export function MapPathBar({ path, trail, conversations, currentDocId, actions, message, onStep, onClose, onOpenNote, onOpenStep, onGoIn, onGoTo, onMessage }: {
   path: MapPath;
   /** Paths this one was gone into from, outermost first. */
   trail: MapPathSummary[];
   conversations: Record<string, Conversation>;
   currentDocId: string | null;
-  layout: "map" | "list";
   actions: MapPathActions;
   message: string | null;
   onStep(docId: string): void;
-  onLayout(layout: "map" | "list"): void;
   onClose(): void;
   onOpenNote(): void;
   onOpenStep(docId: string): void;
@@ -223,6 +219,9 @@ export function MapPathBar({ path, trail, conversations, currentDocId, layout, a
         <select aria-label="Status" value={step.status} onChange={(event) => run(actions.onChange(path.id, { kind: "status", nodeId: step.nodeId, status: event.target.value as RoadmapStatus }))}>
           {ROADMAP_STATUSES.map((status) => <option key={status} value={status}>{ROADMAP_STATUS_LABELS[status]}</option>)}
         </select>
+        <label className="map-path-optional" title="Optional lessons are drawn dashed and never marked next">
+          <input type="checkbox" checked={step.optional} onChange={(event) => run(actions.onChange(path.id, { kind: "optional", nodeId: step.nodeId, optional: event.target.checked }))} /> Optional
+        </label>
       </header>
       {step.needs.length || step.unlocks.length ? <div className="map-path-links">
         {step.needs.length ? <span>Needs first {step.needs.map((id) => <button key={id} type="button" onClick={() => onStep(id)}>{titleOf(id)}</button>)}</span> : null}
@@ -251,10 +250,6 @@ export function MapPathBar({ path, trail, conversations, currentDocId, layout, a
         </button>
         <button type="button" aria-label="Next step" disabled={!path.steps.length || index === path.steps.length - 1} onClick={() => onStep(path.steps[index < 0 ? 0 : index + 1]?.docId)}>›</button>
       </span>
-      <span className="map-path-layouts" role="group" aria-label="Layout">
-        <button type="button" aria-pressed={layout === "map"} aria-label="Map" title="On the map" onClick={() => onLayout("map")}><MapIcon /><span>Map</span></button>
-        <button type="button" aria-pressed={layout === "list"} aria-label="List" title="As a list" onClick={() => onLayout("list")}><ListIcon /><span>List</span></button>
-      </span>
       <button type="button" className="map-path-close" aria-label="Turn the path off" title="Turn the path off" onClick={onClose}>×</button>
     </div>
   </div>;
@@ -264,31 +259,4 @@ function draftSize(proposal: AgentRoadmapProposal) {
   const steps = proposal.stages.reduce((sum, stage) => sum + stage.steps.length, 0);
   const fresh = proposal.stages.reduce((sum, stage) => sum + stage.steps.filter((item) => !item.documentId).length, 0);
   return `${steps} step${steps === 1 ? "" : "s"}${fresh ? `, ${fresh} new note${fresh === 1 ? "" : "s"}` : ""}`;
-}
-
-/** List: the same steps in order, stage by stage, over the dimmed map. */
-export function MapPathList({ path, currentDocId, onStep }: { path: MapPath; currentDocId: string | null; onStep(docId: string): void }) {
-  const listRef = useRef<HTMLOListElement>(null);
-  useEffect(() => {
-    listRef.current?.querySelector(".is-current")?.scrollIntoView?.({ block: "nearest" });
-  }, [currentDocId]);
-  const stages: { id: string; title: string; steps: MapPathStep[] }[] = [];
-  for (const step of path.steps) {
-    const last = stages.at(-1);
-    if (last?.id === step.stageId) last.steps.push(step); else stages.push({ id: step.stageId, title: step.stageTitle, steps: [step] });
-  }
-  return <div className="map-path-list" data-graph-ui="true">
-    <ol ref={listRef}>
-      {stages.map((stage) => <li key={stage.id} className="map-path-list-stage">
-        <h3>{stage.title}<span>{stage.steps.filter((step) => step.status === "done" || step.status === "skipped").length}/{stage.steps.length}</span></h3>
-        <ol>{stage.steps.map((step) => <li key={step.docId}>
-          <button type="button" className={`${step.docId === currentDocId ? "is-current" : ""}${step.docId === path.nextUpDocId ? " is-next" : ""}`} onClick={() => onStep(step.docId)}>
-            <span className="map-path-list-number">{step.number}</span><StatusMark status={step.status} /><span>{step.title}</span>
-            {step.docId === path.nextUpDocId ? <em>Next up</em> : null}
-          </button>
-        </li>)}</ol>
-      </li>)}
-      {!path.steps.length ? <li className="map-path-list-empty">No steps yet. Draft it with AI from the Paths menu, or make a path by clicking notes.</li> : null}
-    </ol>
-  </div>;
 }

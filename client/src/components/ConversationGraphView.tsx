@@ -330,6 +330,8 @@ export interface ConversationGraphViewProps {
   toolbarTrailing?: ReactNode;
   /** More actions for the map's ⋯ menu (explore, history, add). */
   menuItems?: ReactNode;
+  /** Hides Note / Around / Topic / All and zoom, e.g. while a roadmap fills the pane as a course. */
+  scopeHidden?: boolean;
   /** Asks the map to show this much of itself, e.g. everything when a roadmap is turned on so all its steps are in view. */
   scopeRequest?: { choice: MapScopeChoice; requestId: number } | null;
   /** Offers other places to look for a map search; `matchedIds` are the documents it found, best first. */
@@ -952,6 +954,8 @@ function GraphNodeBase({
         isMoving ? "is-moving" : "",
         isMultiSelected ? "is-multi-selected" : "",
         isNote ? "is-note" : "",
+        // Public sources you kept (Wikipedia and other topics) draw hollow, your own notes filled.
+        conversation.publicTopic ? "is-public" : "",
         lensDimmed ? "is-lens-dimmed" : "",
         searchMatch ? "is-search-match" : "",
         spotlightHeat ? `is-spotlight is-spotlight-heat-${spotlightHeat}` : "",
@@ -1228,6 +1232,7 @@ export default function ConversationGraphView({
   toolbarTrailing,
   menuItems,
   scopeRequest,
+  scopeHidden,
   renderSearchFallback,
   onSearchSubmit,
   searchRequest,
@@ -4445,8 +4450,8 @@ export default function ConversationGraphView({
             <button type="button" onClick={openExplorer}>View all results · {sourceItems.length}</button>
           </div> : null}
         </div>
-        <MapScopeSwitch value={scopeChoice} onChange={chooseScope} />
-        <span className="graph-map-scope-count" title={scopeLabel}>{scopedIds.size} note{scopedIds.size === 1 ? "" : "s"}</span>
+        {scopeHidden ? null : <><MapScopeSwitch value={scopeChoice} onChange={chooseScope} />
+        <span className="graph-map-scope-count" title={scopeLabel}>{scopedIds.size} note{scopedIds.size === 1 ? "" : "s"}</span></>}
         {/* Read out where the map is; the switch and the count show it on screen. */}
         <span className="graph-map-scope public-map-visually-hidden" aria-live="polite">{focusedTerritory ? `${focusedTerritory.label} · ${focusedTerritory.nodes.length} sources` : `${scopeLabel} · ${scopedIds.size} of ${Object.keys(conversations).length} sources`}</span>
         <span className="graph-map-bar-spacer" />
@@ -4934,6 +4939,7 @@ export default function ConversationGraphView({
 
           <div
             className="conversation-graph-zoom is-floating"
+            style={scopeHidden ? { display: "none" } : undefined}
             data-graph-ui="true"
             role="group"
             aria-label="Graph navigation"

@@ -433,3 +433,7 @@
 .semantic-map .graph-map-menu-main :is(.graph-map-neighborhood, .graph-map-layout-options) { position: static; display: flex; flex-direction: column; gap: 2px; }
 .semantic-map .graph-map-menu-main .graph-map-layout-options button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .semantic-map .graph-map-menu-main .graph-map-neighborhood button:disabled { opacity: .45; cursor: default; }
+/* Public sources you kept draw hollow (a ring), your own notes filled; cards get a dashed edge. */
+.semantic-map.semantic-map .conversation-graph-node.is-dot.is-public .conversation-graph-node-dot { background: var(--graph-canvas-bg, var(--bg-deep)); box-shadow: inset 0 0 0 2.5px var(--dot-color), 0 0 0 2px var(--graph-canvas-bg, var(--bg-deep)); }
+.semantic-map .conversation-graph-node.is-public:not(.is-dot) { border-style: dashed; }
+.semantic-map.semantic-map .conversation-graph-node.is-dot.is-public:is(.is-selected, .is-multi-selected, .is-connection-center) .conversation-graph-node-dot { box-shadow: inset 0 0 0 2.5px var(--dot-color), 0 0 0 2px var(--graph-canvas-bg, var(--bg-deep)), 0 0 0 4px var(--accent); }

@@ -17,6 +17,8 @@ export interface MapPathStep {
   stageTitle: string;
   /** 1-based place in the path. */
   number: number;
+  /** A side lesson: drawn dashed, and never marked next. */
+  optional: boolean;
   /** Doc ids this step needs first, and doc ids it unlocks. */
   needs: string[];
   unlocks: string[];
@@ -61,7 +63,7 @@ export function buildMapPath(conversation: Conversation, conversations: Record<s
       if (!node || graph.missing.has(nodeId) || seen.has(node.target.docId)) continue;
       seen.add(node.target.docId);
       steps.push({ nodeId, docId: node.target.docId, title: roadmapNodeTitle(node, conversations), status: roadmapStatus(node),
-        stageId: stage.id, stageTitle: stage.title, number: steps.length + 1, needs: [], unlocks: [] });
+        stageId: stage.id, stageTitle: stage.title, number: steps.length + 1, optional: node.optional === true, needs: [], unlocks: [] });
     }
   }
   const byDoc = new Map(steps.map((step) => [step.docId, step]));
@@ -76,7 +78,11 @@ export function buildMapPath(conversation: Conversation, conversations: Record<s
     byDoc.get(from)!.unlocks.push(to);
   }
   const finished = steps.filter((step) => step.status === "done" || step.status === "skipped").length;
-  const nextUp = steps.find((step) => graph.nextUp.has(step.nodeId)) ?? steps.find((step) => step.status !== "done" && step.status !== "skipped");
+  const open = (step: MapPathStep) => step.status !== "done" && step.status !== "skipped";
+  // Side lessons never block the way: the next one is a main lesson when there is one left.
+  const ready = (step: MapPathStep) => step.needs.every((id) => { const need = byDoc.get(id); return !need || need.optional || !open(need); });
+  const nextUp = steps.find((step) => !step.optional && open(step) && ready(step)) ?? steps.find((step) => !step.optional && open(step))
+    ?? steps.find((step) => graph.nextUp.has(step.nodeId)) ?? steps.find(open);
   return { id: conversation.id, name: conversation.title || "Untitled path", steps, arrows, finished, total: steps.length, nextUpDocId: nextUp?.docId ?? null };
 }
 

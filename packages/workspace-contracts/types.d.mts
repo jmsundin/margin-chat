@@ -415,6 +415,8 @@ export interface RoadmapNode {
   proof?: string;
   /** Prerequisite node ids kept on the roadmap, for block targets. */
   dependsOn?: string[];
+  /** A side lesson: shown dashed, and never the one marked next. */
+  optional?: true;
 }
 export interface Roadmap { version: 1; stages: RoadmapStage[]; nodes: RoadmapNode[] }
 

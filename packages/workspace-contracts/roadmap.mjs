@@ -68,6 +68,7 @@ export function normalizeRoadmap(input) {
             ...(isRoadmapStatus(node.status) && node.status !== "not-started" ? { status: node.status } : {}),
             ...(proof ? { proof } : {}),
             ...(Array.isArray(node.dependsOn) ? { dependsOn: node.dependsOn } : {}),
+            ...(node.optional === true ? { optional: true } : {}),
         });
     }
     for (const node of nodes) {

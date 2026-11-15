@@ -20,7 +20,8 @@ import { MapExploredHistory, MapPreviewBar, MapPreviewDetails, MapPreviewLayer, 
 import { getStandaloneNote } from "../lib/standaloneNotes";
 import TopicExplorer from "./TopicExplorer";
 import type { Conversation } from "../types";
-import { MapPathBar, MapPathLayer, MapPathList, MapPathPickBanner, MapPathPicker, MapPathsMenu, MapRoadmapFlags, type MapPathActions } from "./MapPaths";
+import { MapCourseEmpty, MapModeSwitch, MapRoadmapCourse } from "./MapRoadmapCourse";
+import { MapPathBar, MapPathLayer, MapPathPickBanner, MapPathPicker, MapPathsMenu, MapRoadmapFlags, type MapPathActions } from "./MapPaths";
 import { buildMapPath, isPathDocument, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
 import type { MapSpotlight } from "../lib/mapSpotlight";
 import "./KnowledgeGraphWorkspace.css";
@@ -188,10 +189,28 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   function setActivePath(id: string | null, trail: string[] = []) {
     setActivePathIdState(id); setPathTrail(trail); setPathMessage(null); setPathFrame((frame) => frame + 1);
     if (id && id !== activePathId) setScopeRequest({ choice: "all", requestId: ++counter.current });
+    // Turning a roadmap on opens it in Learn, as a course.
+    if (id && id !== activePathId) { setPathLayout("list"); setLearnEmpty(false); }
     rememberActivePath(pathsKey, id);
   }
   function setPathLayout(layout: "map" | "list") { setPathLayoutState(layout); rememberPathLayout(layout); }
-  useEffect(() => { if (pathRequest) { setPicking(null); setActivePath(pathRequest.id); } }, [pathRequest?.requestId]);
+  // Learn shows a roadmap as a course ("list" is its stored name); Explore is the map itself.
+  const [learnEmpty, setLearnEmpty] = useState(false);
+  function chooseMapMode(next: "learn" | "explore") {
+    if (next === "explore") { setLearnEmpty(false); setPathLayout("map"); return; }
+    setPathLayout("list");
+    if (activePath) return;
+    const first = pathSummaries[0];
+    if (first) { setPicking(null); setActivePath(first.id); } else setLearnEmpty(true);
+  }
+  const mapMode: "learn" | "explore" = (activePath && pathLayout === "list") || (learnEmpty && !activePath) ? "learn" : "explore";
+  // A lesson opened from the course stays a lesson, even when it has its own roadmap (↘ goes into that).
+  const openedFromCourse = useRef<string | null>(null);
+  useEffect(() => {
+    if (!pathRequest) return;
+    if (openedFromCourse.current === pathRequest.id) { openedFromCourse.current = null; return; }
+    setPicking(null); setActivePath(pathRequest.id);
+  }, [pathRequest?.requestId]);
   // A path that was deleted turns itself off.
   useEffect(() => { if (activePathId && conversations[activePathId] && !isPathDocument(conversations[activePathId])) setActivePath(null); }, [activePathId, conversations]);
   const pathSpotlight = useMemo<MapSpotlight | null>(() => activePath?.steps.length ? {
@@ -500,7 +519,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
             onToggle={(id) => setPicking((current) => current ? current.includes(id) ? current.filter((item) => item !== id) : [...current, id] : current)} /> : null}
         </>}
         renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
-        toolbarLeading={sidebarToggle}
+        toolbarLeading={<>{sidebarToggle}{pathActions ? <MapModeSwitch mode={mapMode} onChange={chooseMapMode} /> : null}</>}
+        scopeHidden={mapMode === "learn"}
         toolbarTrailing={<>{pathActions ? <MapPathsMenu paths={pathSummaries} activeId={activePath ? activePathId : null}
           onPick={(id) => { setPicking(null); setActivePath(id); }} onNew={startPicking}
           onDraft={(goal) => {
@@ -519,11 +539,21 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         if ("error" in made) { setPathMessage(made.error); return; }
         setPicking(null); setActivePath(made.id);
       }} /> : null}
+      {!exploring && !picking && !activePath && learnEmpty && pathActions ? <MapCourseEmpty onNew={() => { setLearnEmpty(false); startPicking(); }}
+        onDraft={(goal) => {
+          const made = pathActions.onDraftPath(goal);
+          if ("error" in made) return made.error;
+          setLearnEmpty(false); setActivePath(made.id); return null;
+        }} /> : null}
       {!exploring && !picking && activePath && pathActions ? <>
-        {pathLayout === "list" ? <MapPathList path={activePath} currentDocId={mapSelection} onStep={stepTo} /> : null}
-        <MapPathBar path={activePath} conversations={conversations} currentDocId={mapSelection} layout={pathLayout} actions={pathActions} message={pathMessage}
+        {pathLayout === "list" ? <MapRoadmapCourse path={activePath} conversations={conversations} currentDocId={mapSelection}
           trail={pathTrail.flatMap((id) => pathSummaries.filter((item) => item.id === id))}
-          onStep={stepTo} onLayout={setPathLayout} onClose={() => setActivePath(null)} onMessage={setPathMessage}
+          onOpen={(id) => { if (conversations[id]?.nodeType === "roadmap") openedFromCourse.current = id; stepTo(id); personalProps.onOpenConversation(id); }}
+          onGoIn={(id) => setActivePath(id, [...pathTrail, activePath.id])}
+          onGoTo={(id) => { const index = pathTrail.indexOf(id); setActivePath(id, index >= 0 ? pathTrail.slice(0, index) : []); }} /> : null}
+        <MapPathBar path={activePath} conversations={conversations} currentDocId={mapSelection} actions={pathActions} message={pathMessage}
+          trail={pathTrail.flatMap((id) => pathSummaries.filter((item) => item.id === id))}
+          onStep={stepTo} onClose={() => setActivePath(null)} onMessage={setPathMessage}
           onOpenNote={() => personalProps.onOpenConversation(activePath.id)}
           onOpenStep={(id) => personalProps.onOpenConversation(id)}
           onGoIn={(id) => setActivePath(id, [...pathTrail, activePath.id])}
