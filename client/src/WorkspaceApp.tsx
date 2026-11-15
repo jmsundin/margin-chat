@@ -1405,10 +1405,10 @@ function WorkspaceAppContent({
   const panelMaximumWidth = Math.max(CHAT_PANEL_MIN_WIDTH_PX, Math.min(CHAT_PANEL_MAX_WIDTH_PX, canvasWidth - 48));
   function getRenderedPanelWidth(conversationId: string) {
     if (isMobileViewport) return chatPanelLayout.width;
+    // A board is a canvas, not a column of text: alone on screen it takes the room there is, whatever width the page had.
+    if (scrollingDocuments.length === 1 && isBoardDocument(state.conversations[conversationId])) return Math.max(panelMaximumWidth, canvasWidth - 48);
     const chosen = resizedPanelWidths[conversationId] ?? getDocumentWidth(state.conversations, conversationId);
     if (chosen !== undefined) return Math.min(chosen, panelMaximumWidth);
-    // A board is a canvas, not a column of text: alone on screen it takes the room there is.
-    if (scrollingDocuments.length === 1 && isBoardDocument(state.conversations[conversationId])) return Math.max(panelMaximumWidth, canvasWidth - 48);
     // A document and its side document share the canvas frame by frame: margin notes and
     // minimized side documents beside either one come out of both text columns, so the
     // source isn't pushed off screen when a side document opens.
@@ -6475,7 +6475,7 @@ function WorkspaceAppContent({
 
   function renderDocumentControls(conversation: Conversation, view: "chat" | "graph" = "chat") {
     // On phones the breadcrumb bar lists notes and children (and reopens closed notes), so the header skips them.
-    const noteCount = isMobileViewport ? 0 : getMarginDocuments(conversation).length;
+    const noteCount = isMobileViewport || (hasDocumentModes(conversation) && documentModeFor(conversation) === "board") ? 0 : getMarginDocuments(conversation).length;
     const claimCount = view === "chat" ? ratchet.documents[conversation.id]?.claims.length ?? 0 : 0;
     const roadmap = view === "chat" && isPathDocument(conversation) ? buildMapPath(conversation, state.conversations) : null;
     const steps = view === "chat" ? (roadmapSteps.get(conversation.id) ?? []).filter((step) => step.pathId !== conversation.id).slice(0, 2) : [];
@@ -6556,13 +6556,16 @@ function WorkspaceAppContent({
     const modes = hasDocumentModes(conversation);
     const mode = modes ? documentModeFor(conversation) : "write";
     const writing = mode === "write";
+    // Language and Board are their own screens: no path above, no Keep reading below. A board has no margin
+    // either; Language keeps it, because "Ask in margin" from a word puts its note there.
+    const ownScreen = mode === "language" || mode === "board";
     return <DocumentPanel key={embedded ? `roadmap-sheet:${conversation.id}` : conversation.id} conversation={conversation}
       compact={isCompactDocument(conversation)} bareHeader={bareHeader}
       onMinimize={!embedded && view === "chat" && !dockHeader && !maximized && !bareHeader ? () => handleMinimizeDocument(conversation.id) : undefined}
       onClose={embedded ? undefined : view === "chat" && !dockHeader && !maximized && !bareHeader && !hasDocumentTab(conversation.id) ? () => handleCloseDocument(conversation.id) : dock ? dock.onClose : undefined}
       headerLeading={dock?.leading}
       // On the quiet page the path leaves the header and sits as one line at the top of the page you're on.
-      parentBreadcrumbs={embedded ? undefined : view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock)
+      parentBreadcrumbs={embedded || (ownScreen && view === "chat") ? undefined : view === "graph" && dock ? renderPanelBreadcrumbs(conversation, dock)
         // Clicking into one of its margin notes keeps the line, so the page doesn't jump.
         : view === "chat" && quietHeader && !showSpaceStart && !isCompactDocument(conversation)
           && (conversation.id === activeConversation.id || (activeConversation.parentId === conversation.id && isCompactDocument(activeConversation)))
@@ -6574,7 +6577,7 @@ function WorkspaceAppContent({
       childNavigation={view === "graph" ? renderChildrenMenu(conversation, view, dock) : undefined}
       claimHighlights={view === "chat" ? getClaimHighlights(conversation) : undefined}
       onOpenClaim={(claimId) => setClaimsView({ id: conversation.id, focus: claimId })}
-      marginNotes={getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
+      marginNotes={mode === "board" && view === "chat" ? [] : getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       marginMarks={marginMarks} marginNoteWidth={Math.min(320, Math.max(220, getMarginColumnWidth(conversation)))}
       activeMarginNoteId={activeConversation.id}
       pageMode={modes && (mode === "write" || mode === "read") ? mode : undefined}
@@ -6613,7 +6616,7 @@ function WorkspaceAppContent({
           onClick={() => void vault.resolveConflict(vault.clashedDocuments?.[conversation.id], "current").catch(() => undefined)}>×</button>
       </p> : view === "chat" && !embedded && !inMargin ? renderFeatureHint(conversation) : undefined}
       // A note in the margin sits on the page it would point back to, so it has no "Keep reading".
-      bodyFooter={!embedded && !inMargin && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
+      bodyFooter={!embedded && !inMargin && !ownScreen && view === "chat" && conversation.id === activeConversation.id && documentNeighbors
         ? <DocumentKeepReading neighbors={{ ...documentNeighbors, children: getChildTabDocuments(conversation) }} onOpen={handleOpenNeighbor} /> : null}
       // Full screen is in the document's ⋯ menu; the header shows only the way back out.
       fullScreenToggle={!embedded && view === "chat" && !dockHeader && maximized ? renderFullScreenButton(conversation) : undefined}
