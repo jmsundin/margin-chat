@@ -14,3 +14,11 @@
   color: var(--muted); font-size: 0.72rem; font-weight: 600; letter-spacing: 0.08em; margin: 6px 0 -4px; text-transform: uppercase;
 }
 .feature-settings-adds { color: var(--muted); font-size: 0.82rem; line-height: 1.45; margin: 4px 0 0; opacity: 0.8; }
+
+/* A page whose content uses a feature that is off: one quiet line above the text. */
+.feature-hint {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; padding: 8px 12px;
+  border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: .84rem; font-family: var(--paper-sans, inherit);
+}
+.feature-hint button { border: 0; background: transparent; padding: 0; font: inherit; cursor: pointer; color: var(--accent, var(--ink)); text-decoration: underline; text-underline-offset: 2px; }
+.feature-hint .feature-hint-dismiss { margin-left: auto; color: var(--muted); text-decoration: none; font-size: 1.1rem; line-height: 1; }
