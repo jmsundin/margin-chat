@@ -155,6 +155,11 @@
       "id": "0031_language_terms",
       "file": "0031_language_terms.sql",
       "transaction": true
+    },
+    {
+      "id": "0032_rate_limit_hits",
+      "file": "0032_rate_limit_hits.sql",
+      "transaction": true
     }
   ]
 }
