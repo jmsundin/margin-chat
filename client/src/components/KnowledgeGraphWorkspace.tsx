@@ -525,7 +525,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
         toolbarLeading={<>{sidebarToggle}{pathActions ? <MapModeSwitch mode={mapMode} onChange={chooseMapMode} /> : null}</>}
         scopeHidden={mapMode === "learn"}
-        toolbarTrailing={<>{pathActions ? <MapPathsMenu paths={pathSummaries} activeId={activePath ? activePathId : null}
+        toolbarTrailing={<>{pathActions ? <MapPathsMenu paths={pathSummaries} activeId={activePath ? activePathId : null} nameShownElsewhere={mapMode === "learn"}
           onPick={(id) => { setPicking(null); setActivePath(id); }} onNew={startPicking}
           onDraft={(goal) => {
             const made = pathActions.onDraftPath(goal);
@@ -554,8 +554,9 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
           trail={pathTrail.flatMap((id) => pathSummaries.filter((item) => item.id === id))}
           onOpen={(id) => { if (conversations[id]?.nodeType === "roadmap") openedFromCourse.current = id; stepTo(id); personalProps.onOpenConversation(id); }}
           onGoIn={(id) => setActivePath(id, [...pathTrail, activePath.id])}
-          onGoTo={(id) => { const index = pathTrail.indexOf(id); setActivePath(id, index >= 0 ? pathTrail.slice(0, index) : []); }} /> : null}
-        <MapPathBar path={activePath} conversations={conversations} currentDocId={mapSelection} actions={pathActions} message={pathMessage}
+          onGoTo={(id) => { const index = pathTrail.indexOf(id); setActivePath(id, index >= 0 ? pathTrail.slice(0, index) : []); }}
+          onClose={() => setActivePath(null)} /> : null}
+        <MapPathBar path={activePath} conversations={conversations} currentDocId={mapSelection} actions={pathActions} message={pathMessage} inCourse={pathLayout === "list"}
           trail={pathTrail.flatMap((id) => pathSummaries.filter((item) => item.id === id))}
           onStep={stepTo} onClose={() => setActivePath(null)} onMessage={setPathMessage}
           onOpenNote={() => personalProps.onOpenConversation(activePath.id)}

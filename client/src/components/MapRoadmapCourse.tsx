@@ -72,7 +72,7 @@ export function layoutCourse(path: MapPath, width: number): CourseLayout {
 const finished = (step: MapPathStep) => step.status === "done" || step.status === "skipped";
 
 /** Learn: the active roadmap filling the map pane as a course. Any lesson opens; nothing is locked. */
-export function MapRoadmapCourse({ path, trail, conversations, currentDocId, onOpen, onGoIn, onGoTo }: {
+export function MapRoadmapCourse({ path, trail, conversations, currentDocId, onOpen, onGoIn, onGoTo, onClose }: {
   path: MapPath;
   trail: MapPathSummary[];
   conversations: Record<string, Conversation>;
@@ -81,6 +81,8 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, onO
   /** Go into a lesson that has its own roadmap. */
   onGoIn(pathId: string): void;
   onGoTo(pathId: string): void;
+  /** Turn the roadmap off. */
+  onClose?(): void;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
@@ -105,10 +107,11 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, onO
     <div className="map-course-head">
       <span className="map-course-trail">
         {trail.map((item) => <button key={item.id} type="button" onClick={() => onGoTo(item.id)}>{item.name}<span aria-hidden="true"> ›</span></button>)}
-        <strong>{path.name}</strong>
+        <strong title={path.name}>{path.name}</strong>
       </span>
       <span className="map-course-meter" aria-hidden="true"><span style={{ width: `${percent}%` }} /></span>
       <span className="map-course-count">{path.finished} of {path.total} done</span>
+      {onClose ? <button type="button" className="map-course-close" aria-label="Turn the roadmap off" title="Turn the roadmap off" onClick={onClose}>×</button> : null}
       <span className="map-course-legend" aria-hidden="true"><i className="is-done" />Done<i className="is-learning" />Learning<i className="is-optional" />Optional<span>↘ Has its own roadmap</span></span>
     </div>
     {path.steps.length ? <div className="map-course-board" style={{ height: layout.height }}>
@@ -136,10 +139,10 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, onO
         const next = step.docId === path.nextUpDocId;
         return <div key={step.docId} className={`map-course-lesson is-${step.status}${step.optional ? " is-optional" : ""}${next ? " is-next" : ""}${step.docId === currentDocId ? " is-current" : ""}`}
           style={{ left: x, top: y, width: w, height: h }}>
-          {next ? <span className="map-course-next" aria-hidden="true">Next</span> : null}
           <button type="button" className="map-course-open" onClick={() => onOpen(step.docId)}
             aria-label={`Lesson ${step.number}: ${step.title}${step.optional ? " (optional)" : ""}, ${STATUS_WORDS[step.status]}${next ? ", next up" : ""}`}>
             <span className="map-course-title">{step.title}</span>
+            {next ? <span className="map-course-next" aria-hidden="true">Next</span> : null}
             {step.status === "done" ? <span className="map-course-mark" aria-hidden="true">✓</span> : step.status === "learning" ? <span className="map-course-mark is-learning" aria-hidden="true" /> : null}
           </button>
           {hasRoadmap ? <button type="button" className="map-course-dive" aria-label={`Open the roadmap for ${step.title}`} title="Open its own roadmap" onClick={() => onGoIn(step.docId)}>↘</button> : null}
