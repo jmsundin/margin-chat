@@ -5,7 +5,7 @@ import { defaultKeymap, history, historyKeymap, indentLess, indentMore } from "@
 import { markdown } from "@codemirror/lang-markdown";
 import { syntaxTree } from "@codemirror/language";
 import { GFM } from "@lezer/markdown";
-import { lazy, Suspense, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { lazy, Suspense, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { getDocumentBlockAuthorship, type DocumentBlock } from "@margin-chat/workspace-contracts";
 import type { RichDocumentAuthorship, RichDocumentEditorProps, RichDocumentRect, RichDocumentSelection } from "./RichDocumentEditor";
@@ -34,8 +34,9 @@ import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPref
 import { listenForEditorCommands, type EditorCommand } from "../lib/editorCommands";
 import { findWikiLinkAround, findWikiLinkQuery, type WikiLinkDocument, type WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
 import WikiLinkMenu, { type WikiLinkMenuState } from "./WikiLinkMenu";
-import { LanguageLearningBar, LanguageLookupPopup, type LookupTarget } from "./LanguageLookup";
-import { defaultLanguagePair, plainReadingText, rememberLanguagePair, sentenceAround, snapToWords, wordAt } from "../lib/languageLearning";
+import { LanguageLearningBar } from "./LanguageLookup";
+import { LanguageReader } from "./LanguageReader";
+import { defaultLanguagePair, rememberLanguagePair } from "../lib/languageLearning";
 import "./LiveDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
 const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
@@ -509,18 +510,10 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   useEffect(() => () => widgets.destroy(), [widgets]);
   const containerKeys = useSyncExternalStore(widgets.subscribe, widgets.getSnapshot, widgets.getSnapshot);
   const viewMode = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentViewMode, () => "live" as const);
-  // Language learning mode reads like Reading mode; a tap, click, drag or selection shows what the text means.
+  // Language learning mode shows the text in its own reader, where every word can be tapped; the editor waits underneath.
   const learning = props.languageLearning ?? null;
   const languagePair = learning?.pair ?? null;
   const mode: LivePreviewMode = languagePair ? "reading" : viewMode;
-  const [lookup, setLookup] = useState<(LookupTarget & { from: number; to: number }) | null>(null);
-  const lookupRef = useRef(lookup);
-  lookupRef.current = lookup;
-  const closeLookup = useCallback(() => setLookup(null), []);
-  const pointerHeld = useRef(false);
-  const lookupTimer = useRef(0);
-  const touchDrag = useRef<{ id: number; x: number; y: number; at: number; dragging: boolean } | null>(null);
-  const suppressClick = useRef(false);
   const [focusedBlockId, setFocusedBlockId] = useState<string | null>(null);
   const [editorFocused, setEditorFocused] = useState(false);
   const [insertMenu, setInsertMenu] = useState<{ top: number; blockId: string; open: boolean } | null>(null);
@@ -643,8 +636,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
 
   function notifySelection(view: EditorView) {
     const current = latest.current;
-    // In Language learning mode a selection is looked up, not offered to the selection menu.
-    if (current.languageLearning?.pair) { if (!view.state.selection.main.empty) lookUpSelection(view); return; }
+    // In Language learning mode the reader is on screen, not the editor.
+    if (current.languageLearning?.pair) return;
     if (!current.onSelectionChange) return;
     const live = stateOf(view);
     if (!view.hasFocus && live.mode !== "reading") return;
@@ -1149,45 +1142,17 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return true;
   }
 
-  /** Shows the meaning pop-up for [from, to), widened to whole words, and selects it. */
-  function openLookup(view: EditorView, from: number, to: number) {
-    const doc = view.state.doc.toString();
-    const range = snapToWords(doc, from, to);
-    const text = plainReadingText(doc.slice(range.from, range.to));
-    if (!text || !/[\p{L}\p{N}]/u.test(text)) { setLookup(null); return; }
-    const current = lookupRef.current;
-    if (current && current.from === range.from && current.to === range.to) return;
-    const root = rootRef.current;
-    const start = view.coordsAtPos(range.from, 1);
-    const end = view.coordsAtPos(range.to, -1) ?? start;
-    if (!root || !start || !end) return;
-    const box = root.getBoundingClientRect();
-    const sentence = plainReadingText(sentenceAround(doc, range.from, range.to));
-    const sameLine = Math.abs(start.top - end.top) < 4;
-    setLookup({ key: Date.now(), from: range.from, to: range.to, text, sentence: sentence === text ? "" : sentence,
-      top: end.bottom - box.top, lineTop: start.top - box.top, left: (sameLine ? start.left : end.left) - box.left });
-    const main = view.state.selection.main;
-    if (main.from !== range.from || main.to !== range.to) view.dispatch({ selection: EditorSelection.range(range.from, range.to) });
-  }
-
-  /** A selection made by dragging or by the phone's own handles: looked up once it settles. */
-  function lookUpSelection(view: EditorView) {
-    window.clearTimeout(lookupTimer.current);
-    lookupTimer.current = window.setTimeout(() => {
-      if (pointerHeld.current || viewRef.current !== view) return;
-      const main = view.state.selection.main;
-      if (!main.empty) openLookup(view, main.from, main.to);
-    }, 250);
-  }
-
-  /** A click or tap on a word looks up that word; anywhere else closes the pop-up. */
-  function lookUpAt(view: EditorView, x: number, y: number) {
-    const position = view.posAtCoords({ x, y });
-    const word = position === null ? null : wordAt(view.state.doc.toString(), position);
-    const first = word && view.coordsAtPos(word.from, 1);
-    const last = word && view.coordsAtPos(word.to, -1);
-    if (!word || !first || !last || x < first.left - 2 || x > last.right + 2 || y < first.top - 2 || y > last.bottom + 2) { setLookup(null); return; }
-    openLookup(view, word.from, word.to);
+  /** "Ask in margin" on a word's card: the app's own passage menu (note, Ask AI) opens on that word, or on its sentence or line. */
+  function askInMargin(request: { blockId: string; term: string; sentence: string; rect: RichDocumentRect }) {
+    const current = latest.current;
+    const block = blockById.get(request.blockId);
+    if (!current.onSelectionChange || !block || isDraftBlockId(block.id)) return;
+    let start = block.content.indexOf(request.term);
+    let quote = request.term;
+    if (start < 0) { start = block.content.indexOf(request.sentence); quote = request.sentence; }
+    if (start < 0) { start = 0; quote = block.content; }
+    current.onSelectionChange({ conversationId: current.conversationId, messageId: block.sourceMessageId ?? `document:${block.id}`, sourceBlockId: block.id,
+      startOffset: start, endOffset: start + quote.length, quote, rect: request.rect });
   }
 
   function setLanguageLearning(on: boolean) {
@@ -1208,26 +1173,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey, openWikiLinkTarget, openLookup, lookUpSelection, lookUpAt });
-  handlers.current = { commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey, openWikiLinkTarget, openLookup, lookUpSelection, lookUpAt };
-  // The pop-up closes when the mode goes off, and on a press anywhere but the text or the pop-up.
-  useEffect(() => { if (!languagePair) setLookup(null); }, [languagePair]);
-  useEffect(() => {
-    const release = () => { pointerHeld.current = false; };
-    window.addEventListener("pointerup", release);
-    window.addEventListener("pointercancel", release);
-    return () => { window.removeEventListener("pointerup", release); window.removeEventListener("pointercancel", release); window.clearTimeout(lookupTimer.current); };
-  }, []);
-  useEffect(() => {
-    if (!lookup) return undefined;
-    const outside = (event: PointerEvent) => {
-      const target = event.target instanceof Node ? event.target : null;
-      if (!target || rootRef.current?.querySelector(".language-lookup")?.contains(target) || viewRef.current?.contentDOM.contains(target)) return;
-      setLookup(null);
-    };
-    document.addEventListener("pointerdown", outside, true);
-    return () => document.removeEventListener("pointerdown", outside, true);
-  }, [lookup]);
+  const handlers = useRef({ commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey, openWikiLinkTarget });
+  handlers.current = { commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey, openWikiLinkTarget };
   useEffect(() => {
     let frame = 0;
     const changed = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(() => handlers.current.notifyPreviewSelection()); };
@@ -1349,54 +1296,6 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
             return false;
           },
           mousedown() { suppressSpace.current = false; return false; },
-          // Language learning mode: a sideways drag on a touch screen selects words (up and down still scroll).
-          pointerdown(event, view) {
-            if (!latest.current.languageLearning?.pair) return false;
-            pointerHeld.current = true;
-            touchDrag.current = event.pointerType === "mouse" ? null
-              : { id: event.pointerId, x: event.clientX, y: event.clientY, at: view.posAtCoords({ x: event.clientX, y: event.clientY }) ?? -1, dragging: false };
-            return false;
-          },
-          pointermove(event, view) {
-            const drag = touchDrag.current;
-            if (!drag || drag.id !== event.pointerId || drag.at < 0) return false;
-            const dx = event.clientX - drag.x;
-            const dy = event.clientY - drag.y;
-            if (!drag.dragging) {
-              if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.5) return false;
-              drag.dragging = true;
-            }
-            const position = view.posAtCoords({ x: event.clientX, y: event.clientY });
-            if (position === null) return true;
-            const range = snapToWords(view.state.doc.toString(), Math.min(drag.at, position), Math.max(drag.at, position));
-            view.dispatch({ selection: EditorSelection.range(range.from, range.to) });
-            event.preventDefault();
-            return true;
-          },
-          pointerup(event, view) {
-            pointerHeld.current = false;
-            const drag = touchDrag.current;
-            touchDrag.current = null;
-            if (!latest.current.languageLearning?.pair) return false;
-            if (drag?.dragging) {
-              suppressClick.current = true;
-              const main = view.state.selection.main;
-              if (!main.empty) proxy.current.openLookup(view, main.from, main.to);
-              return true;
-            }
-            if (event.pointerType === "mouse" && !view.state.selection.main.empty) proxy.current.lookUpSelection(view);
-            return false;
-          },
-          pointercancel() { pointerHeld.current = false; touchDrag.current = null; return false; },
-          click(event, view) {
-            if (!latest.current.languageLearning?.pair) return false;
-            if (suppressClick.current) { suppressClick.current = false; return true; }
-            // Links still open, as in Reading mode.
-            if (event.target instanceof Element && event.target.closest(".cm-lp-link, .cm-lp-wikilink, .cm-lp-embed, a, button, input, .live-document-widget")) return false;
-            if (!view.state.selection.main.empty || event.detail > 1) return false;
-            proxy.current.lookUpAt(view, event.clientX, event.clientY);
-            return false;
-          },
           // Right-click with nothing selected opens the app's menu at the caret; Shift keeps the browser's.
           contextmenu(event, view) {
             if (event.shiftKey || mobileRef.current || !latest.current.onCaretMenu || !view.state.selection.main.empty) return false;
@@ -1788,7 +1687,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           </button>)}
           {learning ? <button type="button" role="menuitemradio" aria-checked={Boolean(languagePair)}
             onMouseDown={(event) => event.preventDefault()} onClick={() => { setLanguageLearning(true); setViewMenuOpen(false); }}>
-            <span>Language learning</span><small>Tap, click or select text to see what it means</small>
+            <span>Language learning</span><small>Tap a word to see, save and rate what it means</small>
           </button> : null}
         </div> : null}
       </div> : <>
@@ -1797,13 +1696,12 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           onMouseDown={(event) => event.preventDefault()} onClick={() => setMode(candidate)}>
           {VIEW_LABELS[candidate]}
         </button>)}
-        {learning ? <button type="button" aria-pressed={Boolean(languagePair)} title="Language learning: tap, click or select text to see what it means"
+        {learning ? <button type="button" aria-pressed={Boolean(languagePair)} title="Language learning: tap a word to see, save and rate what it means"
           onMouseDown={(event) => event.preventDefault()} onClick={() => setLanguageLearning(!languagePair)}>Language</button> : null}
       </>}
     </div>}
     {languagePair && learning ? <LanguageLearningBar pair={languagePair} onChange={(pair) => { rememberLanguagePair(pair); learning.onChange(pair); }} /> : null}
-    {lookup && languagePair && learning ? <LanguageLookupPopup target={lookup} pair={languagePair} learning={learning} onClose={closeLookup}
-      containerWidth={rootRef.current?.clientWidth ?? 360} /> : null}
+    {languagePair && learning ? <LanguageReader blocks={props.blocks} pair={languagePair} learning={learning} onAskInMargin={props.onSelectionChange ? askInMargin : undefined} /> : null}
     {/* Its mics are beside Ask AI and in the pane's corner, so voice typing doesn't float one over the text. */}
     <div ref={hostRef} className="live-document-host" data-dictation-button="own" />
     {askShown && askButton && <div className="live-document-ask-group" style={{ top: askButton.top, left: askButton.left }}>

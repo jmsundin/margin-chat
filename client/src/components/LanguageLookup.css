@@ -5,39 +5,6 @@
 .language-learning-arrow { color: var(--sage); font-weight: 600; }
 .language-learning-hint { color: var(--muted); font-size: .76rem; }
 
-/* Words read as words: no caret, and sideways drags select instead of scrolling on touch screens. */
-.live-document-editor[data-language-learning] .cm-content { cursor: pointer; touch-action: pan-y; -webkit-touch-callout: none; }
-.live-document-editor[data-language-learning] .cm-content ::selection { background: var(--sage-soft); }
-
-.language-lookup { position: absolute; z-index: 40; width: min(340px, calc(100% - 16px)); display: flex; flex-direction: column; gap: 7px; padding: 11px 13px 12px;
-  background: var(--panel-strong); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, .18); color: var(--ink); font-size: .85rem; line-height: 1.4; overflow-y: auto; overscroll-behavior: contain; }
-.language-lookup-head { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: .68rem; letter-spacing: .06em; text-transform: uppercase; }
-.language-lookup-close { border: 0; background: transparent; color: var(--muted); font-size: 1.15rem; line-height: 1; cursor: pointer; padding: 0 2px; }
-.language-lookup-text { margin: 0; font-family: var(--reading-font, Georgia, serif); font-size: 1rem; color: var(--muted); overflow-wrap: anywhere; }
-.language-lookup-text small { font-family: inherit; font-size: .78rem; }
-.language-lookup-meaning { margin: 0; font-size: 1.2rem; font-weight: 600; overflow-wrap: anywhere; }
-.language-lookup-meaning.is-long { font-size: .95rem; font-weight: 500; }
-.language-lookup-note, .language-lookup-loading, .language-lookup-saved { margin: 0; color: var(--muted); font-size: .8rem; }
-.language-lookup-error { margin: 0; color: var(--danger); font-size: .8rem; }
-.language-lookup-error button { border: 0; background: none; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; font: inherit; }
-.language-lookup-others { display: flex; flex-wrap: wrap; gap: 4px; }
-.language-lookup-others button { border: 1px solid var(--line); border-radius: 999px; background: transparent; color: var(--ink); font: inherit; font-size: .76rem; padding: 2px 9px; cursor: pointer; }
-.language-lookup-others button[aria-pressed="true"] { border-color: var(--sage); color: var(--sage); background: var(--sage-soft); }
-.language-lookup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.language-lookup-actions button { border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: .8rem; padding: 5px 10px; cursor: pointer; }
-.language-lookup-actions .language-lookup-save { background: var(--sage); border-color: var(--sage); color: var(--panel-strong); font-weight: 600; }
-.language-lookup-actions .language-lookup-save:disabled { opacity: .45; cursor: default; }
-.language-lookup-done { color: var(--sage); font-size: .8rem; font-weight: 600; }
-.language-lookup-sources { display: flex; gap: 12px; font-size: .76rem; }
-.language-lookup-sources button, .language-lookup-sources a, .language-lookup-wiki a { border: 0; background: none; padding: 0; color: var(--sage); font: inherit; cursor: pointer; text-decoration: none; }
-.language-lookup-sources button:hover, .language-lookup-sources a:hover, .language-lookup-wiki a:hover { text-decoration: underline; }
-.language-lookup-wiki { border-top: 1px solid var(--line); padding-top: 7px; font-size: .8rem; }
-.language-lookup-wiki p { margin: 0 0 4px; color: var(--muted); }
-.language-lookup-wiki ol { margin: 0 0 6px; padding-left: 18px; }
-.language-lookup-pos { font-style: italic; }
-
 @media (pointer: coarse), (max-width: 700px) {
   .language-learning-hint { display: none; }
-  .language-lookup { font-size: .9rem; }
-  .language-lookup-actions button, .language-lookup-others button { padding-block: 7px; }
 }
