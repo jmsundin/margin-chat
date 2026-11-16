@@ -49,9 +49,9 @@ describe("files beside an HTML page", () => {
   });
 
   test("the frame asks for files only when the page may have them", () => {
-    expect(htmlFrameDocument("<p>x</p>", {})).toContain(`})({},false,"light");</script>`);
-    expect(htmlFrameDocument("<p>x</p>", {}, true)).toContain(`})({},true,"light");</script>`);
-    expect(htmlFrameDocument("<p>x</p>", {}, { assets: true, theme: "dark" })).toContain(`})({},true,"dark");</script>`);
+    expect(htmlFrameDocument("<p>x</p>", {})).toContain(`})({},false,"light","inline");</script>`);
+    expect(htmlFrameDocument("<p>x</p>", {}, true)).toContain(`})({},true,"light","inline");</script>`);
+    expect(htmlFrameDocument("<p>x</p>", {}, { assets: true, theme: "dark" })).toContain(`})({},true,"dark","inline");</script>`);
     expect(readHtmlFrameMessage({ marginHtml: 1, type: "asset-request", id: "a1", path: "vendor/x.js" }))
       .toEqual({ marginHtml: 1, type: "asset-request", id: "a1", path: "vendor/x.js" });
     expect(readHtmlFrameMessage({ marginHtml: 1, type: "asset-request", id: 4, path: "x" })).toBeNull();

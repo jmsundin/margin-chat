@@ -3,13 +3,13 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReference } from "../types";
 import { useVaultMedia } from "../lib/vaultMedia";
-import { htmlPageTheme, loadHtmlPagePrefs, useAppTheme } from "../lib/htmlPagePrefs";
+import { htmlPageTheme, loadHtmlPagePrefs, useAppTheme, useHtmlPageLayout } from "../lib/htmlPagePrefs";
 import { htmlAssetContentType, htmlAssetPath, htmlPageHasAssets, inlineHtmlAssets } from "../lib/htmlAssets";
 import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
 import { publishPdfNavigation } from "../lib/pdfNavigation";
 import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
-import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, htmlThemeMessage, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
+import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, htmlLayoutMessage, htmlThemeMessage, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
 import { registerHtmlScreen } from "../lib/htmlScreens";
 import { getPlayContent, hasPlayContent, subscribePlayContent } from "../lib/playContent";
 import { decodeHtmlPageData, encodeHtmlPageData, htmlPageDataPath, loadHtmlStorage, newerHtmlPageData, saveHtmlStorage, sameHtmlPageData, type HtmlPageData } from "../lib/htmlPageData";
@@ -29,6 +29,8 @@ export interface VaultFileViewerProps {
   onOpenBranch: (id: string) => void;
   /** The document header's slot for the page count and zoom controls; they sit above the file until it exists. */
   toolbarTarget?: HTMLElement | null;
+  /** How an HTML page is laid out, when the panel around it decides; otherwise the page's own remembered choice. */
+  htmlLayout?: "fill" | "inline";
 }
 
 type Loaded = { status: "loading" } | { status: "missing" } | { status: "error"; message: string } | { status: "ready"; blob: Blob };
@@ -695,6 +697,10 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   const theme = htmlPageTheme(prefs.theme, appTheme);
   const themeRef = useRef(theme);
   themeRef.current = theme;
+  // Filling its panel, the page scrolls inside the frame; inline, the frame is as tall as the page and the document scrolls.
+  const layout = useHtmlPageLayout(props.htmlLayout ?? prefs.layout);
+  const layoutRef = useRef(layout);
+  layoutRef.current = layout;
   // What the page saved and the vault doesn't hold yet; written after a pause, and at once when the page closes.
   const unsaved = useRef<{ path: string; value: HtmlPageData; timer: number } | null>(null);
   const flushPageData = () => {
@@ -742,7 +748,11 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
 
   // The page's saved storage is read once as it opens; later saves don't reload the frame.
   const source = useMemo(() => html === null ? null : htmlFrameDocument(html.text, html.storage,
-    { assets: htmlPageHasAssets(props.file.path), theme: themeRef.current }), [html]);
+    { assets: htmlPageHasAssets(props.file.path), theme: themeRef.current, layout: layoutRef.current }), [html]);
+  useEffect(() => {
+    frameRef.current?.contentWindow?.postMessage(htmlLayoutMessage(layout), "*");
+    if (layout === "fill") { setMarks([]); setHeight(null); }
+  }, [layout]);
   // A change of theme reaches the open page as a message: reloading it would lose where the person is in a game.
   useEffect(() => {
     frameRef.current?.contentWindow?.postMessage(htmlThemeMessage(theme), "*");
@@ -771,6 +781,7 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
     const requestId = `screen-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     const timeout = window.setTimeout(() => { screenRequests.current.delete(requestId); resolve(null); }, 1_500);
     screenRequests.current.set(requestId, (screen) => { window.clearTimeout(timeout); resolve(screen); });
+    if (layoutRef.current === "fill") { frame.contentWindow.postMessage({ marginHtml: 1, type: "read-screen", requestId, mode: "self" }, "*"); return; }
     frame.contentWindow.postMessage({ marginHtml: 1, type: "read-screen", requestId,
       top: Math.max(0, -box.top), bottom: Math.max(0, Math.min(box.height, window.innerHeight - box.top)) }, "*");
   })), [props.conversation.id]);
@@ -784,6 +795,8 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
       if (!message) return;
       const current = latest.current;
       if (message.type === "size") {
+        // A page that fills its panel is as tall as the panel, whatever its content.
+        if (layoutRef.current === "fill") return;
         setHeight((shown) => {
           // The frame's border is outside the page.
           const next = Math.min(MAX_FRAME_HEIGHT, Math.max(120, message.height + FRAME_BORDERS));
@@ -795,7 +808,8 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
           return next;
         });
       } else if (message.type === "marks") {
-        setMarks(message.marks.filter((mark) => anchorsRef.current.some((anchor) => anchor.id === mark.id)));
+        // Filling, the page draws its own marks, which scroll with it.
+        if (layoutRef.current !== "fill") setMarks(message.marks.filter((mark) => anchorsRef.current.some((anchor) => anchor.id === mark.id)));
       } else if (message.type === "open") {
         if (anchorsRef.current.some((anchor) => anchor.id === message.id)) current.onOpenBranch(message.id);
       } else if (message.type === "content-request") {
@@ -831,14 +845,19 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   }, []);
 
   const name = vaultFileTitle(props.file.path);
-  if (source === null) return <div className="vault-file-status" role="status">Opening {name}…</div>;
+  if (source === null) return <div className={`vault-file-status${layout === "fill" ? " is-fill" : ""}`} role="status">Opening {name}…</div>;
   const firstOfEach = new Set<string>();
-  return <section className="vault-file-viewer vault-file-html" aria-label={`HTML page: ${props.file.path}`}>
+  return <section className={`vault-file-viewer vault-file-html${layout === "fill" ? " is-fill" : ""}`} aria-label={`HTML page: ${props.file.path}`}>
     <div className="vault-html-stage">
       {/* No same-origin access: the page's scripts run, but can't reach the app, its sign-in or its storage. */}
       <iframe ref={frameRef} className="vault-html-frame" title={name} srcDoc={source} sandbox={HTML_FRAME_SANDBOX}
-        allow="fullscreen; clipboard-write" referrerPolicy="no-referrer" style={{ colorScheme: theme, ...(height ? { height } : {}) }} data-theme={theme}
-        onLoad={() => { growth.current = { count: 0, at: 0 }; sendAnchors(); frameRef.current?.contentWindow?.postMessage(htmlThemeMessage(themeRef.current), "*"); }} />
+        allow="fullscreen; clipboard-write" referrerPolicy="no-referrer" style={{ colorScheme: theme, ...(height && layout !== "fill" ? { height } : {}) }} data-theme={theme}
+        onLoad={() => {
+          growth.current = { count: 0, at: 0 };
+          frameRef.current?.contentWindow?.postMessage(htmlThemeMessage(themeRef.current), "*");
+          frameRef.current?.contentWindow?.postMessage(htmlLayoutMessage(layoutRef.current), "*");
+          sendAnchors();
+        }} />
       <div className="vault-file-highlights" aria-hidden="true">
         {marks.map((mark, index) => {
           const first = !firstOfEach.has(mark.id);

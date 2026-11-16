@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { HTML_FRAME_SANDBOX, MAX_HTML_STORAGE_CHARS, htmlFrameDocument, htmlTextForAI, htmlThemeMessage, readHtmlFrameMessage } from "../client/src/lib/htmlDocuments";
+import { HTML_FRAME_SANDBOX, MAX_HTML_STORAGE_CHARS, htmlFrameDocument, htmlLayoutMessage, htmlTextForAI, htmlThemeMessage, readHtmlFrameMessage } from "../client/src/lib/htmlDocuments";
 import { htmlPageTheme, readHtmlPagePrefs } from "../client/src/lib/htmlPagePrefs";
 import { isVaultFileDocumentPath, vaultFileContentType, vaultFileKind } from "../client/src/lib/vaultFileDocuments";
 import { planVaultUpload } from "../client/src/lib/vaultUpload";
@@ -46,11 +46,14 @@ describe("HTML pages open as documents", () => {
   });
 
   test("the page starts in the theme it is given, and a change is a message, not a reload", () => {
-    expect(htmlFrameDocument("<p>x</p>")).toContain(`,"light");</script>`);
-    expect(htmlFrameDocument("<p>x</p>", {}, { theme: "dark" })).toContain(`,"dark");</script>`);
+    expect(htmlFrameDocument("<p>x</p>")).toContain(`,"light","inline");</script>`);
+    expect(htmlFrameDocument("<p>x</p>", {}, { theme: "dark" })).toContain(`,"dark","inline");</script>`);
     // Anything but the two themes falls back to light rather than reaching the page as script text.
-    expect(htmlFrameDocument("<p>x</p>", {}, { theme: `");alert(1);("` as never })).toContain(`,"light");</script>`);
+    expect(htmlFrameDocument("<p>x</p>", {}, { theme: `");alert(1);("` as never })).toContain(`,"light","inline");</script>`);
     expect(htmlThemeMessage("dark")).toEqual({ marginHtml: 1, type: "theme", theme: "dark" });
+    // A page that fills its panel is told so, and draws its own highlight marks.
+    expect(htmlFrameDocument("<p>x</p>", {}, { layout: "fill" })).toContain(`,"light","fill");</script>`);
+    expect(htmlLayoutMessage("fill")).toEqual({ marginHtml: 1, type: "layout", layout: "fill" });
   });
 
   test("a page's look is remembered per page, and unknown values fall back", () => {
