@@ -7,7 +7,7 @@ import {
 } from "./cookies.mjs";
 import { hashPassword, verifyPassword, verifyPasswordAgainstDecoy } from "./passwords.mjs";
 import { assertNoHoneypot, assertNotDisposable, canonicalEmail, verifyTurnstile } from "./botProtection.mjs";
-import { getPasswordResetEmailConfiguration, sendEmailChangedNotice, sendPasswordResetEmail } from "./passwordResetEmail.mjs";
+import { getPasswordResetEmailConfiguration, sendEmailChangedNotice, sendEmailVerification, sendPasswordResetEmail } from "./passwordResetEmail.mjs";
 import {
   normalizeAccountDeletionPayload,
   normalizeLoginPayload,
@@ -47,6 +47,45 @@ export function createAuthService({
     return createAuthSessionCookie(sessionId, runtimeConfig);
   }
 
+  const EMAIL_VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+
+  /**
+   * Sends a link that confirms the account's address. Never fails the caller: sign-up and
+   * email changes go through even when email can't be sent, and the reason is logged.
+   */
+  async function sendVerificationLink(user) {
+    if (!getPasswordResetEmailConfiguration(env).configured || typeof database.createEmailVerificationToken !== "function") return { sent: false };
+    const token = randomBytes(32).toString("base64url");
+    const tokenHash = hashResetToken(token);
+    try {
+      await database.createEmailVerificationToken({ email: user.email, expiresAt: new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS), tokenHash, userId: user.id });
+      const delivery = await sendEmailVerification({ email: user.email, env, token, tokenHash, ttlMs: EMAIL_VERIFICATION_TTL_MS });
+      if (!delivery.delivered) { console.error(delivery.reason); return { sent: false }; }
+      return { sent: true };
+    } catch (error) {
+      console.error("Unable to send the email confirmation link.", error?.message ?? error);
+      return { sent: false };
+    }
+  }
+
+  /** Settings' "Send again": a fresh link to the account's current address. */
+  async function requestEmailVerification(user) {
+    if (user.emailVerified) return { ok: true, alreadyVerified: true };
+    if (!getPasswordResetEmailConfiguration(env).configured) {
+      throw createStatusError(503, "Email confirmation is temporarily unavailable. Please try again later.");
+    }
+    const result = await sendVerificationLink(user);
+    if (!result.sent) throw createStatusError(502, "The confirmation email couldn't be sent. Please try again in a few minutes.");
+    return { ok: true };
+  }
+
+  async function verifyEmail(payload) {
+    const token = typeof payload?.token === "string" ? payload.token.trim() : "";
+    if (!/^[A-Za-z0-9_-]{20,128}$/.test(token)) throw createStatusError(400, "This confirmation link is invalid or has expired. Send a new one from Settings.");
+    await database.verifyEmailWithToken({ tokenHash: hashResetToken(token) });
+    return { ok: true };
+  }
+
   async function signup(payload, { remoteIp = null, fetchImpl } = {}) {
     assertNoHoneypot(payload);
     const input = normalizeSignupPayload(payload);
@@ -67,6 +106,7 @@ export function createAuthService({
       role: "member",
     });
     const cookie = await createSessionForUser(user.id);
+    await sendVerificationLink(user);
 
     return {
       cookie,
@@ -277,6 +317,7 @@ export function createAuthService({
       } catch (error) {
         console.error("Unable to send the email-changed notice.", error);
       }
+      await sendVerificationLink(user);
     }
 
     return user;
@@ -292,6 +333,8 @@ export function createAuthService({
     changePassword,
     getAuthContext,
     verifyAccountDeletion,
+    requestEmailVerification,
+    verifyEmail,
     login,
     logout,
     requestPasswordReset,

@@ -1039,6 +1039,24 @@ export async function requestPasswordReset(args: {
   return payload;
 }
 
+/** Confirms the account's email address from the emailed link's token. */
+export async function requestVerifyEmail(token: string): Promise<void> {
+  const response = await apiFetch("/api/auth/email/verify", {
+    body: JSON.stringify({ token }), credentials: "same-origin", headers: { "Content-Type": "application/json" }, method: "POST",
+  });
+  ensureOk(response, (await readJson(response)) as ErrorPayload | null, "This confirmation link didn't work. Send a new one from Settings.");
+}
+
+/** Emails a fresh confirmation link to the signed-in account's address. */
+export async function requestEmailVerification(): Promise<{ alreadyVerified?: boolean }> {
+  const response = await apiFetch("/api/auth/email/verification", {
+    body: "{}", credentials: "same-origin", headers: { "Content-Type": "application/json" }, method: "POST",
+  });
+  const payload = (await readJson(response)) as { ok?: boolean; alreadyVerified?: boolean } | ErrorPayload | null;
+  ensureOk(response, payload as ErrorPayload | null, "The confirmation email couldn't be sent.");
+  return { alreadyVerified: Boolean(payload && "alreadyVerified" in payload && payload.alreadyVerified) };
+}
+
 export async function requestPasswordResetConfirm(args: {
   password: string;
   token: string;

@@ -74,6 +74,7 @@ export const DEFAULT_AUTH_RATE_LIMITS = Object.freeze({
   loginFailuresByEmail: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
   signupsByAddress: { max: 20, windowMs: 60 * 60 * 1000 },
   passwordResetsByAddress: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
+  emailVerificationsByUser: { max: 5, windowMs: 60 * 60 * 1000 },
   passwordChangeFailuresByUser: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
   accountDeleteFailuresByUser: { max: 10, windowMs: FIFTEEN_MINUTES_MS },
 });
@@ -209,6 +210,7 @@ export function createApiHandler({
   const resetByAddress = authLimiter("passwordResetsByAddress");
   const passwordChangeByUser = authLimiter("passwordChangeFailuresByUser");
   const accountDeleteByUser = authLimiter("accountDeleteFailuresByUser");
+  const emailVerificationByUser = authLimiter("emailVerificationsByUser");
   // One import saves at most a few hundred pictures; this only stops a runaway loop.
   const webImagesByUser = createRateLimiter({ max: 1_000, windowMs: 60 * 60 * 1000 });
   const clientAddress = (request) =>
@@ -527,6 +529,13 @@ export function createApiHandler({
         return;
       }
 
+      // Opened from the emailed link, in whatever browser it lands: the token alone confirms the address.
+      if (route?.id === "emailVerify") {
+        await throttleAttempt(resetByAddress, request);
+        sendJson(response, 200, await authService.verifyEmail(await readJsonBody(request, AUTH_BODY_LIMIT)), { "Cache-Control": "no-store" });
+        return;
+      }
+
       if (route?.id === "authLogout") {
         const result = await authService.logout(request);
 
@@ -574,6 +583,13 @@ export function createApiHandler({
           "Cache-Control": "no-store",
           "Set-Cookie": result.cookie,
         });
+        return;
+      }
+
+      if (route?.id === "emailVerificationRequest") {
+        await emailVerificationByUser.check(authContext.user.id);
+        await emailVerificationByUser.record(authContext.user.id);
+        sendJson(response, 200, await authService.requestEmailVerification(authContext.user), { "Cache-Control": "no-store" });
         return;
       }
 

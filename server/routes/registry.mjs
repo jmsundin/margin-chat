@@ -22,6 +22,8 @@ export const API_ROUTES = Object.freeze([
   { id: "authLogin", methods: ["POST"], path: "/api/auth/login" },
   { id: "passwordResetRequest", methods: ["POST"], path: "/api/auth/password-reset/request" },
   { id: "passwordResetConfirm", methods: ["POST"], path: "/api/auth/password-reset/confirm" },
+  { id: "emailVerify", methods: ["POST"], path: "/api/auth/email/verify" },
+  { id: "emailVerificationRequest", methods: ["POST"], path: "/api/auth/email/verification" },
   { id: "authLogout", methods: ["POST"], path: "/api/auth/logout" },
   { id: "billingCheckout", methods: ["POST"], path: "/api/billing/checkout" },
   { id: "billingPlans", methods: ["GET"], path: "/api/billing/plans" },

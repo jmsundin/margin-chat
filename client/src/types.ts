@@ -84,6 +84,8 @@ export interface AuthenticatedUser {
   billing: UserBilling;
   id: string;
   email: string;
+  /** Whether the account's address was confirmed from the emailed link; missing on older servers. */
+  emailVerified?: boolean;
   displayName: string;
   role: UserRole;
 }

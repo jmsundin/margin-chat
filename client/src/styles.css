@@ -13287,3 +13287,21 @@ body .live-markdown-editor {
   .thread-tile-toolbar { width: 100%; padding: 0; border: 0; background: transparent; }
   .thread-tile-toolbar .thread-tile-search { border: 1px solid var(--line); }
 }
+
+/* "Send again" beside the quiet note under Email in Settings, until the address is confirmed. */
+.settings-inline-link {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.settings-inline-link:disabled {
+  cursor: default;
+  opacity: 0.55;
+}

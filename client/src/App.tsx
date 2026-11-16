@@ -11,7 +11,7 @@ import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
 import {
   requestAuthSession, requestBillingDashboard, requestConfirmCheckoutSession, requestCreateBillingPortalSession, requestCreateTopUpSession,
   requestCreateCheckoutSession, requestUpgradeToPlus, requestLogin, requestLogout, requestPasswordReset,
-  requestPasswordResetConfirm, requestSignup, requestUpdateApiKeys, requestUpdateProfile, requestChangePassword, requestDeleteAccount, ApiError,
+  requestPasswordResetConfirm, requestVerifyEmail, requestSignup, requestUpdateApiKeys, requestUpdateProfile, requestChangePassword, requestDeleteAccount, ApiError,
 } from "./lib/api";
 import { rememberOfflineUser, loadOfflineUser, forgetOfflineUser } from "./lib/offlineSession";
 import { getNextTheme, loadInitialTheme, syncTheme, THEME_STORAGE_KEY, type ThemeMode } from "./lib/appearance";
@@ -144,6 +144,21 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
     kind: "error" | "info" | "success";
     message: string;
   } | null>(null);
+
+  // The emailed confirmation link opens the app with its token: confirm the address, and take the token out of the address bar.
+  useEffect(() => {
+    if (extension) return;
+    const params = new URLSearchParams(window.location.search);
+    const token = params.get("verify_email");
+    if (!token) return;
+    params.delete("verify_email");
+    const rest = params.toString();
+    window.history.replaceState({}, "", `${window.location.pathname}${rest ? `?${rest}` : ""}${window.location.hash}`);
+    void requestVerifyEmail(token).then(() => {
+      setAuthUser((current) => current ? { ...current, emailVerified: true } : current);
+      setBillingNotice({ kind: "success", message: "Your email is confirmed." });
+    }, (error) => setBillingNotice({ kind: "error", message: getErrorText(error, "This confirmation link didn't work. Send a new one from Settings.") }));
+  }, [extension]);
 
   const navigate = useCallback((path: string) => {
     window.history.pushState({}, "", path);

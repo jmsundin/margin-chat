@@ -21,7 +21,7 @@ import { dictationSupported } from "../lib/dictation";
 import type { JevStatus } from "../lib/jevAssistance";
 import type { VaultPassageIndex } from "../lib/useVaultPassageIndex";
 import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
-import type { StateUploadProgress } from "../lib/api";
+import { requestEmailVerification, type StateUploadProgress } from "../lib/api";
 
 export type SettingsSection = "features" | "account" | "billing" | "api-keys" | "agents" | "appearance" | "voice" | "storage";
 
@@ -570,6 +570,7 @@ export default function SettingsPage({
                   <input autoComplete="email" className="thread-dialog-input" disabled={passwordChanging}
                     onChange={(event) => setEmail(event.target.value)} placeholder="you@example.com" type="email" value={email} />
                 </label>
+                {!guest && user.emailVerified === false && user.role !== "admin" && !emailChanged ? <EmailConfirmationHint email={user.email} /> : null}
                 {emailChanged ? <label className="thread-dialog-field">
                   <span className="thread-dialog-label">Current password</span>
                   <input autoComplete="current-password" className="thread-dialog-input" disabled={passwordChanging}
@@ -722,5 +723,26 @@ export default function SettingsPage({
         </div> : null}
       </div>
     </section>
+  );
+}
+
+/** A quiet line under Email until the address is confirmed: the link was emailed at sign-up, and can be sent again. */
+function EmailConfirmationHint({ email }: { email: string }) {
+  const [status, setStatus] = useState<"idle" | "sending" | "sent" | "confirmed">("idle");
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => { setStatus("idle"); setError(null); }, [email]);
+  if (status === "confirmed") return null;
+  return (
+    <p className="thread-dialog-hint" role="status">
+      {status === "sent" ? `We sent a new link to ${email}.` : `Not confirmed yet. Use the link we emailed to ${email}.`}{" "}
+      <button className="settings-inline-link" disabled={status === "sending"} type="button" onClick={() => {
+        setStatus("sending"); setError(null);
+        requestEmailVerification().then(
+          (result) => setStatus(result.alreadyVerified ? "confirmed" : "sent"),
+          (failure) => { setStatus("idle"); setError(failure instanceof Error && failure.message ? failure.message : "The email couldn't be sent."); },
+        );
+      }}>{status === "sending" ? "Sending..." : "Send again"}</button>
+      {error ? <span className="profile-dialog-error" role="alert"> {error}</span> : null}
+    </p>
   );
 }
