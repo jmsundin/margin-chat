@@ -457,6 +457,8 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     readFlashcardChanges: (args) => withClient((client) => flashcards.readFlashcardChanges(client, args)),
     saveLanguageTerms: (args) => withClient((client) => languageTerms.saveLanguageTerms(client, args)),
     readLanguageTerms: (args) => withClient((client) => languageTerms.readLanguageTerms(client, args)),
+    readLookupCache: (args) => withClient((client) => languageTerms.readLookupCache(client, args)),
+    saveLookupCache: (args) => withClient((client) => languageTerms.saveLookupCache(client, args)),
     saveRatchetCheck: (args) => withClient(async (client) => {
       // A check's claims replace the document's old ones only together with its receipt.
       await client.query("begin");

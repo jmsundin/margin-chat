@@ -16,6 +16,7 @@ import { createLibraryService } from "../library/index.mjs";
 import { FLASHCARD_SYNC_BODY_LIMIT, createFlashcardService } from "../flashcards/index.mjs";
 import { LANGUAGE_TERM_SYNC_BODY_LIMIT, createLanguageTermService } from "../languageTerms/index.mjs";
 import { createLanguageSpeechService } from "../languageTerms/speech.mjs";
+import { createLanguageLookupService } from "../languageTerms/lookup.mjs";
 import { RATCHET_BODY_LIMIT, createRatchetService } from "../ratchet/index.mjs";
 import { INTERFACE_SETTINGS_BODY_LIMIT, createInterfaceSettingsService } from "../interfaceSettings/index.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
@@ -151,6 +152,7 @@ export function createApiHandler({
   chatRunService,
   languageSpeechService,
   lessonPageReader,
+  languageLookupService,
   env = process.env,
   rateLimits,
   errorReporter = createErrorReporter({ env }),
@@ -170,6 +172,7 @@ export function createApiHandler({
   const languageTerms = createLanguageTermService({ database });
   const languageSpeech = languageSpeechService ?? createLanguageSpeechService({ env });
   const readLessonPage = lessonPageReader ?? readPublicPage;
+  const languageLookup = languageLookupService ?? createLanguageLookupService({ database, env });
   const ratchet = createRatchetService({ database });
   const interfaceSettings = createInterfaceSettingsService({ database });
   const vaultPassages = passageService ?? createVaultPassageService({ database, env, vault: vaultService });
@@ -848,6 +851,22 @@ export function createApiHandler({
           const page = await readLessonPage(body.url.trim(), { markdown: true, markdownLinks: false, textLimit: LESSON_PAGE_TEXT_LIMIT, signal: scope.signal });
           if (!page.text.trim()) throw new HttpError(422, "That page has no text to read. Try the address of an article.");
           sendJson(response, 200, { url: page.url, title: page.title, text: page.text, truncated: Boolean(page.truncated) }, { "Cache-Control": "private, no-store" });
+        } finally {
+          scope.dispose();
+        }
+        return;
+      }
+
+      if (route?.id === "languageLookup") {
+        // Dictionary senses and a machine translation for a tapped word: the quick sources. The AI's reading comes separately.
+        requireExpectedVaultAccount(request, authContext.user);
+        if (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "Look words up from Margin Chat.");
+        const scope = createRequestAbortScope(request, response);
+        try {
+          sendJson(response, 200, await languageLookup.lookup({
+            userId: authContext.user.id, term: url.searchParams.get("term") ?? "", src: url.searchParams.get("src") ?? "", tgt: url.searchParams.get("tgt") ?? "",
+            sentence: url.searchParams.get("sentence") ?? "", signal: scope.signal,
+          }), { "Cache-Control": "private, no-store" });
         } finally {
           scope.dispose();
         }

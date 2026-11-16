@@ -21,6 +21,7 @@ export function readLanguageTerm(input) {
   const term = {
     language, key,
     meaning: typeof input.meaning === "string" && input.meaning.length <= MAX_MEANING ? input.meaning : null,
+    source: typeof input.source === "string" && /^[a-z]{0,20}$/u.test(input.source) ? input.source : "",
     status: Number.isInteger(input.status) && input.status >= -1 && input.status <= 5 ? input.status : null,
     tags: shortList(input.tags, 20, 60), docIds: shortList(input.docIds, 50, 200),
     createdAt: time(input.createdAt), updatedAt: time(input.updatedAt),

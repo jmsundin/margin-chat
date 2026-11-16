@@ -6,6 +6,7 @@ const termRow = (row) => ({
   language: row.language,
   key: row.term_key,
   meaning: row.meaning,
+  source: row.meaning_source ?? "",
   status: Number(row.status),
   tags: Array.isArray(row.tags) ? row.tags : [],
   docIds: Array.isArray(row.doc_ids) ? row.doc_ids : [],
@@ -17,12 +18,12 @@ const termRow = (row) => ({
 export async function saveLanguageTerms(client, { userId, terms }) {
   if (!terms.length) return;
   await client.query(
-    `insert into marginchat_language_terms (user_id, language, term_key, meaning, status, tags, doc_ids, created_at, updated_at)
-     select distinct on (t.language, t.key) $1, t.language, t.key, t.meaning, t.status, coalesce(t.tags, '[]'::jsonb), coalesce(t."docIds", '[]'::jsonb), t."createdAt", t."updatedAt"
-     from jsonb_to_recordset($2::jsonb) as t(language text, key text, meaning text, status smallint, tags jsonb, "docIds" jsonb, "createdAt" timestamptz, "updatedAt" timestamptz)
+    `insert into marginchat_language_terms (user_id, language, term_key, meaning, meaning_source, status, tags, doc_ids, created_at, updated_at)
+     select distinct on (t.language, t.key) $1, t.language, t.key, t.meaning, coalesce(t.source, ''), t.status, coalesce(t.tags, '[]'::jsonb), coalesce(t."docIds", '[]'::jsonb), t."createdAt", t."updatedAt"
+     from jsonb_to_recordset($2::jsonb) as t(language text, key text, meaning text, source text, status smallint, tags jsonb, "docIds" jsonb, "createdAt" timestamptz, "updatedAt" timestamptz)
      order by t.language, t.key, t."updatedAt" desc
      on conflict (user_id, language, term_key) do update set
-       meaning = excluded.meaning, status = excluded.status, tags = excluded.tags, doc_ids = excluded.doc_ids, updated_at = excluded.updated_at,
+       meaning = excluded.meaning, meaning_source = excluded.meaning_source, status = excluded.status, tags = excluded.tags, doc_ids = excluded.doc_ids, updated_at = excluded.updated_at,
        seq = nextval(pg_get_serial_sequence('marginchat_language_terms', 'seq'))
      where marginchat_language_terms.updated_at < excluded.updated_at`,
     [userId, JSON.stringify(terms)],
@@ -40,4 +41,21 @@ export async function readLanguageTerms(client, { userId, since = 0, limit = 200
     cursor: result.rows.length ? Number(result.rows.at(-1).seq_text) : since,
     more: result.rows.length === limit,
   };
+}
+
+/** A cached lookup answer, or null. */
+export async function readLookupCache(client, { source, srcLang, tgtLang, term }) {
+  const result = await client.query(
+    `select payload, fetched_at from marginchat_lookup_cache where source = $1 and src_lang = $2 and tgt_lang = $3 and term = $4`,
+    [source, srcLang, tgtLang, term],
+  );
+  return result.rows[0] ? { payload: result.rows[0].payload, fetchedAt: iso(result.rows[0].fetched_at) } : null;
+}
+
+export async function saveLookupCache(client, { source, srcLang, tgtLang, term, payload, fetchedAt }) {
+  await client.query(
+    `insert into marginchat_lookup_cache (source, src_lang, tgt_lang, term, payload, fetched_at) values ($1, $2, $3, $4, $5::jsonb, $6)
+     on conflict (source, src_lang, tgt_lang, term) do update set payload = excluded.payload, fetched_at = excluded.fetched_at`,
+    [source, srcLang, tgtLang, term, JSON.stringify(payload), fetchedAt],
+  );
 }

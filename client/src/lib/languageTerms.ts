@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { apiFetch, apiStorageNamespace } from "./apiTransport";
-import { termId, termKey, type LanguageTerm, type TermStatus } from "./languageReader";
+import { termId, termKey, type LanguageTerm, type MeaningSource, type TermStatus } from "./languageReader";
 
 /**
  * The words and phrases a person is learning. Kept on this device first, so a
  * rating shows at once and survives being offline, then copied to the account.
  * The newer copy of a term wins, so two devices merge.
  */
-export type TermPatch = { meaning?: string; status?: TermStatus; tags?: string[]; docId?: string };
+export type TermPatch = { meaning?: string; /** Where `meaning` came from; typed by the reader unless said. */ source?: MeaningSource; status?: TermStatus; tags?: string[]; docId?: string };
 
 interface Saved { terms: LanguageTerm[]; pending: string[]; cursor: number }
 const storageKey = (namespace: string) => `margin-chat:language-terms:${namespace}`;
@@ -51,18 +51,19 @@ export class LanguageTermStore {
     const id = termId(language, key);
     const existing = this.terms.get(id);
     const meaning = patch.meaning !== undefined ? patch.meaning.trim().slice(0, 2000) : existing?.meaning ?? "";
+    const source: MeaningSource = !meaning ? "" : patch.meaning !== undefined && meaning !== (existing?.meaning ?? "") ? patch.source ?? "user" : patch.source ?? existing?.source ?? "";
     let status = patch.status ?? existing?.status ?? 1;
     // A meaning typed for a word that was never rated means it's being learned.
     if (patch.status === undefined && status === 0 && meaning) status = 1;
     const next: LanguageTerm = {
-      language, key, meaning, status,
+      language, key, meaning, source, status,
       tags: patch.tags ? [...new Set(patch.tags.map((tag) => tag.trim().replace(/^#/u, "")).filter(Boolean))].slice(0, 20) : existing?.tags ?? [],
       docIds: patch.docId && !(existing?.docIds ?? []).includes(patch.docId) ? [...(existing?.docIds ?? []), patch.docId].slice(-50) : existing?.docIds ?? [],
       createdAt: existing?.createdAt ?? now,
       // Always later than the copy it replaces, even when this device's clock is behind the one that wrote it.
       updatedAt: existing && existing.updatedAt >= now ? new Date(Date.parse(existing.updatedAt) + 1).toISOString() : now,
     };
-    if (existing && existing.meaning === next.meaning && existing.status === next.status && existing.tags.join("\n") === next.tags.join("\n") && existing.docIds.length === next.docIds.length) return existing;
+    if (existing && existing.meaning === next.meaning && (existing.source ?? "") === source && existing.status === next.status && existing.tags.join("\n") === next.tags.join("\n") && existing.docIds.length === next.docIds.length) return existing;
     this.terms.set(id, next);
     this.pending.add(id);
     this.changed();

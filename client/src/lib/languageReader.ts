@@ -11,11 +11,15 @@ import { plainReadingText } from "./languageLearning";
 /** How well a term is known: -1 ignored, 0 new (never rated), 1–3 learning, 4 familiar, 5 known. */
 export type TermStatus = -1 | 0 | 1 | 2 | 3 | 4 | 5;
 
+export type MeaningSource = "" | "user" | "wiktionary" | "google" | "deepl" | "ai";
+
 export interface LanguageTerm {
   language: string;
   /** The word or phrase, lowercased; a phrase has single spaces between its words. */
   key: string;
   meaning: string;
+  /** Where the meaning came from: typed by the reader, or picked from a dictionary, a machine translation or the AI. */
+  source?: MeaningSource;
   status: TermStatus;
   tags: string[];
   /** Documents the term was rated or given a meaning in. */
