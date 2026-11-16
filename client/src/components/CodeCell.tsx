@@ -1,9 +1,10 @@
 import { useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, placeholder as editorPlaceholder } from "@codemirror/view";
+import { EditorView, runScopeHandlers, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection, placeholder as editorPlaceholder } from "@codemirror/view";
 import { defaultKeymap, history, historyKeymap, indentWithTab } from "@codemirror/commands";
 import { bracketMatching, indentOnInput, syntaxHighlighting } from "@codemirror/language";
-import { closeBrackets, closeBracketsKeymap } from "@codemirror/autocomplete";
+import { closeBrackets, closeBracketsKeymap, insertBracket } from "@codemirror/autocomplete";
+import { CODE_KEYS_ATTRIBUTE, codeWordInsert, listenForCodeKeys, type CodeKey } from "../lib/codeKeys";
 import { classHighlighter } from "@lezer/highlight";
 import { sql, SQLite } from "@codemirror/lang-sql";
 import { python } from "@codemirror/lang-python";
@@ -56,6 +57,19 @@ function languageExtension(language: CodeLanguage): Extension {
 }
 
 type OutputLine = { kind: "stdout" | "stderr"; text: string } | { kind: "table"; columns: string[]; rows: unknown[][]; note: string };
+
+/** A tap on the key row above the phone keyboard, typed as if the hardware key had been pressed. */
+function pressCodeKey(view: EditorView, key: CodeKey) {
+  if (view.state.readOnly) return;
+  if (key.kind === "tab") { runScopeHandlers(view, new KeyboardEvent("keydown", { key: "Tab", code: "Tab" }), "editor"); return; }
+  const { head, empty } = view.state.selection.main;
+  const word = key.text.length > 1;
+  // Brackets and quotes close themselves, and step over a closing one already there, as they do when typed.
+  const bracket = word ? null : insertBracket(view.state, key.text);
+  if (bracket) { view.dispatch(bracket, { scrollIntoView: true }); return; }
+  const text = word ? codeWordInsert(key.text, empty ? view.state.sliceDoc(Math.max(0, head - 1), head) : "") : key.text;
+  view.dispatch(view.state.update(view.state.replaceSelection(text), { scrollIntoView: true, userEvent: "input.type" }));
+}
 
 interface CodeCellProps {
   language: CodeLanguage;
@@ -119,7 +133,9 @@ export default function CodeCell({ language, source, index, dark }: CodeCellProp
           EditorState.tabSize.of(language === "python" || language === "java" ? 4 : 2),
           EditorState.readOnly.of(!editable), EditorView.editable.of(editable),
           editorPlaceholder(kind === "preview" ? `Write ${CODE_LANGUAGE_LABELS[language]} here` : `Write ${CODE_LANGUAGE_LABELS[language]} here, then Run`),
-          EditorView.contentAttributes.of({ "aria-labelledby": labelId, spellcheck: "false", autocorrect: "off", autocapitalize: "off" }),
+          EditorView.contentAttributes.of({ "aria-labelledby": labelId, spellcheck: "false", autocorrect: "off", autocapitalize: "off", ...(editable ? { [CODE_KEYS_ATTRIBUTE]: language } : {}) }),
+          // On phones the key row sits on top of the keyboard, so the caret's line stays clear of it.
+          EditorView.scrollMargins.of(() => matchMedia("(pointer: coarse)").matches ? { bottom: 100 } : null),
           keymap.of([
             { key: "Mod-Enter", run: () => { latest.current.run(); return true; } },
             { key: "Shift-Enter", run: () => { if (kind !== "run") return false; latest.current.run(); return true; } },
@@ -141,7 +157,8 @@ export default function CodeCell({ language, source, index, dark }: CodeCellProp
       }),
     });
     view.current = editor;
-    return () => { flush(); editor.destroy(); view.current = null; };
+    const stopKeys = listenForCodeKeys(editor.contentDOM, (key) => pressCodeKey(editor, key));
+    return () => { stopKeys(); flush(); editor.destroy(); view.current = null; };
     // The editor is made once per cell; its text is updated below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

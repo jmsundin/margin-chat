@@ -360,6 +360,7 @@ const server = createServer(async (request, response) => {
           const current = (await vaultService.snapshot(controls.userId)).manifest;
           await vaultService.commit(controls.userId, [{
             path: body.path, content: body.content, baseRevision: current.files[body.path]?.revision ?? null,
+            ...(body.encoding === "base64" ? { encoding: "base64" } : {}), ...(typeof body.contentType === "string" ? { contentType: body.contentType } : {}),
           }]);
         } else if (body.action === "controls") {
           for (const field of ["offline", "signedIn", "free", "jev", "chat", "web", "emailVerified"]) if (typeof body[field] === "boolean") controls[field] = body[field];

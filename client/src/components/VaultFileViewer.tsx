@@ -48,33 +48,71 @@ export interface VaultFileViewerProps {
 
 type Loaded = { status: "loading" } | { status: "missing" } | { status: "error"; message: string } | { status: "ready"; blob: Blob };
 
-function useVaultFile(path: string): Loaded {
+/** The vault finished a sync: an open file may have a newer copy now. */
+export const VAULT_SYNCED_EVENT = "margin-vault-synced";
+
+async function sameBlob(a: Blob, b: Blob) {
+  if (a.size !== b.size) return false;
+  const [x, y] = await Promise.all([a.arrayBuffer(), b.arrayBuffer()]);
+  const left = new Uint8Array(x), right = new Uint8Array(y);
+  return left.every((byte, index) => byte === right[index]);
+}
+
+/**
+ * The file as this device holds it. A copy changed elsewhere (another device, or an AI app editing a
+ * page) arrives with a sync: a PDF or picture shows it at once, and a page that is running offers it
+ * as `newer` instead, so a game in play isn't restarted under the player.
+ */
+function useVaultFile(path: string, holdNewer: boolean): { file: Loaded; newer: Blob | null; loadNewer: () => void } {
   const media = useVaultMedia();
   const [state, setState] = useState<Loaded>({ status: "loading" });
+  const [newer, setNewer] = useState<Blob | null>(null);
+  const shown = useRef<Blob | null>(null);
   useEffect(() => {
+    shown.current = null; setNewer(null);
     if (!media) { setState({ status: "missing" }); return; }
     let cancelled = false;
     setState({ status: "loading" });
     media.read(path).then((file) => {
-      if (!cancelled) setState(file ? { status: "ready", blob: file.blob } : { status: "missing" });
+      if (cancelled) return;
+      shown.current = file?.blob ?? null;
+      setState(file ? { status: "ready", blob: file.blob } : { status: "missing" });
     }, (error: unknown) => {
       if (!cancelled) setState({ status: "error", message: error instanceof Error ? error.message : "This file could not be opened." });
     });
-    return () => { cancelled = true; };
-  }, [media, path]);
-  return state;
+    const check = () => {
+      if (document.visibilityState === "hidden") return;
+      void media.read(path).then(async (file) => {
+        if (cancelled || !file) return;
+        if (shown.current && await sameBlob(shown.current, file.blob)) { if (!cancelled) setNewer(null); return; }
+        if (cancelled) return;
+        if (holdNewer && shown.current) setNewer(file.blob);
+        else { shown.current = file.blob; setState({ status: "ready", blob: file.blob }); }
+      }, () => undefined);
+    };
+    window.addEventListener(VAULT_SYNCED_EVENT, check);
+    document.addEventListener("visibilitychange", check);
+    return () => { cancelled = true; window.removeEventListener(VAULT_SYNCED_EVENT, check); document.removeEventListener("visibilitychange", check); };
+  }, [media, path, holdNewer]);
+  const loadNewer = () => {
+    if (!newer) return;
+    shown.current = newer;
+    setState({ status: "ready", blob: newer });
+    setNewer(null);
+  };
+  return { file: state, newer, loadNewer };
 }
 
 /** Shows a PDF, image or HTML page from the vault, with passages and areas people can select, note and ask about. */
 export default function VaultFileViewer(props: VaultFileViewerProps) {
-  const file = useVaultFile(props.file.path);
+  const { file, newer, loadNewer } = useVaultFile(props.file.path, props.file.kind === "html");
   const name = vaultFileTitle(props.file.path);
   if (file.status === "loading") return <div className="vault-file-status" role="status">Opening {name}…</div>;
   if (file.status === "missing") return <div className="vault-file-status">“{name}” isn’t in your vault on this device. If you moved or renamed it, open it from its new place.</div>;
   if (file.status === "error") return <div className="vault-file-status" role="alert">{file.message}</div>;
   return props.file.kind === "pdf"
     ? <PdfView {...props} blob={file.blob} />
-    : props.file.kind === "html" ? <HtmlView {...props} blob={file.blob} />
+    : props.file.kind === "html" ? <HtmlView {...props} blob={file.blob} onLoadNewer={newer ? loadNewer : undefined} />
     : <ImageView {...props} blob={file.blob} />;
 }
 
@@ -716,7 +754,7 @@ function downloadText(name: string, text: string) {
 /** How long a page's saves gather before they go into the vault; a game can save on every answer. */
 const PAGE_DATA_SAVE_DELAY = 4_000;
 
-function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
+function HtmlView(props: VaultFileViewerProps & { blob: Blob; onLoadNewer?: () => void }) {
   const [html, setHtml] = useState<{ text: string; storage: Record<string, string> } | null>(null);
   const [height, setHeight] = useState<number | null>(null);
   const [reloads, setReloads] = useState(0);
@@ -911,6 +949,10 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
   const firstOfEach = new Set<string>();
   return <section className={`vault-file-viewer vault-file-html${layout === "fill" ? " is-fill" : ""}`} aria-label={`HTML page: ${props.file.path}`}>
     {menu}
+    {props.onLoadNewer ? <div className="vault-html-newer" role="status">
+      <span>This page has a newer version in your vault.</span>
+      <button type="button" onClick={() => { flushPageData(); props.onLoadNewer?.(); }}>Load it</button>
+    </div> : null}
     <div className="vault-html-stage">
       {/* No same-origin access: the page's scripts run, but can't reach the app, its sign-in or its storage. */}
       <iframe key={reloads} ref={frameRef} className="vault-html-frame" title={name} srcDoc={source} sandbox={HTML_FRAME_SANDBOX}

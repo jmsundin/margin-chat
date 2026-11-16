@@ -44,3 +44,14 @@ body:has(.mobile-selection-actions[data-placement="bottom"]) .mobile-dock { visi
 .mobile-keyboard-bar-button:active { background: var(--line); }
 .mobile-keyboard-bar-button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mobile-keyboard-bar-text { font: 600 17px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: -1px; }
+/* Programming keys above the software keyboard while a code block has the caret: Tab and the
+   symbols a phone keyboard buries, in one row that scrolls sideways. A SQL block adds a row of words. */
+.code-key-bar { position: fixed; z-index: 66; display: flex; flex-direction: column; box-sizing: border-box; border-top: 1px solid var(--line); background: var(--panel-strong); }
+.code-key-row { display: flex; align-items: center; gap: 6px; box-sizing: border-box; padding: 0 6px; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; touch-action: pan-x; }
+.code-key-row::-webkit-scrollbar { display: none; }
+.code-key, .code-key-word { flex: 0 0 auto; height: 40px; border-radius: 7px; color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; touch-action: pan-x; -webkit-user-select: none; user-select: none; }
+.code-key { min-width: 40px; padding: 0 10px; border: 0; background: var(--line); font-size: 16px; }
+.code-key.is-action { background: color-mix(in srgb, var(--accent) 28%, var(--panel-strong)); }
+.code-key-word { height: 36px; padding: 0 12px; border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 18px; background: transparent; color: var(--accent); font-size: 13px; }
+.code-key:active, .code-key-word:active { background: var(--line-strong); }
+.code-key:focus-visible, .code-key-word:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
