@@ -67,6 +67,8 @@ async function writeSettings(file: string, settings: Settings) {
 /** A network failure or a server that is down, rather than something wrong with the vault. */
 function isOffline(error: unknown) {
   if (error instanceof TypeError) return true;
+  // The vault transport names a request that got no answer.
+  if (error instanceof Error && error.name === "VaultUnreachableError") return true;
   if (error && typeof error === "object" && "name" in error && ["AbortError", "TimeoutError"].includes(String(error.name))) return true;
   const status = error && typeof error === "object" && "statusCode" in error ? Number(error.statusCode) : 0;
   return status >= 500 || /failed to fetch|network|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ERR_INTERNET_DISCONNECTED|ERR_NETWORK/i.test(error instanceof Error ? error.message : "");
