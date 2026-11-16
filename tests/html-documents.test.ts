@@ -45,6 +45,23 @@ describe("HTML pages open as documents", () => {
     expect(htmlFrameDocument("<p>x</p>").match(/name="viewport"/gu)).toHaveLength(1);
   });
 
+  test("Escape pressed in the page is passed to the app, unless the page used it", () => {
+    expect(readHtmlFrameMessage({ marginHtml: 1, type: "escape", extra: "ignored" })).toEqual({ marginHtml: 1, type: "escape" });
+    expect(readHtmlFrameMessage({ type: "escape" })).toBeNull();
+    const page = htmlFrameDocument("<p>x</p>");
+    expect(page).toContain(`event.key === "Escape" && !event.defaultPrevented`);
+    expect(page).toContain(`type: "escape"`);
+    // Full screen is a change of layout around the same frame, so the sandbox is what it was.
+    expect(HTML_FRAME_SANDBOX).toBe("allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox");
+  });
+
+  test("only the bridge's own messages are read: a theme or layout sent back by a page is nothing", () => {
+    // Theme and layout go from the app to the page, never the other way.
+    expect(readHtmlFrameMessage({ marginHtml: 1, type: "theme", theme: "dark" })).toBeNull();
+    expect(readHtmlFrameMessage({ marginHtml: 1, type: "layout", layout: "fill" })).toBeNull();
+    expect(readHtmlFrameMessage({ marginHtml: 1, type: "full-screen" })).toBeNull();
+  });
+
   test("the page starts in the theme it is given, and a change is a message, not a reload", () => {
     expect(htmlFrameDocument("<p>x</p>")).toContain(`,"light","inline");</script>`);
     expect(htmlFrameDocument("<p>x</p>", {}, { theme: "dark" })).toContain(`,"dark","inline");</script>`);

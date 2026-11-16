@@ -1575,6 +1575,7 @@ function WorkspaceAppContent({
   const closeCustomise = useCallback(() => setCustomiseOpen(false), []);
   /** The document whose Ask about this note panel is open. */
   const [noteChatFor, setNoteChatFor] = useState<string | null>(null);
+  const [htmlHeaderSlot, setHtmlHeaderSlot] = useState<HTMLElement | null>(null);
   const flashcards = useFlashcards({ userId: user.id, conversations: state.conversations, enabled: vault.ready });
   const languageTerms = useLanguageTerms({ userId: user.id, enabled: vault.ready });
   /** The open review: every card, or one document with its notes and side documents. */
@@ -4635,24 +4636,17 @@ function WorkspaceAppContent({
     });
   }
 
-  /** Play's bar above a game: note the moment, ask AI about the screen, or ask for a hint. */
-  function renderPlayBar(conversation: Conversation) {
-    const aiOff = isHiddenFromAI(conversation);
-    const questionCount = playCounts[conversation.id] ?? 0;
-    const open = () => setNoteChatFor(conversation.id);
-    return <div className="play-bar" role="toolbar" aria-label="Play">
-      <span className="play-bar-label" title="Play the page with your notes beside it and AI that sees the screen">Play</span>
-      <button type="button" title="A note with what the screen shows now, to write under" onClick={() => void handleNoteThisMoment(conversation.id)}>Note this moment</button>
-      {aiOff ? null : <>
-        <button type="button" className="is-primary" aria-expanded={noteChatFor === conversation.id} title="Ask AI about what's on screen"
-          onClick={() => setNoteChatFor((current) => current === conversation.id ? null : conversation.id)}>Ask AI</button>
-        <button type="button" title="One step toward the answer, without the answer"
-          onClick={() => { open(); void handleAskAboutPage(conversation.id, "Give me a hint, not the answer"); }}>Hint</button>
-      </>}
-      <button type="button" className="play-bar-questions" aria-haspopup="dialog"
-        title="The notes this game asks its questions from. Add more, or have AI write some."
-        onClick={() => setPlaySourcesFor(conversation.id)}>Questions{questionCount ? <span>{questionCount}</span> : null}</button>
-    </div>;
+  /** Play's actions on a game, shown in its header: note the moment, ask AI about the screen, a hint, its questions. */
+  function playActions(conversation: Conversation) {
+    return {
+      ai: !isHiddenFromAI(conversation),
+      askOpen: noteChatFor === conversation.id,
+      questionCount: playCounts[conversation.id] ?? 0,
+      onNote: () => void handleNoteThisMoment(conversation.id),
+      onAsk: () => setNoteChatFor((current) => current === conversation.id ? null : conversation.id),
+      onHint: () => { setNoteChatFor(conversation.id); void handleAskAboutPage(conversation.id, "Give me a hint, not the answer"); },
+      onQuestions: () => setPlaySourcesFor(conversation.id),
+    };
   }
 
   /**
@@ -6958,7 +6952,8 @@ function WorkspaceAppContent({
         {conversation.aiInstruction || inheritedAIInstruction(conversation) ? <AIInstructionLine compact value={conversation.aiInstruction}
           inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : null}
       </div> : undefined}
-      fileBar={view === "chat" && isPlayPage(conversation) ? renderPlayBar(conversation) : undefined}
+      htmlPlay={view === "chat" && isPlayPage(conversation) ? playActions(conversation) : undefined}
+      htmlControlsTarget={isMobileViewport && conversation.id === activeConversation.id ? htmlHeaderSlot : undefined}
       roadmapFill={roadmapPage && view === "chat"}
       roadmap={roadmapPage ? <RoadmapView conversation={conversation} conversations={state.conversations} fill={view === "chat"}
         renderDocument={(docId) => state.conversations[docId] ? renderConversationChatPanel(state.conversations[docId], "chat", undefined, true) : null}
@@ -7681,6 +7676,8 @@ function WorkspaceAppContent({
                       </button> : null}
                       {/* On computers each document's own header holds it. */}
                       {showSpaceStart ? null : <DocumentMapButton open={shownSheet.mode !== "page"} onToggle={handleToggleDocumentMap} />}
+                      {/* On a phone a page's Play and page controls sit in this row, beside its title. */}
+                      {isMobileViewport && isPlayPage(activeConversation) ? <span className="html-page-header-slot" ref={setHtmlHeaderSlot} /> : null}
                       {isMobileViewport && maximizedDocument ? renderFullScreenButton() : null}
                       {isMobileViewport && !showSpaceStart ? renderDocumentModeSwitch(activeConversation) : null}
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>

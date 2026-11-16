@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import type { DocumentLanguageLearning } from "../lib/languageLearning";
 import { flushSync } from "react-dom";
 import { useAppUpdateGuard } from "../lib/appUpdateSafety";
@@ -25,7 +25,8 @@ import RichDocumentEditor, { RichDocumentPlaceholder } from "./LazyRichDocumentE
 import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
 import VaultFileViewer from "./VaultFileViewer";
-import { loadHtmlPagePrefs, useHtmlPageLayout } from "../lib/htmlPagePrefs";
+import type { HtmlPlayActions } from "./HtmlPageMenu";
+import { useHtmlPageLayout, useHtmlPagePrefs } from "../lib/htmlPagePrefs";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
 import MobileAIComposer from "./MobileAIComposer";
@@ -108,7 +109,10 @@ export interface DocumentPanelProps {
    */
   pageBar?: ReactNode;
   /** A bar above a file's view, for the way of working that fits it (Play on an HTML page). */
-  fileBar?: ReactNode;
+  /** Play's actions for an HTML page, shown with the page's own controls in the header. */
+  htmlPlay?: HtmlPlayActions;
+  /** Where an HTML page's controls go when the app's own top row holds them (a phone); otherwise this panel's header. */
+  htmlControlsTarget?: HTMLElement | null;
   /**
    * The quiet page: nothing above the text unless it has something to say (an instruction the AI
    * follows here, or authorship marks that are on). The view and authorship switches are in ⋯.
@@ -209,14 +213,52 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const editorBlocks = board ? document.blocks.filter((block) => block.id !== board.id) : document.blocks;
   // An HTML page is an app, not paper: it fills the panel and scrolls inside its own frame, unless the person chose inline.
   const htmlPage = conversation.vaultFile?.kind === "html";
-  const htmlPrefs = useMemo(() => loadHtmlPagePrefs(conversation.id), [conversation.id]);
-  const htmlLayout = useHtmlPageLayout(htmlPrefs.layout);
+  const [htmlPrefs] = useHtmlPagePrefs(conversation.id);
+  // The bar over a full screen page, where the page's view puts its controls.
+  const [htmlBar, setHtmlBar] = useState<HTMLElement | null>(null);
+  // Full screen: the page over the whole app window under its bar. The body is restyled in place, so the page isn't loaded again.
+  const [htmlFullFor, setHtmlFullFor] = useState<string | null>(null);
+  const htmlFull = htmlPage && htmlFullFor === conversation.id;
+  const htmlChosenLayout = useHtmlPageLayout(htmlPrefs.layout);
+  const htmlLayout = htmlFull ? "fill" : htmlChosenLayout;
   const htmlFill = htmlPage && htmlLayout === "fill";
+  const htmlWasFull = useRef(false);
   const [htmlViewFor, setHtmlViewFor] = useState<{ id: string; view: "page" | "notes" }>({ id: conversation.id, view: "page" });
   const htmlView = htmlViewFor.id === conversation.id ? htmlViewFor.view : "page";
   const setHtmlView = (view: "page" | "notes") => setHtmlViewFor({ id: conversation.id, view });
   const showEditor = !board || editorBlocks.some((block) => block.content.trim());
   const bodyRef = useRef<HTMLDivElement>(null);
+  const leaveHtmlFull = useCallback(() => setHtmlFullFor(null), []);
+  const panelRoot = () => bodyRef.current?.closest<HTMLElement>(".document-panel") ?? null;
+  useEffect(() => {
+    if (!htmlFull) {
+      // Back where the person was: on the button that opened full screen.
+      if (htmlWasFull.current) window.setTimeout(() => (panelRoot()?.querySelector<HTMLElement>(".html-page-full-screen") ?? window.document.querySelector<HTMLElement>(".html-page-header-slot .html-page-title"))?.focus(), 0);
+      htmlWasFull.current = false;
+      return;
+    }
+    htmlWasFull.current = true;
+    bodyRef.current?.querySelector<HTMLIFrameElement>(".vault-html-frame")?.focus();
+    // Ask AI's sheet and the selected-text popup belong over the page, so they are lifted above it while it covers the window.
+    window.document.documentElement.classList.add("has-html-full-screen");
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      // A dialog or menu opened over the page takes Escape first.
+      if (window.document.querySelector('[aria-modal="true"], [role="menu"]')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setHtmlFullFor(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => { window.removeEventListener("keydown", onKey, true); window.document.documentElement.classList.remove("has-html-full-screen"); };
+  }, [htmlFull]);
+  // A new note opens beside the page, which full screen would cover: step out so it can be seen. The page keeps running.
+  const htmlNoteCount = props.marginNotes?.length ?? 0;
+  const htmlNotesSeen = useRef(htmlNoteCount);
+  useEffect(() => {
+    if (htmlNoteCount > htmlNotesSeen.current) setHtmlFullFor(null);
+    htmlNotesSeen.current = htmlNoteCount;
+  }, [htmlNoteCount]);
   const [marginHeight, setMarginHeight] = useState(0);
   const marginWidth = props.marginWidth ?? 300;
   // The PDF or image viewer puts its page count and zoom here, in the header.
@@ -671,19 +713,15 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       </header> : null}
     {props.roadmapFill && props.roadmap ? <div className="document-roadmap-fill">{props.roadmap}</div> : <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
       style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
-    <div className={`panel-body document-body${board ? " is-board" : ""}${htmlFill ? " is-html-page" : ""}`} data-html-view={htmlFill ? htmlView : undefined} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+    <div className={`panel-body document-body${board ? " is-board" : ""}${htmlFill ? " is-html-page" : ""}${htmlFull ? " is-html-full-screen" : ""}`} data-html-view={htmlFill ? htmlView : undefined}
+      role={htmlFull ? "dialog" : undefined} aria-label={htmlFull ? `${conversation.title || "Page"} — full screen` : undefined} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
-        {htmlFill ? <div className="html-page-bar">
-          {props.fileBar}
-          {/* The page has the whole panel, so its notes are a second view instead of a strip below it. */}
-          <div className="html-page-views" role="group" aria-label="Show">
-            <button type="button" aria-pressed={htmlView === "page"} onClick={() => setHtmlView("page")}>Page</button>
-            <button type="button" aria-pressed={htmlView === "notes"} onClick={() => setHtmlView("notes")}>Notes</button>
-          </div>
-        </div> : props.fileBar}
+        {/* A page's controls live in the header; over a full screen page, which covers the header, they get a slim bar of their own. */}
+        {htmlFull ? <div className="html-page-bar" ref={setHtmlBar} /> : null}
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
-          onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={props.onOpenBranch} toolbarTarget={fileControls}
-          htmlLayout={htmlPage ? htmlLayout : undefined}/>
+          onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={(id) => { setHtmlFullFor(null); props.onOpenBranch(id); }} toolbarTarget={fileControls}
+          htmlLayout={htmlPage ? htmlLayout : undefined} htmlControls={htmlPage ? { target: htmlFull ? htmlBar : props.htmlControlsTarget !== undefined ? props.htmlControlsTarget : fileControls, place: htmlFull ? "bar" : "header", play: props.htmlPlay,
+            view: htmlFill ? htmlView : undefined, onView: setHtmlView, full: htmlFull, onFull: (full) => setHtmlFullFor(full ? conversation.id : null) } : undefined} onHtmlEscape={htmlFull ? leaveHtmlFull : undefined}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
       {props.notice}
