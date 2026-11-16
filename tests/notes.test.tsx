@@ -514,6 +514,8 @@ describe("personal notes", () => {
     });
 
     expect(getMarkdownEnterEdit("```ts\nconst safe = true;\n```", 24)).toBeNull();
+    // An indented code line's new line starts at the same depth.
+    expect(getMarkdownEnterEdit("```ts\nif (x) {\n  y();\n```", 20)?.insert).toBe("\n  ");
   });
 
   test("continues lists, tasks, quotes, and tables", () => {

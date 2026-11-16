@@ -666,6 +666,33 @@ export function htmlThemeMessage(theme: "light" | "dark") {
 const VIEWPORT = /<meta\b[^>]*\bname\s*=\s*["']?viewport\b/iu;
 
 /**
+ * Runs inside every page frame, so games and tools with a code box get it without asking:
+ * Enter in a text box starts the new line with the current line's spaces and tabs.
+ * A page that handles Enter itself (and says so with preventDefault) keeps its own behavior.
+ * It is sent to the frame as text, so it uses nothing from outside itself.
+ */
+export function keepIndentOnEnter(scope: Window) {
+  scope.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" || event.defaultPrevented || event.isComposing || event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return;
+    const box = event.target as HTMLTextAreaElement | null;
+    if (!box || box.tagName !== "TEXTAREA" || box.readOnly || box.disabled) return;
+    const start = box.selectionStart;
+    const end = box.selectionEnd;
+    const lineStart = start ? box.value.lastIndexOf("\n", start - 1) + 1 : 0;
+    const indent = /^[ \t]*/u.exec(box.value.slice(lineStart, start))?.[0] ?? "";
+    if (!indent) return;
+    event.preventDefault();
+    const text = `\n${indent}`;
+    // insertText keeps the browser's undo and tells the page through its usual input event.
+    let inserted = false;
+    try { inserted = box.ownerDocument.execCommand("insertText", false, text); } catch { inserted = false; }
+    if (inserted) return;
+    box.setRangeText(text, start, end, "end");
+    box.dispatchEvent(new ((box.ownerDocument.defaultView ?? scope) as unknown as { Event: typeof Event }).Event("input", { bubbles: true }));
+  });
+}
+
+/**
  * The page as the frame loads it: the bridge goes first in the head, after any doctype so the page keeps its rendering mode.
  * `storage` is what the page last kept in its localStorage. Nothing else is added to the page except a
  * viewport line when it has none, so it fits a phone as it would opened by itself.
@@ -675,7 +702,7 @@ export function htmlFrameDocument(html: string, storage: Record<string, string> 
   // Escaped so the page's saved text can't close the script early.
   const saved = JSON.stringify(readStorageData(storage) ?? {}).replace(/</gu, "\\u003c").replace(/\u2028/gu, "\\u2028").replace(/\u2029/gu, "\\u2029");
   const viewport = VIEWPORT.test(html) ? "" : `<meta name="viewport" content="width=device-width,initial-scale=1">`;
-  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"},"${theme === "dark" ? "dark" : "light"}","${layout === "fill" ? "fill" : "inline"}");</script>${viewport}`;
+  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"},"${theme === "dark" ? "dark" : "light"}","${layout === "fill" ? "fill" : "inline"}");</script><script>(${keepIndentOnEnter.toString()})(window);</script>${viewport}`;
   const head = /<head(?:\s[^>]*)?>/iu.exec(html);
   if (head) return html.slice(0, head.index + head[0].length) + script + html.slice(head.index + head[0].length);
   const root = /<html(?:\s[^>]*)?>/iu.exec(html);
