@@ -180,3 +180,6 @@
   .html-page-controls > .html-page-full-screen { flex-basis: 40px; width: 40px; height: 40px; padding: 11px; }
   .document-mode-menu .html-page-choice button { min-height: 40px; }
 }
+/* A page changed elsewhere while it is open here: the player chooses when to restart it. */
+.vault-html-newer { flex: 0 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--panel-strong); color: var(--ink); font-size: .85rem; }
+.vault-html-newer button { flex: 0 0 auto; min-height: 36px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink, #fff); font: inherit; font-weight: 600; }

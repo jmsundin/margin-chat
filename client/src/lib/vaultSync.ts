@@ -602,7 +602,11 @@ export class VaultSync {
     // A network request may take arbitrarily long. Only local read/modify/write
     // operations hold the shared device lock, so typing remains durably savable.
     if (!this.inFlight) {
-      this.inFlight = this.synchronize().finally(() => { this.inFlight = null; });
+      this.inFlight = this.synchronize().finally(() => {
+        this.inFlight = null;
+        // Open files (a page, a PDF) look again for a copy changed elsewhere.
+        try { if (typeof window !== "undefined" && typeof window.dispatchEvent === "function") window.dispatchEvent(new Event("margin-vault-synced")); } catch { /* nothing is listening */ }
+      });
     }
     return this.inFlight;
   }

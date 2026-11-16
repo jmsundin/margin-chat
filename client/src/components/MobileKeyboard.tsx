@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { runEditorCommand, type EditorCommand } from "../lib/editorCommands";
+import { CODE_KEYS_ATTRIBUTE, codeKeyRows, sendCodeKey, type CodeKey } from "../lib/codeKeys";
 import { setMobileDockSlot } from "../lib/mobileDock";
 import { useVisualViewport } from "../lib/useVisualViewport";
 import "./MobileKeyboard.css";
@@ -25,6 +26,8 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
   const [enabled, setEnabled] = useState(false);
   const [hasTarget, setHasTarget] = useState(false);
   const [composerCount, setComposerCount] = useState(0);
+  /** The code block holding the caret: its editor and language, for the programming keys. */
+  const [code, setCode] = useState<{ field: HTMLElement; language: string } | null>(null);
   const registerComposer = useCallback(() => {
     // The AI textarea has its own native typing session. Return the document
     // to selection mode so closing the dock doesn't reopen its keyboard.
@@ -57,6 +60,9 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     const focus = (event: FocusEvent) => {
       const element = event.target instanceof HTMLElement ? event.target : null;
       if (element?.closest("[data-mobile-keyboard-toggle]")) return;
+      if (element?.closest("[data-code-key-bar]")) return;
+      const codeField = element?.closest<HTMLElement>(`[${CODE_KEYS_ATTRIBUTE}]`) ?? null;
+      setCode((current) => codeField === (current?.field ?? null) ? current : codeField ? { field: codeField, language: codeField.getAttribute(CODE_KEYS_ATTRIBUTE) ?? "" } : null);
       const field = element?.closest<HTMLElement>("[data-mobile-keyboard]") ?? null;
       target.current = field;
       setHasTarget(Boolean(field));
@@ -68,8 +74,11 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
         setEnabled(true);
       }
     };
+    // Leaving a code block for nothing (the keyboard's own Done) puts its keys away too.
+    const blur = () => { setTimeout(() => setCode((current) => current && !current.field.contains(document.activeElement) ? null : current), 0); };
     document.addEventListener("focusin", focus);
-    return () => document.removeEventListener("focusin", focus);
+    document.addEventListener("focusout", blur);
+    return () => { document.removeEventListener("focusin", focus); document.removeEventListener("focusout", blur); };
   }, [mobile]);
 
   useEffect(() => {
@@ -119,6 +128,14 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     runEditorCommand(field, command);
   }
 
+  const codeRows = useMemo(() => mobile && code && composerCount === 0 ? codeKeyRows(code.language) : null, [mobile, code, composerCount]);
+  const codeBarHeight = codeRows ? CODE_KEY_ROW_HEIGHT + (codeRows.words.length ? CODE_WORD_ROW_HEIGHT : 0) : 0;
+  function pressCodeKey(key: CodeKey) {
+    if (!code?.field.isConnected) { setCode(null); return; }
+    if (document.activeElement !== code.field) code.field.focus({ preventScroll: true });
+    sendCodeKey(code.field, key);
+  }
+
   // Floating buttons stay out of the way of an open AI composer or on-screen keyboard.
   const overlayOpen = mobile && (composerCount > 0 || keyboardShown);
   const value = useMemo(() => ({ mobile, inputMode: mobile && !enabled ? "none" as const : "text" as const, registerComposer, overlayOpen }), [mobile, enabled, registerComposer, overlayOpen]);
@@ -128,7 +145,7 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
         keyboard is up, its own Done/checkmark closes it, so the stack would only cover text. */}
     {mobile && composerCount === 0 && !keyboardShown && createPortal(<div className="mobile-dock" data-mobile-dock
       // Kept clear of the rounded screen corners on curved phones: 24px up and 20px in.
-      style={{ bottom: `calc(${window.innerHeight - viewport.top - viewport.height + 24 + (barShown ? KEYBOARD_BAR_HEIGHT : 0)}px + ${safeBottom})`, right: window.innerWidth - viewport.left - viewport.width + 20 }}>
+      style={{ bottom: `calc(${window.innerHeight - viewport.top - viewport.height + 24 + (barShown ? KEYBOARD_BAR_HEIGHT : 0) + codeBarHeight}px + ${safeBottom})`, right: window.innerWidth - viewport.left - viewport.width + 20 }}>
       <span className="mobile-dock-slot" ref={createSlot} />
       <span className="mobile-dock-slot" ref={micSlot} />
       <span className="mobile-dock-slot" ref={topSlot} />
@@ -170,6 +187,16 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
       style={{ top: viewport.top + viewport.height - KEYBOARD_BAR_HEIGHT, left: viewport.left, width: viewport.width, height: KEYBOARD_BAR_HEIGHT }}>
       {keyboardBarButtons.map((button) => <KeyboardBarButton key={button.command} {...button} onRun={runCommand} />)}
     </div>, document.body)}
+    {codeRows && createPortal(<div className="code-key-bar" role="toolbar" aria-label="Programming keys" data-code-key-bar
+      style={{ top: viewport.top + viewport.height - codeBarHeight, left: viewport.left, width: viewport.width, height: codeBarHeight }}>
+      {codeRows.words.length ? <div className="code-key-row is-words" style={{ height: CODE_WORD_ROW_HEIGHT }}>
+        {codeRows.words.map((word) => <CodeKeyButton key={word} className="code-key-word" label={word} onPress={() => pressCodeKey({ kind: "text", text: word })}>{word}</CodeKeyButton>)}
+      </div> : null}
+      <div className="code-key-row" style={{ height: CODE_KEY_ROW_HEIGHT }}>
+        <CodeKeyButton className="code-key is-action" label="Tab" onPress={() => pressCodeKey({ kind: "tab" })}>⇥</CodeKeyButton>
+        {codeRows.symbols.map((symbol) => <CodeKeyButton key={symbol} className="code-key" label={symbol} onPress={() => pressCodeKey({ kind: "text", text: symbol })}>{symbol}</CodeKeyButton>)}
+      </div>
+    </div>, document.body)}
   </MobileKeyboardContext.Provider>;
 }
 
@@ -181,6 +208,30 @@ const keyboardBarButtons: { command: EditorCommand; label: string; icon: ReactNo
   { command: "outdent", label: "Outdent (Shift+Tab)", icon: <svg {...iconProps}><path d="M11 6h10M11 12h10M11 18h10M7 9l-3 3 3 3" /></svg> },
   { command: "indent", label: "Indent (Tab)", icon: <svg {...iconProps}><path d="M11 6h10M11 12h10M11 18h10M4 9l3 3-3 3" /></svg> },
 ];
+
+const CODE_KEY_ROW_HEIGHT = 48;
+const CODE_WORD_ROW_HEIGHT = 44;
+
+/** A key in a row that scrolls sideways: a tap types, a swipe only scrolls, and neither takes the caret. */
+function CodeKeyButton({ className, label, onPress, children }: { className: string; label: string; onPress: () => void; children: ReactNode }) {
+  const lastTouch = useRef(-Infinity);
+  const start = useRef<{ x: number; y: number } | null>(null);
+  return <button type="button" className={className} aria-label={label}
+    onPointerDown={(event) => { if (event.pointerType === "mouse") event.preventDefault(); }}
+    onMouseDown={(event) => event.preventDefault()}
+    onTouchStart={(event) => { const touch = event.touches[0]; start.current = event.touches.length === 1 ? { x: touch.clientX, y: touch.clientY } : null; }}
+    onTouchCancel={() => { start.current = null; }}
+    onTouchEnd={(event) => {
+      const from = start.current, touch = event.changedTouches[0];
+      start.current = null;
+      if (event.cancelable) event.preventDefault();
+      lastTouch.current = event.timeStamp;
+      if (from && touch && Math.hypot(touch.clientX - from.x, touch.clientY - from.y) <= 10) onPress();
+    }}
+    onClick={(event) => { if (event.detail !== 0 && event.timeStamp - lastTouch.current < 800) return; onPress(); }}>
+    {children}
+  </button>;
+}
 
 /** Acts on touch end without taking focus, so the caret and keyboard stay where they are. */
 function KeyboardBarButton({ command, label, icon, onRun }: { command: EditorCommand; label: string; icon: ReactNode; onRun: (command: EditorCommand) => void }) {
