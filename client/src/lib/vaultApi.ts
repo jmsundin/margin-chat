@@ -158,8 +158,63 @@ async function* ndjsonLines(response: Response): AsyncGenerator<unknown> {
   }
 }
 
+/** How long an ordinary vault request may take. The server may work for up to 300 s, so a slow day (a cold
+ * database, a large commit) must not be cut off every time and leave sync retrying forever. */
+export const VAULT_REQUEST_TIMEOUT_MS = 90_000;
+
+/** What sync was doing when a request went out, in words for the notice. */
+export function vaultRequestStep(path: string, method = "GET") {
+  const route = path.replace(/^https?:\/\/[^/]+/u, "").split("?")[0];
+  if (route === "/api/vault/commit" || route.startsWith("/api/vault/upload") || (route === "/api/vault/file" && method !== "GET")) return "uploading your changes";
+  if (route === "/api/vault/file") return "downloading a file";
+  if (route === "/api/vault/index") return "loading the list of your documents";
+  if (route === "/api/vault" || route === "/api/vault/changes") return "checking the cloud for changes";
+  return "talking to the server";
+}
+
+type UnreachableKind = "offline" | "network" | "timeout";
+
+export function vaultUnreachableMessage(kind: UnreachableKind, step: string) {
+  if (kind === "offline") return "You're offline. Your edits are saved on this device and sync again when you reconnect.";
+  if (kind === "timeout") return `Cloud sync is waiting on the server: it didn't answer in time while ${step}. Your edits are saved on this device; sync tries again every 15 seconds.`;
+  return `Cloud sync couldn't reach the Margin Chat server while ${step}. Your edits are saved on this device; sync tries again every 15 seconds.`;
+}
+
+/** A vault request that never got an answer: the device is offline, the server couldn't be reached, or it was too slow. */
+export class VaultUnreachableError extends Error {
+  readonly kind: UnreachableKind;
+  readonly step: string;
+  constructor(kind: UnreachableKind, step: string, cause?: unknown) {
+    super(vaultUnreachableMessage(kind, step), { cause });
+    this.name = "VaultUnreachableError";
+    this.kind = kind;
+    this.step = step;
+  }
+}
+
+/** Whether an error means a request got no answer at all (as opposed to an answer saying no). */
+export function unreachableKind(error: unknown): UnreachableKind | null {
+  if (error instanceof VaultUnreachableError) return error.kind;
+  if (!(error instanceof Error)) return null;
+  const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+  if (error.name === "TimeoutError") return offline ? "offline" : "timeout";
+  if (error.name === "AbortError" || /failed to fetch|load failed|networkerror|network request failed/i.test(error.message)) return offline ? "offline" : "network";
+  return null;
+}
+
 async function request(path: string, init?: RequestInit) {
-  const response = await apiFetch(path, { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(30_000), ...init });
+  let response: Response;
+  try {
+    response = await apiFetch(path, { credentials: "same-origin", cache: "no-store", signal: AbortSignal.timeout(VAULT_REQUEST_TIMEOUT_MS), ...init });
+  } catch (error) {
+    // A search the person cancelled is not a sync problem.
+    const cancelled = error instanceof Error && error.name === "AbortError";
+    // fetch itself rejects with a TypeError only when no answer came back (Chrome "Failed to fetch", Node "fetch failed").
+    const kind = cancelled ? null : error instanceof TypeError
+      ? (typeof navigator !== "undefined" && navigator.onLine === false ? "offline" : "network") : unreachableKind(error);
+    if (kind) throw new VaultUnreachableError(kind, vaultRequestStep(path, init?.method), error);
+    throw error;
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => null);
     throw new ApiError(response.status, payload?.error ?? "Unable to synchronize the vault.");
@@ -291,7 +346,7 @@ export function createVaultTransport(userId?: string, onProjectionStatus?: (stat
         const payload = (bytes.length > DIRECT_TRANSFER_BYTES ? await uploadDirect(change.path, change.baseRevision, bytes, change.contentType ?? "application/octet-stream") : null)
           ?? await (await accountRequest(`/api/vault/file?${new URLSearchParams({ path: change.path, baseRevision: change.baseRevision ?? "", acknowledge: "changes" })}`, {
             method: "PUT", headers: { "Content-Type": change.contentType ?? "application/octet-stream", "X-Margin-Vault-Write": "1" },
-            body: new Uint8Array(bytes).buffer, signal: AbortSignal.timeout(bytes.length > DIRECT_TRANSFER_BYTES ? 30 * 60_000 : 30_000),
+            body: new Uint8Array(bytes).buffer, signal: AbortSignal.timeout(bytes.length > DIRECT_TRANSFER_BYTES ? 30 * 60_000 : VAULT_REQUEST_TIMEOUT_MS),
           })).json();
         manifest = readManifest(payload?.manifest);
         projection = payload?.projection;

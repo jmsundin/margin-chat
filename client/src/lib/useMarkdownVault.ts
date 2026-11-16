@@ -5,7 +5,7 @@ import type { AppState, AuthenticatedUser } from "../types";
 import { requestAccountExport, type StateUploadProgress } from "./api";
 import { GUEST_USER_ID } from "./guestMode";
 import { getStateSavedAtStorageKey, getStateStorageKey, loadLastFocusedDocument, saveLastFocusedDocument } from "./appState";
-import { createVaultTransport } from "./vaultApi";
+import { createVaultTransport, unreachableKind, VaultUnreachableError, vaultUnreachableMessage } from "./vaultApi";
 import { FolderChangingError } from "./fileSnapshot";
 import { listTrash, type TrashEntry } from "./vaultTrash";
 import { FolderDeletionHeldError, type HeldFolderDeletion } from "./folderDeletionGuard";
@@ -50,6 +50,10 @@ const STREAM_WIDTH = 3;
 const MANUAL_SYNC_MIN_MS = 800;
 /** How long keys typed together wait to be saved on this device as one. */
 const LOCAL_SAVE_DELAY_MS = 400;
+/** Network failures in a row that sync retries quietly before saying cloud sync is stuck. */
+const QUIET_UNREACHABLE_FAILURES = 3;
+/** The quiet retries wait this long, then twice as long. */
+const QUICK_RETRY_MS = 2_500;
 
 export interface VaultFetchStatus {
   label: string;
@@ -226,6 +230,10 @@ export function useMarkdownVault(args: {
     showDesktopSync(await unwrap(bridge.syncControl(user.id, directoryId, action)));
   }
 
+  const unreachableFailures = useRef(0);
+  const quickRetryTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(quickRetryTimer.current), []);
+
   function report(error: unknown) {
     if (!mounted.current) return;
     // A busy connected folder says nothing about the vault or cloud sync.
@@ -237,10 +245,19 @@ export function useMarkdownVault(args: {
     setStorageMode(enabledRef.current ? "fallback" : "local");
     setMatchesCloud(false);
     const detail = error instanceof Error ? error.message : "Your vault could not be synchronized.";
-    setMessage(/failed to fetch|load failed|networkerror|network request failed/i.test(detail)
-      || (error instanceof Error && ["AbortError", "TimeoutError"].includes(error.name))
-      ? "Cloud sync is unavailable. Your local files are still available; sync will retry when connected."
-      : detail);
+    // Say which it is (offline, the server out of reach, or the server too slow) and what sync was doing.
+    const kind = unreachableKind(error);
+    if (kind) {
+      // A phone app coming back from the background fails its first requests while the network wakes up.
+      // Try again soon, and only say sync is stuck once it keeps failing.
+      unreachableFailures.current += 1;
+      if (unreachableFailures.current < QUIET_UNREACHABLE_FAILURES) {
+        window.clearTimeout(quickRetryTimer.current);
+        quickRetryTimer.current = window.setTimeout(() => { if (mounted.current) scheduleAutomaticRefresh(); }, QUICK_RETRY_MS * unreachableFailures.current);
+        return;
+      }
+    }
+    setMessage(error instanceof VaultUnreachableError ? error.message : kind ? vaultUnreachableMessage(kind, "syncing") : detail);
   }
 
   function rememberDeferred(snapshot: VaultSnapshot) {
@@ -715,6 +732,7 @@ export function useMarkdownVault(args: {
       if (sync && cloudInPage()) {
         await refreshIndex(await engine.sync());
         if (await hydrateIncompleteFamilies()) await engine.sync();
+        unreachableFailures.current = 0;
         if (mounted.current) {
           setStorageMode("server");
           setMessage(projectionPending.current
