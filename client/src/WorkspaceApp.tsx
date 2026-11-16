@@ -107,7 +107,7 @@ import { getDocumentBackTarget, getDocumentKind, getPresentedParentId, recordDoc
 import { joinDocumentBlocks } from "./lib/continuousDocument";
 import { defaultSelectionDestination } from "./lib/selectionDestination";
 import { getEditableDocument, getEditableDocumentText, insertDocumentBlock, remapDocumentRange, splitDocumentMarkdown, type EditableDocument, type DocumentGeneration } from "./lib/editableDocument";
-import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT, VISUALIZE_PASSAGE_PROMPT, type DiagramAIRequest, type DocumentAIRequest } from "./lib/documentAI";
+import { buildDiagramAIMessage, buildDocumentAIMessage, documentAIInstruction, documentAIInstructionSource, QUESTION_PASSAGE_PROMPT, VISUALIZE_PASSAGE_PROMPT, type DiagramAIRequest, type PageBeside, type DocumentAIRequest } from "./lib/documentAI";
 import { findMermaidFences, hasSelectedDiagramInFocus, isMermaidDiagramPassage, mermaidDiagramReply } from "./lib/mermaidDiagrams";
 import { stepGridReply } from "./lib/stepGrid";
 import { acceptDocumentVersion, undoDocumentInsertion, remapDocumentReplacement } from "./lib/documentVersions";
@@ -3371,15 +3371,17 @@ function WorkspaceAppContent({
       setSelectionDraft(null);
       window.getSelection()?.removeAllRanges();
     }
-    const requestMessage = buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection,
+    // Asked from a note beside a game: the question carries what the game shows at this moment.
+    const besideNow = pageBesideNow(source.id);
+    const buildRequestMessage = async () => buildDocumentAIMessage(source, userMessage, selectedQuote, { replaceSelection: request.replaceSelection,
       instruction: documentAIInstruction(currentStateRef.current.conversations, source),
       // An answer in a side document is a direct explanation in every AI behaviour; it helps the user think the
       // question through only when they ask for that. Text written into the page gets neither.
-      thinkOnRequest: request.destination === "side" });
+      thinkOnRequest: request.destination === "side", beside: await besideNow });
     // A diagram the AI rewrites stays one Mermaid fence, whatever words come with it.
     const diagramReply = request.destination === "inline" && (request.visualize || request.replaceSelection && isMermaidDiagramPassage(selectedQuote));
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
-      request: async (onDelta, signal, onMetadata, onAgentEvent) => requestChatReply({
+      request: async (onDelta, signal, onMetadata, onAgentEvent) => { const requestMessage = await buildRequestMessage(); return requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, target, [requestMessage]),
         ai: withJevConsent(request.agent ? { ...normalizeAISettings(target.ai), agent: true } : target.ai, jevEnabled), expectedUserId: user.id,
         conversation: await conversationRequestPayload(currentStateRef.current.conversations, target), messages: [requestMessage],
@@ -3416,7 +3418,7 @@ function WorkspaceAppContent({
           }, tries ? 50 : 0);
           saveImages(0);
         },
-      }),
+      }); },
       onError(error) {
         if (isApiErrorStatus(error,401)) onAuthExpired();
         else if (isApiErrorStatus(error,402)) onBillingRequired(getErrorText(error,"Add money to continue using hosted AI."));
@@ -4552,10 +4554,28 @@ function WorkspaceAppContent({
     if (isHiddenFromAI(source)) { appendAssistantMessage(updated.id, HIDDEN_FROM_AI_MESSAGE); return; }
     const history = chat.messages.filter((message) => message.role === "user" || message.role === "assistant").slice(-10);
     const instruction = documentAIInstruction(currentStateRef.current.conversations, source);
-    const request = play
-      ? buildPlayChatMessage(source, userMessage, { screen: play.screen, instruction, notes: playNotes(source.id) })
-      : buildNoteChatMessage(source, userMessage, { instruction });
-    startAssistantStream(updated, [...history, request]);
+    if (play) { startAssistantStream(updated, [...history, buildPlayChatMessage(source, userMessage, { screen: play.screen, instruction, notes: playNotes(source.id) })]); return; }
+    // A note beside a game asks with the game's screen at this moment; any other note asks as before, at once.
+    if (!playPageBeside(source.id)) { startAssistantStream(updated, [...history, buildNoteChatMessage(source, userMessage, { instruction })]); return; }
+    void pageBesideNow(source.id).then((beside) => startAssistantStream(updated, [...history, buildNoteChatMessage(source, userMessage, { instruction, beside })]));
+  }
+
+  /** The played page a note belongs to (the page itself, or the nearest one above the note), unless it is hidden from AI. */
+  function playPageBeside(documentId: string) {
+    const current = currentStateRef.current.conversations;
+    let at: Conversation | undefined = current[documentId];
+    for (let depth = 0; at && depth < 6; depth += 1) {
+      if (isPlayPage(at)) return isHiddenFromAI(at) ? null : at;
+      at = at.parentId ? current[at.parentId] : undefined;
+    }
+    return null;
+  }
+
+  /** What that page shows right now, when it is open on screen; null for a note that isn't beside a game. */
+  async function pageBesideNow(documentId: string): Promise<PageBeside | null> {
+    const page = playPageBeside(documentId);
+    const screen = page ? await readHtmlScreen(page.id) : null;
+    return page && screen ? { page: page.title, screen } : null;
   }
 
   /** An HTML page is played: games, quizzes and exercises, with notes beside and AI that sees the screen. */
