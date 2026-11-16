@@ -1,11 +1,12 @@
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type JSX, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import {
-  fetchWiktionary, googleTranslateUrl, languageName, wiktionaryUrl,
-  type DocumentLanguageLearning, type LanguagePair, type LookupAnswer, type WiktionarySense,
+  googleTranslateUrl, languageName, wiktionaryFrameUrl, wiktionaryUrl,
+  type DictionaryLookup, type DictionarySense, type DocumentLanguageLearning, type LanguagePair, type LookupAnswer, type PartialLookup,
 } from "../lib/languageLearning";
 import {
   MAX_PHRASE_WORDS, READER_FONTS, READER_SIZES, READER_THEMES, STATUS_LABELS, findPhrases, isLearning, isMarked, loadReaderLook, paginate,
-  readerParagraphs, saveReaderLook, termId, type ReaderLook, type ReaderSentence, type TermStatus,
+  readerParagraphs, saveReaderLook, termId, type MeaningSource, type ReaderLook, type ReaderSentence, type TermStatus,
 } from "../lib/languageReader";
 import { deviceCanSpeak, speak, stopSpeaking } from "../lib/languageSpeech";
 import { formatTimestamp, type MediaEmbed } from "../lib/documentMedia";
@@ -50,6 +51,52 @@ function useLessonAudio(embed: MediaEmbed | null): { url?: string; status: "none
   if (!embed) return { status: "none" };
   return target ? state : { status: "ready", url: embed.target.split("#")[0] };
 }
+const PANE_MIN = 320;
+const PANE_GAP = 14;
+const PANE_WIDTH_KEY = "margin-chat:language-lookup:width";
+function loadPaneWidth(): number | null {
+  try { const saved = Number(localStorage.getItem(PANE_WIDTH_KEY)); return Number.isFinite(saved) && saved >= PANE_MIN ? saved : null; } catch { return null; }
+}
+
+/** Where the lookup pane goes: a column in the free space beside the document, or a sheet under it when there isn't 320px to spare. */
+type PanePlace = { mode: "side"; left: number; top: number; width: number; height: number; shift: number; max: number } | { mode: "sheet"; left?: number; width?: number };
+
+/** The nearest ancestor that scrolls, which the pane stands beside. */
+function scrollParent(element: HTMLElement | null): HTMLElement | null {
+  for (let node = element?.parentElement ?? null; node; node = node.parentElement) {
+    const overflow = getComputedStyle(node).overflowY;
+    if (overflow === "auto" || overflow === "scroll") return node;
+  }
+  return null;
+}
+
+function placePane(root: HTMLElement, wanted: number | null): PanePlace {
+  const slot = root.closest<HTMLElement>(".panel-slot") ?? root;
+  const box = slot.getBoundingClientRect();
+  // Where the document stands when it isn't moved aside, even while that move is still animating.
+  const moved = new DOMMatrixReadOnly(getComputedStyle(slot).transform).m41;
+  const left = box.left - moved, right = box.right - moved;
+  if (window.innerWidth < 768) return { mode: "sheet" };
+  const stageBox = (root.closest(".document-workspace-scrolling, .workspace-view") ?? document.documentElement).getBoundingClientRect();
+  // Other documents open beside this one keep their place: the pane only takes space nothing else is using.
+  let leftLimit = Math.max(0, stageBox.left), rightLimit = Math.min(window.innerWidth, stageBox.right);
+  for (const other of document.querySelectorAll<HTMLElement>(".panel-slot, .document-map-pane, .ask-panel")) {
+    if (other === slot || other.contains(slot) || slot.contains(other)) continue;
+    const rect = other.getBoundingClientRect();
+    if (!rect.width || !rect.height) continue;
+    if (rect.left >= right - 2) rightLimit = Math.min(rightLimit, rect.left);
+    else if (rect.right <= left + 2) leftLimit = Math.max(leftLimit, rect.right);
+  }
+  const freeRight = Math.max(0, rightLimit - right), freeLeft = Math.max(0, left - leftLimit);
+  const max = Math.floor(freeRight + freeLeft - PANE_GAP - 8);
+  const sheet: PanePlace = { mode: "sheet", left: Math.round(left), width: Math.round(box.width) };
+  if (max < PANE_MIN) return sheet;
+  const width = Math.round(Math.max(PANE_MIN, Math.min(wanted ?? Math.min(480, (rightLimit - leftLimit) * 0.4), max)));
+  const shift = Math.round(Math.max(0, Math.min(freeLeft, width + PANE_GAP + 8 - freeRight)));
+  const scroller = scrollParent(root)?.getBoundingClientRect();
+  const top = Math.max(8, Math.round(scroller?.top ?? 0)), bottom = Math.min(window.innerHeight, Math.round(scroller?.bottom ?? window.innerHeight)) - 8;
+  return { mode: "side", left: Math.round(right - shift + PANE_GAP), top, width, height: Math.max(280, bottom - top), shift, max };
+}
 const isPhone = () => typeof matchMedia !== "undefined" && matchMedia("(max-width: 700px), (pointer: coarse)").matches;
 
 /**
@@ -75,6 +122,40 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
   const [lookOpen, setLookOpen] = useState(false);
   const [speaking, setSpeaking] = useState<number | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // ----- the lookup pane: beside the text when there's room, a sheet from the bottom otherwise -----
+  const [tab, setTab] = useState<LookupTab>("meanings");
+  const [paneWidth, setPaneWidth] = useState<number | null>(loadPaneWidth);
+  const [place, setPlace] = useState<PanePlace>({ mode: "sheet" });
+  const paneRef = useRef<HTMLElement | null>(null);
+  const paneOpen = open !== null;
+  useLayoutEffect(() => {
+    const root = rootRef.current;
+    if (!paneOpen || !root) return undefined;
+    const measure = () => {
+      const next = placePane(root, paneWidth);
+      setPlace((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
+    };
+    measure();
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    observer?.observe(root);
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [paneOpen, paneWidth]);
+  // The document slides left only as far as the pane needs, and back when the pane closes.
+  const shift = paneOpen && place.mode === "side" ? place.shift : 0;
+  useLayoutEffect(() => {
+    const slot = rootRef.current?.closest<HTMLElement>(".panel-slot") ?? rootRef.current;
+    if (!slot) return undefined;
+    slot.style.transform = shift ? `translateX(${-shift}px)` : "";
+    return () => { slot.style.transform = ""; };
+  }, [shift]);
+  function resizePane(next: number, keep = false) {
+    const clamped = Math.round(Math.max(PANE_MIN, Math.min(next, place.mode === "side" ? place.max : next)));
+    setPaneWidth(clamped);
+    if (keep) { try { localStorage.setItem(PANE_WIDTH_KEY, String(clamped)); } catch { /* Private windows keep the default. */ } }
+  }
+  const dividing = useRef<{ x: number; width: number } | null>(null);
 
   // ----- a lesson's own recording -----
   const audioEmbed = useMemo(() => lessonAudioOf(blocks), [blocks]);
@@ -162,7 +243,7 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
       sentence: sentence.index, from, to, key: words.slice(from, to + 1).map((token) => token.key).join(" "),
       display: sentence.tokens.slice(first, last + 1).map((token) => token.text).join("").trim(), nonce: Date.now(),
     });
-    if (focusCard) requestAnimationFrame(() => rootRef.current?.querySelector<HTMLElement>(".language-term-card")?.focus({ preventScroll: true }));
+    if (focusCard) requestAnimationFrame(() => paneRef.current?.focus({ preventScroll: true }));
   }
 
   /** The saved phrase a word is part of, if any, as a run of words. */
@@ -222,8 +303,10 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
     if (!open && !lookOpen) return undefined;
     const outside = (event: PointerEvent) => {
       const target = event.target instanceof Element ? event.target : null;
-      if (target?.closest(".language-term-card, .language-reader-look, [data-lr-word], .language-reader-bar, .language-reader-top")) return;
-      setOpen(null); setLookOpen(false);
+      if (target?.closest(".language-term-card, .language-lookup-divider, .language-reader-look, [data-lr-word], .language-reader-bar, .language-reader-top")) return;
+      // The pane is part of the page, so only a press on the text beside it closes it; the rest of the app leaves it open.
+      if (target && rootRef.current?.contains(target)) setOpen(null);
+      setLookOpen(false);
     };
     document.addEventListener("pointerdown", outside, true);
     return () => document.removeEventListener("pointerdown", outside, true);
@@ -283,7 +366,7 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
     const target = event.target as HTMLElement;
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     // Typing a meaning or a tag is typing, not shortcuts. Escape leaves the field first.
-    if (target.closest("textarea, input, select")) { if (event.key === "Escape") { event.preventDefault(); rootRef.current?.querySelector<HTMLElement>(".language-term-card")?.focus(); } return; }
+    if (target.closest("textarea, input, select")) { if (event.key === "Escape") { event.preventDefault(); paneRef.current?.focus(); } return; }
     const onControl = Boolean(target.closest("button, a"));
     if (event.key === "Escape") { if (lookOpen) setLookOpen(false); else if (open) { setOpen(null); rootRef.current?.focus({ preventScroll: true }); } else return; event.preventDefault(); return; }
     if (event.key === "ArrowRight" || event.key === "ArrowLeft") { event.preventDefault(); step(event.key === "ArrowRight" ? 1 : -1); return; }
@@ -294,7 +377,7 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
     if (event.key === "x" || event.key === "X") { event.preventDefault(); rate(-1); return; }
     if (event.key === "Tab") {
       // The card keeps the Tab key while it's open.
-      const card = rootRef.current?.querySelector<HTMLElement>(".language-term-card");
+      const card = paneRef.current;
       const stops = card ? [...card.querySelectorAll<HTMLElement>('button:not([tabindex="-1"]), textarea, a[href], input')].filter((element) => element.offsetParent) : [];
       if (!card || !stops.length) return;
       const at = stops.indexOf(document.activeElement as HTMLElement);
@@ -370,7 +453,8 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
   const style = { "--lr-size": `${READER_SIZES[look.size - 1]}px`, "--lr-font": READER_FONTS[look.font].stack } as CSSProperties;
   const position = view === "focus" ? (focusIndex + 1) / Math.max(1, sentences.length) : (page + 1) / pages.length;
 
-  return <div ref={rootRef} className="language-reader" data-theme={look.theme === "system" ? undefined : look.theme} data-view={view} style={style} tabIndex={-1}
+  const sheet = place.mode === "sheet";
+  return <div ref={rootRef} className="language-reader" data-theme={look.theme === "system" ? undefined : look.theme} data-view={view} data-pane={paneOpen ? place.mode : undefined} style={style} tabIndex={-1}
     onKeyDown={onKeyDown} role="group" aria-label={`Reading in ${languageName(language)}`}>
     <div className="language-reader-top">
       <span className="language-reader-count" title="Words and phrases you've marked known"><b>{counts.known}</b> known</span>
@@ -421,7 +505,20 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
       <span className="language-reader-learning" title="Words and phrases rated 1 to 3. The ones with a meaning are cards in Review."><b>{counts.learning}</b> learning</span>
     </div>
 
-    {open && openSentence ? <TermCard key={`${open.sentence}:${open.from}:${open.to}:${open.nonce}`} open={open} sentence={openSentence} pair={pair} learning={learning}
+
+    {/* On the page itself, outside the document's clipped column, so it can stand in the free space beside it. */}
+    {open && openSentence ? createPortal(<div className="language-reader language-lookup-dock" data-theme={look.theme === "system" ? undefined : look.theme} style={style}>
+      {place.mode === "side" ? <div className="language-lookup-divider" role="separator" aria-orientation="vertical" aria-label="Resize the lookup pane" tabIndex={0}
+        aria-valuemin={PANE_MIN} aria-valuemax={Math.max(PANE_MIN, place.max)} aria-valuenow={place.width}
+        style={{ left: place.left - PANE_GAP, top: place.top, height: place.height }}
+        onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); dividing.current = { x: event.clientX, width: place.width }; }}
+        onPointerMove={(event) => { if (dividing.current) resizePane(dividing.current.width + dividing.current.x - event.clientX); }}
+        onPointerUp={(event) => { if (!dividing.current) return; resizePane(dividing.current.width + dividing.current.x - event.clientX, true); dividing.current = null; }}
+        onPointerCancel={() => { dividing.current = null; }}
+        onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); event.stopPropagation(); resizePane(place.width + (event.key === "ArrowLeft" ? 24 : -24), true); }} /> : null}
+      <LookupPane key={`${open.sentence}:${open.from}:${open.to}:${open.nonce}`} open={open} sentence={openSentence} pair={pair} learning={learning}
+        sheet={sheet} tab={tab} onTab={setTab}
+        style={place.mode === "side" ? { left: place.left, top: place.top, width: place.width, height: place.height } : place.left !== undefined ? { left: place.left, width: place.width, right: "auto" } : undefined}
       status={statusOf(open.key)} exists={learning.terms.has(termId(language, open.key))}
       partOf={open.from === open.to ? phraseAround(openSentence, open.from) : null}
       onPhrase={(match) => openRange(openSentence, match.from, match.from + match.length - 1)}
@@ -433,7 +530,8 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
         if (!blockId) return;
         setOpen(null);
         onAskInMargin({ blockId, term: open.display, sentence: openSentence.text, rect: { left: box?.left ?? 0, top: box?.top ?? 0, width: box?.width ?? 0, height: box?.height ?? 0 } });
-      } : undefined} rootRef={rootRef} /> : null}
+      } : undefined} rootRef={rootRef} paneRef={paneRef} />
+    </div>, document.body) : null}
   </div>;
 }
 
@@ -497,29 +595,42 @@ function FocusSentence({ sentence, pair, learning, canBack, canNext, onStep, onL
   </div>;
 }
 
-type Suggestion = { state: "idle" } | { state: "loading" } | { state: "done"; answer: LookupAnswer } | { state: "failed"; message: string };
+type Suggestion = { state: "idle" } | { state: "loading"; partial?: PartialLookup } | { state: "done"; answer: LookupAnswer } | { state: "failed"; message: string };
+type Dictionary = { state: "loading" } | { state: "done"; result: DictionaryLookup } | { state: "failed" };
+export type LookupTab = "meanings" | "wiktionary" | "translate";
 
-/** What the reader knows about one word or phrase, and how well: its meaning, a suggestion in context, and the rating. */
-function TermCard({ open, sentence, pair, learning, status, exists, partOf, onPhrase, onRate, onClose, onAsk, rootRef }: {
+const dictionaries = new Map<string, DictionaryLookup>();
+const SOURCE_NAMES: Record<string, string> = { user: "typed by you", wiktionary: "from Wiktionary", google: "from Google Translate", deepl: "from DeepL", ai: "from the AI" };
+const PROVIDER_NAMES = { google: "Google Translate", deepl: "DeepL" } as const;
+
+/**
+ * The lookup pane: what one word or phrase means, beside the text instead of over it. The reader's own
+ * meaning on top; then meanings to pick from by source (Wiktionary, a machine translation, the AI reading
+ * the sentence); the live Wiktionary page and the translator in tabs; and how well the reader knows it.
+ */
+function LookupPane({ open, sentence, pair, learning, status, exists, partOf, sheet, tab, onTab, style, onPhrase, onRate, onClose, onAsk, rootRef, paneRef }: {
   open: OpenTerm; sentence: ReaderSentence; pair: LanguagePair; learning: DocumentLanguageLearning; status: TermStatus; exists: boolean;
-  partOf: { from: number; length: number; key: string } | null; onPhrase: (match: { from: number; length: number; key: string }) => void;
-  onRate: (status: TermStatus) => void; onClose: () => void; onAsk?: () => void; rootRef: RefObject<HTMLDivElement | null>;
+  partOf: { from: number; length: number; key: string } | null; sheet: boolean; tab: LookupTab; onTab: (tab: LookupTab) => void; style?: CSSProperties;
+  onPhrase: (match: { from: number; length: number; key: string }) => void;
+  onRate: (status: TermStatus) => void; onClose: () => void; onAsk?: () => void; rootRef: RefObject<HTMLDivElement | null>; paneRef: RefObject<HTMLElement | null>;
 }) {
   const language = pair.target;
   const term = learning.terms.get(termId(language, open.key));
   const isPhrase = open.from !== open.to;
   const [meaning, setMeaning] = useState(term?.meaning ?? "");
   const [saved, setSaved] = useState<"" | "saving" | "saved">("");
-  const [expanded, setExpanded] = useState(false);
   const [suggestion, setSuggestion] = useState<Suggestion>({ state: "idle" });
   const [asked, setAsked] = useState(0);
   const [addingTag, setAddingTag] = useState(false);
-  const [wiki, setWiki] = useState<{ senses: WiktionarySense[] | null; failed?: boolean } | null>(null);
+  const context = sentence.text === open.display ? "" : sentence.text;
   const cacheKey = `${pair.target}>${pair.base}|${open.key}|${sentence.text}`;
+  const dictionaryKey = `${pair.target}>${pair.base}|${open.display}|${context}`;
+  const [dictionary, setDictionary] = useState<Dictionary>(() => { const cached = dictionaries.get(dictionaryKey); return cached ? { state: "done", result: cached } : { state: "loading" }; });
   const titleId = `language-term-${open.nonce}`;
+  const cardRef = useRef<HTMLElement | null>(null);
 
-  // The meaning saves itself half a second after the typing stops, and at once when the card closes.
-  const latest = useRef({ meaning, initial: term?.meaning ?? "", learning, timer: 0, dirty: false });
+  // The meaning saves itself half a second after the typing stops, and at once on Enter or when the pane closes.
+  const latest = useRef({ meaning, initial: term?.meaning ?? "", source: (term?.source ?? "user") as MeaningSource, learning, timer: 0, dirty: false });
   latest.current.meaning = meaning; latest.current.learning = learning;
   const commit = useCallback(() => {
     const state = latest.current;
@@ -529,7 +640,7 @@ function TermCard({ open, sentence, pair, learning, status, exists, partOf, onPh
     const text = state.meaning.trim();
     // A phrase that was only dragged across, with nothing typed, is not saved.
     if (!text && !state.learning.terms.has(termId(language, open.key))) return;
-    state.learning.setTerm(language, open.key, { meaning: text, docId: state.learning.docId });
+    state.learning.setTerm(language, open.key, { meaning: text, source: state.source, docId: state.learning.docId });
     setSaved("saved");
   }, [language, open.key]);
   useEffect(() => () => {
@@ -543,77 +654,91 @@ function TermCard({ open, sentence, pair, learning, status, exists, partOf, onPh
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  function type(value: string) {
+  function type(value: string, source: MeaningSource = "user") {
     setMeaning(value); setSaved("saving");
     const state = latest.current;
-    state.meaning = value; state.dirty = true;
+    state.meaning = value; state.source = source; state.dirty = true;
     window.clearTimeout(state.timer);
     state.timer = window.setTimeout(commit, 500);
   }
-  function adopt(value: string) { type(value); commit(); }
+  /** A meaning picked from the list goes into the reader's own meaning, with where it came from. */
+  function adopt(value: string, source: MeaningSource) { type(value, source); commit(); }
 
-  // A suggestion in context: asked for on its own when there's no meaning yet, on request otherwise.
+  // The quick sources: dictionary senses and a machine translation. A beat first, so walking past terms with the arrow keys doesn't look each one up.
   useEffect(() => {
-    if (!learning.aiAllowed) return undefined;
-    const cached = answers.get(cacheKey);
-    if (cached) { setSuggestion({ state: "done", answer: cached }); return undefined; }
-    if (asked === 0 && (term?.meaning ?? "")) return undefined;
+    if (dictionary.state === "done") return undefined;
+    if (!learning.dictionary) { setDictionary({ state: "failed" }); return undefined; }
     const controller = new AbortController();
-    setSuggestion({ state: "loading" });
-    // A beat first, so walking past terms with the arrow keys doesn't ask about each one.
     const timer = window.setTimeout(() => {
-      learning.lookUp({ text: open.display, sentence: sentence.text === open.display ? "" : sentence.text, pair }, controller.signal).then(
-        (answer) => { if (controller.signal.aborted) return; answers.set(cacheKey, answer); setSuggestion({ state: "done", answer }); },
-        (error: unknown) => { if (!controller.signal.aborted) setSuggestion({ state: "failed", message: error instanceof Error && error.message ? error.message : "The meaning couldn't be looked up. Try again." }); });
-    }, asked ? 0 : 350);
+      learning.dictionary!({ term: open.display, sentence: context, pair }, controller.signal).then(
+        (result) => { if (controller.signal.aborted) return; dictionaries.set(dictionaryKey, result); setDictionary({ state: "done", result }); },
+        () => { if (!controller.signal.aborted) setDictionary({ state: "failed" }); });
+    }, 200);
     return () => { window.clearTimeout(timer); controller.abort(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [asked, cacheKey]);
+  }, [dictionaryKey]);
 
-  // Under the text when there's room, above it otherwise, never past the sides. On phones the card is a sheet.
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [sheet, setSheet] = useState(isPhone);
-  const [place, setPlace] = useState<{ top: number; left: number; maxHeight?: number } | null>(null);
-  useLayoutEffect(() => {
-    const phone = isPhone();
-    if (phone !== sheet) setSheet(phone);
-    const card = cardRef.current, root = rootRef.current;
-    if (phone || !card || !root) return;
-    const words = [...root.querySelectorAll<HTMLElement>(`[data-lr-sentence="${open.sentence}"]`)].filter((element) => { const word = Number(element.dataset.lrWord); return word >= open.from && word <= open.to; });
-    if (!words.length) return;
-    const rootBox = root.getBoundingClientRect();
-    const boxes = words.map((element) => element.getBoundingClientRect());
-    const top = Math.min(...boxes.map((box) => box.top)), bottom = Math.max(...boxes.map((box) => box.bottom));
-    // The card's full height, whatever height it is held to now: its scrolling part in full, plus the pinned rating row.
-    const height = (card.querySelector(".language-term-scroll")?.scrollHeight ?? 0) + (card.querySelector<HTMLElement>(".language-term-foot")?.offsetHeight ?? 0) + 2;
-    const width = card.offsetWidth;
-    const roomBelow = window.innerHeight - bottom - 14, roomAbove = top - 70;
-    let next: { top: number; left: number; maxHeight?: number };
-    const left = Math.max(8, Math.min(boxes[0].left - rootBox.left - 14, rootBox.width - width - 8));
-    if (height <= roomBelow || roomBelow >= roomAbove) next = { top: bottom - rootBox.top + 6, left, ...(height > roomBelow ? { maxHeight: Math.max(240, roomBelow) } : {}) };
-    else { const shownHeight = Math.min(height, roomAbove); next = { top: top - rootBox.top - 6 - shownHeight, left, ...(height > roomAbove ? { maxHeight: roomAbove } : {}) }; }
-    if (!place || Math.abs(next.top - place.top) > 1 || Math.abs(next.left - place.left) > 1 || Math.abs((next.maxHeight ?? 0) - (place.maxHeight ?? 0)) > 1) setPlace(next);
-  });
+  // The AI reads the sentence last, with the dictionary's senses to choose from, and its answer streams in.
+  // It is asked on its own only when there's no meaning yet; on request otherwise.
+  useEffect(() => {
+    if (!learning.aiAllowed) return undefined;
+    const cached = asked === 0 ? answers.get(cacheKey) : undefined;
+    if (cached) { setSuggestion({ state: "done", answer: cached }); return undefined; }
+    if (asked === 0 && (term?.meaning ?? "")) return undefined;
+    if (dictionary.state === "loading") { setSuggestion({ state: "loading" }); return undefined; }
+    const controller = new AbortController();
+    setSuggestion({ state: "loading" });
+    const found = dictionary.state === "done" ? dictionary.result.wiktionary : null;
+    const senses = found ? [...found.senses, ...(found.lemma?.senses ?? [])].map((sense) => `${sense.pos ? `(${sense.pos}) ` : ""}${sense.glosses.join("; ")}`) : [];
+    const timer = window.setTimeout(() => {
+      learning.lookUp({ text: open.display, sentence: context, pair, senses }, controller.signal,
+        (partial) => { if (!controller.signal.aborted && partial.meaning) setSuggestion({ state: "loading", partial }); }).then(
+        (answer) => { if (controller.signal.aborted) return; answers.set(cacheKey, answer); setSuggestion({ state: "done", answer }); },
+        (error: unknown) => { if (!controller.signal.aborted) setSuggestion({ state: "failed", message: error instanceof Error && error.message ? error.message : "The meaning couldn't be looked up. Try again." }); });
+    }, asked ? 0 : 150);
+    return () => { window.clearTimeout(timer); controller.abort(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [asked, cacheKey, dictionary.state]);
+
+  // As a sheet, the word it is about stays in view above it.
+  useEffect(() => {
+    if (!sheet) return;
+    const word = rootRef.current?.querySelector(`[data-lr-sentence="${open.sentence}"][data-lr-word="${open.from}"]`);
+    const card = cardRef.current;
+    if (!word || !card) return;
+    const hidden = word.getBoundingClientRect().bottom + 12 - card.getBoundingClientRect().top;
+    if (hidden > 0) (scrollParent(rootRef.current) ?? document.scrollingElement)?.scrollBy({ top: hidden, behavior: "smooth" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sheet]);
 
   const answer = suggestion.state === "done" ? suggestion.answer : null;
+  const partial = suggestion.state === "loading" ? suggestion.partial : undefined;
+  const found = dictionary.state === "done" ? dictionary.result : null;
+  const entry = found?.wiktionary ?? null;
+  const machine = found?.machine ?? null;
   const tags = term?.tags ?? [];
-  const lemma = answer?.lemma && answer.lemma.toLowerCase() !== open.display.toLowerCase() ? answer.lemma : "";
+  const lemma = (entry?.lemma?.term ?? (answer?.lemma && answer.lemma.toLowerCase() !== open.display.toLowerCase() ? answer.lemma : "")) || "";
   const draft = isPhrase && !exists;
-  const mentions = useMemo(() => expanded ? learning.mentions(open.display).filter((document) => document.id !== learning.docId).slice(0, 5) : [], [expanded, learning, open.display]);
-  const lookupWord = lemma && !isPhrase ? lemma : open.display;
-  function openWiktionary() {
-    if (wiki) { setWiki(null); return; }
-    setWiki({ senses: null });
-    fetchWiktionary(lookupWord, language).then((senses) => setWiki({ senses }), () => setWiki({ senses: [], failed: true }));
+  const mentions = useMemo(() => tab === "meanings" ? learning.mentions(open.display).filter((document) => document.id !== learning.docId).slice(0, 5) : [], [tab, learning, open.display]);
+  const resolved = found?.resolvedTerm ?? (isPhrase ? open.display : open.display.toLocaleLowerCase(language));
+  const source = meaning.trim() ? (saved ? latest.current.source : term?.source ?? "") : "";
+  const tabs: Array<[LookupTab, string]> = [["meanings", "Meanings"], ["wiktionary", "Wiktionary"], ["translate", "Google Translate"]];
+
+  function senseRows(senses: DictionarySense[]) {
+    return senses.map((sense, index) => <li key={index}>
+      <button type="button" className="language-lookup-pick" title="Use this meaning" onClick={() => adopt(sense.glosses.join("; "), "wiktionary")}>
+        {sense.pos ? <i>{sense.pos}</i> : null}<span>{sense.glosses.join("; ")}</span></button>
+      {sense.examples[0] ? <p className="language-lookup-example"><span lang={language}>{sense.examples[0].text}</span>{sense.examples[0].translation ? <em>{sense.examples[0].translation}</em> : null}</p> : null}
+    </li>);
   }
 
-  return <div ref={cardRef} className={`language-term-card${sheet ? " is-sheet" : ""}`} role="dialog" aria-labelledby={titleId} tabIndex={-1} lang="en"
-    style={sheet ? undefined : { top: place?.top ?? 0, left: place?.left ?? 0, maxHeight: place?.maxHeight, visibility: place ? undefined : "hidden" }}
-    onPointerDown={(event) => event.stopPropagation()}>
+  return <aside ref={(element) => { cardRef.current = element; paneRef.current = element; }} className={`language-term-card language-lookup-pane${sheet ? " is-sheet" : ""}`} role="dialog" aria-labelledby={titleId} tabIndex={-1} lang="en"
+    style={style} onPointerDown={(event) => event.stopPropagation()}>
     <div className="language-term-scroll">
       <div className="language-term-head">
         {deviceCanSpeak() ? <button type="button" className="language-term-speak" aria-label="Say it" title="Say it" onClick={() => speak(open.display, language)}>🔊</button> : null}
-        <h3 id={titleId} lang={language}>{open.display.charAt(0).toLocaleUpperCase() + open.display.slice(1)}</h3>
+        <h3 id={titleId} lang={language}>{open.display}</h3>
+        <span className="language-lookup-badge">{languageName(language)}</span>
         <button type="button" className="language-term-close" aria-label="Close" onClick={onClose}>×</button>
       </div>
       <div className="language-term-tags">
@@ -628,43 +753,77 @@ function TermCard({ open, sentence, pair, learning, status, exists, partOf, onPh
           }} onBlur={() => setAddingTag(false)} />
           : <button type="button" className="language-term-link" onClick={() => setAddingTag(true)}>Tag +</button>}
       </div>
-      <div className="language-term-label"><span>Your meaning</span><span className="language-term-saved" role="status">{saved === "saving" ? "Saving…" : saved === "saved" ? "Saved ✓" : ""}</span></div>
+      <div className="language-term-label"><span>Your meaning</span><span className="language-term-saved" role="status">
+        {saved === "saving" ? "Saving…" : saved === "saved" ? "Saved ✓" : ""}{source && SOURCE_NAMES[source] && saved !== "saving" ? <small> {SOURCE_NAMES[source]}</small> : null}</span></div>
       <label className="language-term-meaning"><span className="language-term-flag" aria-hidden="true">{pair.base.slice(0, 2).toUpperCase()}</span>
-        <textarea value={meaning} rows={2} lang={pair.base} aria-label="Your meaning" maxLength={2000}
-          placeholder={draft ? "Type a meaning to save this phrase" : "Type a meaning here"} onChange={(event) => type(event.target.value)} onBlur={commit} /></label>
+        <textarea value={meaning} rows={sheet ? 1 : 2} lang={pair.base} aria-label="Your meaning" maxLength={2000} enterKeyHint="done"
+          placeholder={draft ? "Type a meaning to save this phrase" : "Type a meaning, or pick one below"} onChange={(event) => type(event.target.value)} onBlur={commit}
+          onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); commit(); cardRef.current?.focus({ preventScroll: true }); } }} /></label>
 
-      {!learning.aiAllowed ? <p className="language-term-quiet">This document is hidden from AI, so no AI meaning is asked for. Dictionaries are under More.</p>
-        : suggestion.state === "loading" ? <p className="language-term-suggestion" role="status"><span className="language-term-spinner" aria-hidden="true" />Reading the sentence…</p>
-        : suggestion.state === "failed" ? <p className="language-term-error" role="alert">{suggestion.message} <button type="button" onClick={() => setAsked((value) => value + 1)}>Try again</button></p>
-        : answer ? <div className="language-term-suggestion">
-          <span className="language-term-spark" aria-hidden="true">✦</span>
-          <span className="language-term-suggested"><b lang={answer.to}>{answer.meaning}</b>{answer.note ? <small>{answer.note}</small> : null}</span>
-          <button type="button" className="language-term-add" aria-label="Use this meaning" title="Use this meaning" onClick={() => adopt(answer.meaning)}>+</button>
-        </div>
-        : <button type="button" className="language-term-link is-ask" onClick={() => setAsked((value) => value + 1)}>✦ What does it mean here?</button>}
+      <div className="language-lookup-tabs" role="tablist" aria-label="Where to look it up">
+        {tabs.map(([id, name]) => <button key={id} type="button" role="tab" id={`${titleId}-tab-${id}`} aria-selected={tab === id} aria-controls={`${titleId}-panel`}
+          onClick={() => onTab(id)}>{id === "translate" && machine ? PROVIDER_NAMES[machine.provider] : name}</button>)}
+      </div>
 
-      {partOf && partOf.length > 1 ? <p className="language-term-quiet">Part of the phrase <button type="button" className="language-term-link" lang={language} onClick={() => onPhrase(partOf)}>{partOf.key}</button></p> : null}
+      <div className="language-lookup-panel" role="tabpanel" id={`${titleId}-panel`} aria-labelledby={`${titleId}-tab-${tab}`} data-tab={tab}>
+        {tab === "meanings" ? <>
+          <section className="language-lookup-source" aria-label="Wiktionary">
+            <h4><span className="language-lookup-chip is-wiktionary">Wiktionary</span></h4>
+            {dictionary.state === "loading" ? <p className="language-lookup-skeleton" role="status" aria-label="Looking it up"><i /><i /></p>
+              : entry ? <>
+                {found && found.resolvedTerm !== open.display ? <p className="language-term-quiet">Entry for <b lang={language}>{found.resolvedTerm}</b></p> : null}
+                <ol className="language-lookup-senses">{senseRows(entry.senses)}</ol>
+                {entry.lemma ? <>
+                  <p className="language-term-quiet">A form of <b lang={language}>{entry.lemma.term}</b>:</p>
+                  <ol className="language-lookup-senses">{senseRows(entry.lemma.senses)}</ol>
+                </> : null}
+                <p className="language-lookup-credit">Source: <a href={entry.url} target="_blank" rel="noreferrer">Wiktionary</a> (<a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noreferrer">CC BY-SA</a>)</p>
+              </>
+              : <p className="language-term-quiet">{dictionary.state === "failed" || found?.failed.includes("wiktionary") ? "Wiktionary didn't answer. Its page may still open in the Wiktionary tab." : "No Wiktionary entry."}</p>}
+          </section>
 
-      {expanded ? <div className="language-term-more">
-        {answer?.others.length ? <><h4>Other meanings</h4>
-          {answer.others.map((other) => <div key={other} className="language-term-other"><span lang={answer.to}>{other}</span>
-            <button type="button" className="language-term-add" aria-label={`Use “${other}”`} onClick={() => adopt(other)}>+</button></div>)}</> : null}
-        <h4>Also in your documents</h4>
-        {mentions.length ? <div className="language-term-chips">{mentions.map((document) => <button key={document.id} type="button" onClick={() => learning.openDocument(document.id)}>{document.title}</button>)}</div>
-          : <p className="language-term-quiet">Not in your other documents yet.</p>}
-        <h4>Dictionaries</h4>
-        <div className="language-term-chips">
-          {open.display.length <= 40 ? <button type="button" aria-expanded={Boolean(wiki)} onClick={openWiktionary}>Wiktionary</button> : null}
-          <a href={googleTranslateUrl(open.display, pair.target, pair.base)} target="_blank" rel="noreferrer">Google Translate ↗</a>
-        </div>
-        {wiki ? <div className="language-term-wiki">
-          {wiki.senses === null ? <p role="status">Opening Wiktionary…</p>
-            : wiki.senses.length ? wiki.senses.map((sense, index) => <div key={index}>{sense.partOfSpeech ? <p><i>{sense.partOfSpeech}</i></p> : null}
-              <ol>{sense.definitions.map((definition, at) => <li key={at}>{definition} <button type="button" className="language-term-add" aria-label="Use this definition" onClick={() => adopt(definition)}>+</button></li>)}</ol></div>)
-            : <p>{wiki.failed ? "Wiktionary didn't answer." : `No ${languageName(language)} entry on Wiktionary.`}</p>}
-          <a href={wiktionaryUrl(lookupWord, language)} target="_blank" rel="noreferrer">Open on Wiktionary ↗</a>
-        </div> : null}
-      </div> : null}
+          {machine?.term ? <section className="language-lookup-source" aria-label="Machine translation">
+            <h4><span className="language-lookup-chip is-machine">{PROVIDER_NAMES[machine.provider]}</span></h4>
+            <button type="button" className="language-lookup-pick" title="Use this meaning" lang={pair.base} onClick={() => adopt(machine.term, machine.provider)}><span>{machine.term}</span></button>
+          </section> : null}
+
+          <section className="language-lookup-source" aria-label="AI, in context">
+            <h4><span className="language-lookup-chip is-ai">✦ AI · in this sentence</span></h4>
+            {!learning.aiAllowed ? <p className="language-term-quiet">This document is hidden from AI, so the AI isn't asked.</p>
+              : suggestion.state === "failed" ? <p className="language-term-error" role="alert">{suggestion.message} <button type="button" onClick={() => setAsked((value) => value + 1)}>Try again</button></p>
+              : answer || partial?.meaning ? <>
+                <button type="button" className="language-lookup-pick" title="Use this meaning" lang={pair.base} disabled={!answer} onClick={() => answer && adopt(answer.meaning, "ai")}>
+                  <span>{answer?.meaning ?? partial?.meaning}</span></button>
+                {answer?.note ? <p className="language-term-quiet">{answer.note}</p> : null}
+                {answer?.others.map((other) => <button key={other} type="button" className="language-lookup-pick is-other" title="Use this meaning" lang={pair.base} onClick={() => adopt(other, "ai")}><span>{other}</span></button>)}
+                {(answer?.sentenceTranslation ?? partial?.sentenceTranslation) ? <p className="language-lookup-sentence" lang={pair.base}>{answer?.sentenceTranslation ?? partial?.sentenceTranslation}</p> : null}
+              </>
+              : suggestion.state === "loading" ? <p className="language-term-quiet" role="status"><span className="language-term-spinner" aria-hidden="true" />Reading the sentence…</p>
+              : <button type="button" className="language-term-link is-ask" onClick={() => setAsked((value) => value + 1)}>✦ What does it mean here?</button>}
+          </section>
+
+          {partOf && partOf.length > 1 ? <p className="language-term-quiet">Part of the phrase <button type="button" className="language-term-link" lang={language} onClick={() => onPhrase(partOf)}>{partOf.key}</button></p> : null}
+          {mentions.length ? <section className="language-lookup-source" aria-label="Also in your documents">
+            <h4>Also in your documents</h4>
+            <div className="language-term-chips">{mentions.map((document) => <button key={document.id} type="button" onClick={() => learning.openDocument(document.id)}>{document.title}</button>)}</div>
+          </section> : null}
+        </> : tab === "wiktionary" ? <WiktionaryFrame key={resolved} term={resolved} language={language} waiting={dictionary.state === "loading"} />
+          : <div className="language-lookup-translate">
+            <h4>{isPhrase ? "Phrase" : "Word"}</h4>
+            <p lang={language}>{open.display}</p>
+            {dictionary.state === "loading" ? <p className="language-lookup-skeleton" role="status" aria-label="Translating"><i /></p>
+              : machine ? <p className="is-translation" lang={pair.base}><button type="button" className="language-lookup-pick" title="Use this meaning" onClick={() => adopt(machine.term, machine.provider)}><span>{machine.term}</span></button></p> : null}
+            {context ? <>
+              <h4>Sentence</h4>
+              <p lang={language}>{context}</p>
+              {machine?.sentence ? <p className="is-translation" lang={pair.base}>{machine.sentence}</p> : null}
+            </> : null}
+            {dictionary.state !== "loading" && !machine ? <p className="language-term-quiet">{found && !found.machineAvailable ? "Machine translation isn't set up on this server yet."
+              : "The translation couldn't be made just now."} The link below opens it in Google Translate.</p> : null}
+            <p className="language-lookup-credit">{machine ? `Translated by ${PROVIDER_NAMES[machine.provider]}. ` : ""}
+              <a href={googleTranslateUrl(context || open.display, pair.target, pair.base)} target="_blank" rel="noreferrer">Open in Google Translate ↗</a></p>
+          </div>}
+      </div>
     </div>
 
     <div className="language-term-foot">
@@ -683,10 +842,27 @@ function TermCard({ open, sentence, pair, learning, status, exists, partOf, onPh
       </div>
       <div className="language-term-scale" aria-hidden="true"><span>Ignore</span><span>Learning</span><span>Familiar · Known</span></div>
       <div className="language-term-actions">
-        <button type="button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>{expanded ? "⌃ Less" : "⌄ More"}</button>
+        <p className="language-term-keys" aria-hidden="true"><kbd>←</kbd><kbd>→</kbd> next · <kbd>1</kbd>–<kbd>4</kbd> rate · <kbd>K</kbd> known · <kbd>X</kbd> ignore · <kbd>Esc</kbd></p>
         {onAsk ? <button type="button" className="is-ask" onClick={() => { commit(); onAsk(); }}>Ask in margin</button> : null}
       </div>
-      <p className="language-term-keys" aria-hidden="true"><kbd>←</kbd><kbd>→</kbd> next term · <kbd>1</kbd>–<kbd>4</kbd> rate · <kbd>K</kbd> known · <kbd>X</kbd> ignore · <kbd>Esc</kbd></p>
     </div>
+  </aside>;
+}
+
+/** The live Wiktionary page for a term, at its language's section. Loaded only when its tab is opened. */
+function WiktionaryFrame({ term, language, waiting }: { term: string; language: string; waiting: boolean }) {
+  const [loaded, setLoaded] = useState(false);
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    if (waiting || loaded) return undefined;
+    const timer = window.setTimeout(() => setSlow(true), 8000);
+    return () => window.clearTimeout(timer);
+  }, [waiting, loaded]);
+  return <div className="language-lookup-frame">
+    {!loaded ? <p className="language-lookup-skeleton is-page" role="status" aria-label="Opening Wiktionary"><i /><i /><i /></p> : null}
+    {/* The spelling the dictionary resolved comes with the quick lookup, so the page waits for it. */}
+    {waiting ? null : <iframe title={`Wiktionary: ${term}`} src={wiktionaryFrameUrl(term, language)} sandbox="allow-scripts allow-same-origin allow-popups" referrerPolicy="no-referrer"
+      loading="lazy" data-loaded={loaded || undefined} onLoad={() => setLoaded(true)} />}
+    <p className="language-lookup-credit">{slow && !loaded ? "The page is slow to open. " : ""}<a href={wiktionaryUrl(term, language)} target="_blank" rel="noreferrer">Open on Wiktionary ↗</a> · Text from Wiktionary (CC BY-SA)</p>
   </div>;
 }

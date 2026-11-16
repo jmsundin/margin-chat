@@ -52,3 +52,17 @@ export function useAppTheme(): "light" | "dark" {
   }, []);
   return theme;
 }
+
+/** Phones always fill: a page flowing inline with notes leaves it a strip of a small screen. */
+export function useHtmlPageLayout(choice: HtmlPageLayout): HtmlPageLayout {
+  const [small, setSmall] = useState(() => typeof window !== "undefined" && Boolean(window.matchMedia?.("(max-width: 640px)").matches));
+  useEffect(() => {
+    const media = window.matchMedia?.("(max-width: 640px)");
+    if (!media) return;
+    const update = () => setSmall(media.matches);
+    media.addEventListener?.("change", update);
+    update();
+    return () => media.removeEventListener?.("change", update);
+  }, []);
+  return small ? "fill" : choice;
+}

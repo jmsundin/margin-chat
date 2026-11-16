@@ -162,8 +162,13 @@
       "transaction": true
     },
     {
-      "id": "0033_email_verification",
-      "file": "0033_email_verification.sql",
+      "id": "0033_language_lookup",
+      "file": "0033_language_lookup.sql",
+      "transaction": true
+    },
+    {
+      "id": "0034_email_verification",
+      "file": "0034_email_verification.sql",
       "transaction": true
     }
   ]

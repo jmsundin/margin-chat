@@ -105,11 +105,21 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
 .language-reader-fonts button[aria-pressed="true"] { border-color: var(--sage); background: var(--sage-soft); }
 .language-reader-look-note { margin: 0; color: var(--muted); font-size: .7rem; }
 
-.language-term-card { position: absolute; z-index: 40; width: min(350px, calc(100% - 16px)); display: flex; flex-direction: column; background: var(--lr-card); color: var(--lr-ink);
-  border: 1px solid var(--lr-line); border-radius: 14px; box-shadow: 0 14px 40px rgba(0, 0, 0, .2); font: .84rem/1.4 var(--ui-font, system-ui, sans-serif); outline: none; }
-.language-term-card.is-sheet { position: fixed; left: 0; right: 0; bottom: 0; top: auto; width: auto; max-height: 72dvh; border-radius: 16px 16px 0 0; z-index: var(--z-popover); padding-bottom: env(safe-area-inset-bottom, 0px); }
+/* The lookup pane stands on the page itself, in the free space beside the document; where there's none, it is a sheet from the bottom. */
+.language-lookup-dock { display: contents; }
+.panel-slot:has(.language-reader[data-pane]) { transition: transform .16s ease; }
+.language-term-card { position: fixed; z-index: 90; display: flex; flex-direction: column; background: var(--lr-card); color: var(--lr-ink);
+  border: 1px solid var(--lr-line); border-radius: 12px; box-shadow: 0 6px 24px rgba(0, 0, 0, .08); font: .84rem/1.4 var(--ui-font, system-ui, sans-serif); outline: none; }
+.language-lookup-divider { position: fixed; z-index: 91; width: 14px; cursor: col-resize; touch-action: none; outline: none; }
+.language-lookup-divider::after { content: ""; position: absolute; top: 12px; bottom: 12px; left: 6px; width: 2px; border-radius: 2px; background: transparent; }
+.language-lookup-divider:hover::after, .language-lookup-divider:focus-visible::after { background: var(--lr-pick); }
+.language-term-card.is-sheet { left: 0; right: 0; bottom: 0; height: 60dvh; border-radius: 16px 16px 0 0; border-bottom: 0;
+  box-shadow: 0 -10px 32px rgba(0, 0, 0, .2); padding-bottom: env(safe-area-inset-bottom, 0px); }
+/* Room under the text, so the last lines can scroll clear of the sheet. */
+.language-reader[data-pane="sheet"] { padding-bottom: 60dvh; }
+.language-reader[data-pane="sheet"] .language-reader-bar { position: static; }
 .language-term-card.is-sheet::before { content: ""; width: 38px; height: 4px; border-radius: 2px; background: var(--lr-line); margin: 8px auto 0; flex: none; }
-.language-term-scroll { display: flex; flex-direction: column; gap: 8px; padding: 12px 13px 8px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
+.language-term-scroll { flex: 1 1 auto; display: flex; flex-direction: column; gap: 8px; padding: 12px 13px 8px; overflow-y: auto; overscroll-behavior: contain; min-height: 0; }
 .language-term-head { display: flex; align-items: center; gap: 8px; }
 .language-term-head h3 { margin: 0; flex: 1; min-width: 0; font: 600 1.25rem/1.2 var(--lr-font); overflow-wrap: anywhere; }
 .language-term-speak, .language-term-close { border: 0; background: transparent; color: var(--lr-muted); cursor: pointer; width: 28px; height: 28px; border-radius: 7px; font-size: 1rem; flex: none; }
@@ -127,27 +137,13 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
 .language-term-meaning:focus-within { border-color: var(--lr-pick); }
 .language-term-flag { font-size: .64rem; font-weight: 600; border-radius: 4px; padding: 2px 4px; background: var(--lr-line); color: var(--lr-muted); margin-top: 2px; }
 .language-term-meaning textarea { flex: 1; min-width: 0; min-height: 40px; border: 0; outline: 0; resize: none; background: transparent; color: inherit; font: inherit; font-size: .95rem; }
-.language-term-suggestion { display: flex; gap: 8px; align-items: flex-start; margin: 0; padding: 8px 9px; border-radius: 10px; background: var(--lr-ai-soft); }
-.language-term-spark { color: var(--lr-ai); }
-.language-term-suggested { flex: 1; min-width: 0; }
-.language-term-suggested small { display: block; color: var(--lr-muted); font-size: .76rem; margin-top: 2px; }
-.language-term-add { flex: none; width: 24px; height: 24px; border-radius: 7px; border: 1px solid var(--lr-ai); background: transparent; color: var(--lr-ai); font-size: 1rem; line-height: 1; cursor: pointer; }
 .language-term-spinner { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 50%; border: 2px solid var(--lr-ai); border-right-color: transparent; animation: language-term-spin .8s linear infinite; vertical-align: -2px; }
 @keyframes language-term-spin { to { transform: rotate(360deg); } }
 .language-term-quiet { margin: 0; color: var(--lr-muted); font-size: .76rem; }
 .language-term-error { margin: 0; color: var(--danger); font-size: .78rem; }
 .language-term-error button { border: 0; background: none; color: inherit; text-decoration: underline; cursor: pointer; padding: 0; font: inherit; }
-.language-term-more { display: flex; flex-direction: column; gap: 7px; border-top: 1px solid var(--lr-line); padding-top: 9px; }
-.language-term-more h4 { margin: 0; font-size: .66rem; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--lr-muted); }
-.language-term-other { display: flex; align-items: center; gap: 8px; }
-.language-term-other span { flex: 1; }
 .language-term-chips { display: flex; flex-wrap: wrap; gap: 5px; }
 .language-term-chips button, .language-term-chips a { border: 1px solid var(--lr-line); border-radius: 999px; background: transparent; color: var(--lr-ink); font: inherit; font-size: .76rem; padding: 3px 10px; cursor: pointer; text-decoration: none; }
-.language-term-wiki { font-size: .78rem; }
-.language-term-wiki p { margin: 0 0 3px; color: var(--lr-muted); }
-.language-term-wiki ol { margin: 0 0 6px; padding-left: 18px; }
-.language-term-wiki .language-term-add { width: 18px; height: 18px; font-size: .8rem; border-color: var(--lr-line); color: var(--lr-muted); }
-.language-term-wiki a { color: var(--lr-pick); text-decoration: none; }
 .language-term-foot { flex: none; display: flex; flex-direction: column; gap: 7px; padding: 9px 12px 10px; border-top: 1px solid var(--lr-line); }
 .language-term-status { display: flex; justify-content: space-between; gap: 4px; }
 .language-term-status button { width: 38px; height: 38px; border-radius: 50%; border: 1.5px solid var(--lr-line); background: transparent; color: var(--lr-ink); font: 600 .9rem var(--ui-font, system-ui, sans-serif); cursor: pointer; }
@@ -160,10 +156,10 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
 .language-term-status button[aria-checked="true"][data-status="5"] { background: var(--lr-pick); border-color: var(--lr-pick); color: var(--lr-card); }
 .language-term-status button[aria-checked="true"][data-status="-1"] { background: var(--lr-line); border-color: var(--lr-muted); }
 .language-term-scale { display: flex; justify-content: space-between; font-size: .66rem; color: var(--lr-muted); }
-.language-term-actions { display: flex; justify-content: space-between; align-items: center; }
+.language-term-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
 .language-term-actions button { border: 0; background: transparent; color: var(--lr-muted); font: inherit; font-size: .78rem; padding: 4px 6px; border-radius: 7px; cursor: pointer; }
 .language-term-actions .is-ask { border: 1px solid var(--lr-ai); color: var(--lr-ai); border-radius: 999px; padding: 4px 11px; }
-.language-term-keys { margin: 0; text-align: center; font-size: .66rem; color: var(--lr-muted); }
+.language-term-keys { margin: 0; flex: 1; font-size: .66rem; color: var(--lr-muted); }
 .language-term-keys kbd { font: inherit; border: 1px solid var(--lr-line); border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; }
 .language-reader button:focus-visible, .language-reader a:focus-visible, .language-word:focus-visible { outline: 2px solid var(--lr-pick); outline-offset: 2px; }
 
@@ -194,3 +190,58 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
   .language-reader-bar { flex-wrap: wrap; }
   .language-reader-audio { order: -1; flex-basis: 100%; }
 }
+
+/* ----- the lookup pane's own parts ----- */
+.language-lookup-badge { flex: none; font-size: .68rem; border-radius: 999px; padding: 2px 9px; background: var(--lr-line); color: var(--lr-muted); }
+.language-term-saved small { color: var(--lr-muted); font-size: .7rem; }
+.language-lookup-tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--lr-line); margin: 2px -13px 0; padding: 0 9px; position: sticky; top: -12px; z-index: 1; background: var(--lr-card); }
+.language-reader .language-lookup-tabs button { all: unset; cursor: pointer; padding: 7px 9px 6px; font-size: .8rem; color: var(--lr-muted); border-bottom: 2px solid transparent; margin-bottom: -1px; white-space: nowrap; }
+.language-reader .language-lookup-tabs button:hover { color: var(--lr-ink); }
+.language-reader .language-lookup-tabs button[aria-selected="true"] { color: var(--lr-ink); font-weight: 600; border-bottom-color: var(--lr-pick); }
+.language-reader .language-lookup-tabs button:focus-visible { outline: 2px solid var(--lr-pick); outline-offset: -2px; border-radius: 4px; }
+.language-lookup-panel { flex: 1 0 auto; display: flex; flex-direction: column; gap: 12px; min-height: 0; padding-top: 4px; }
+.language-lookup-source { display: flex; flex-direction: column; gap: 5px; }
+.language-lookup-panel h4 { margin: 0; font-size: .66rem; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; color: var(--lr-muted); }
+.language-lookup-chip { display: inline-block; font-size: .68rem; font-weight: 600; letter-spacing: 0; text-transform: none; border-radius: 6px; padding: 2px 8px; background: var(--lr-line); color: var(--lr-ink); }
+.language-lookup-chip.is-ai { background: var(--lr-ai-soft); color: var(--lr-ai); }
+.language-lookup-chip.is-machine { background: var(--lr-new); color: var(--lr-new-line); }
+.language-lookup-senses { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+.language-reader .language-lookup-pick { all: unset; box-sizing: border-box; cursor: pointer; display: flex; gap: 7px; align-items: baseline; width: 100%; padding: 5px 8px; border-radius: 8px; font-size: .88rem; line-height: 1.35; color: var(--lr-ink); }
+.language-reader .language-lookup-pick:hover:not(:disabled) { background: var(--lr-pick-soft); }
+.language-reader .language-lookup-pick:focus-visible { outline: 2px solid var(--lr-pick); outline-offset: -2px; }
+.language-reader .language-lookup-pick:disabled { cursor: default; }
+.language-lookup-pick i { flex: none; font-size: .72rem; color: var(--lr-muted); }
+.language-lookup-pick span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.language-lookup-pick.is-other { color: var(--lr-muted); font-size: .82rem; }
+.language-lookup-example { margin: 0 8px 4px; padding-left: 9px; border-left: 2px solid var(--lr-line); font-size: .78rem; color: var(--lr-muted); }
+.language-lookup-example span { display: block; color: var(--lr-ink); }
+.language-lookup-example em { display: block; }
+.language-lookup-sentence { margin: 0 8px; font-size: .82rem; font-style: italic; color: var(--lr-muted); }
+.language-lookup-credit { margin: 0; font-size: .7rem; color: var(--lr-muted); }
+.language-lookup-credit a { color: var(--lr-pick); text-decoration: none; }
+.language-lookup-credit a:hover { text-decoration: underline; }
+.language-lookup-skeleton { margin: 0; display: flex; flex-direction: column; gap: 7px; padding: 4px 8px; }
+.language-lookup-skeleton i { display: block; height: 11px; border-radius: 5px; background: var(--lr-line); animation: language-lookup-wait 1.2s ease-in-out infinite alternate; }
+.language-lookup-skeleton i:nth-child(2) { width: 70%; }
+.language-lookup-skeleton i:nth-child(3) { width: 85%; }
+@keyframes language-lookup-wait { from { opacity: .45; } to { opacity: 1; } }
+.language-lookup-frame { flex: 1 1 auto; display: flex; flex-direction: column; gap: 6px; min-height: 340px; position: relative; }
+.language-lookup-frame iframe { flex: 1 1 auto; width: 100%; min-height: 300px; border: 1px solid var(--lr-line); border-radius: 8px; background: #fff; }
+.language-lookup-frame iframe:not([data-loaded]) { position: absolute; opacity: 0; pointer-events: none; }
+.language-lookup-frame .is-page { flex: 1 1 auto; }
+.language-lookup-translate { display: flex; flex-direction: column; gap: 5px; }
+.language-lookup-translate p { margin: 0; font-size: .88rem; }
+.language-lookup-translate p[lang]:not(.is-translation) { color: var(--lr-muted); }
+.language-lookup-translate .is-translation { font-size: .95rem; margin-bottom: 8px; }
+.language-lookup-translate .is-translation .language-lookup-pick { padding-left: 0; font-size: inherit; }
+.language-term-card.is-sheet .language-term-scale, .language-term-card.is-sheet .language-term-keys { display: none; }
+.language-term-card.is-sheet .language-term-actions:not(:has(.is-ask)) { display: none; }
+.language-term-card.is-sheet .language-term-actions { justify-content: flex-end; }
+@media (prefers-reduced-motion: reduce) { .language-lookup-skeleton i { animation: none; } .panel-slot:has(.language-reader[data-pane]) { transition: none; } }
+/* A sheet has little height: the meaning box is one line and the rating row is tighter, so the meanings show. */
+.language-term-card.is-sheet .language-term-scroll { gap: 6px; padding-top: 6px; }
+.language-term-card.is-sheet .language-term-meaning textarea { min-height: 22px; }
+.language-term-card.is-sheet .language-term-foot { flex-direction: row; align-items: center; gap: 8px; padding: 7px 10px; }
+.language-term-card.is-sheet .language-term-status { flex: 1; }
+.language-term-card.is-sheet .language-term-status button { width: 40px; height: 40px; }
+.language-term-card.is-sheet .language-term-actions .is-ask { padding: 4px 9px; white-space: nowrap; }

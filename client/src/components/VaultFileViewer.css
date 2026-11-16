@@ -115,3 +115,26 @@
 .vault-html-frame { display: block; box-sizing: border-box; width: 100%; height: min(70vh, 640px); border: 1px solid var(--line); border-radius: 6px; background: transparent; }
 .vault-html-frame[data-theme="light"] { background: #fff; }
 .vault-html-stage > .vault-file-highlights { inset: 1px; overflow: hidden; }
+
+/*
+ * Fill: an HTML page takes the whole panel body, edge to edge, and scrolls inside its own frame, so
+ * layouts built on the window's height (side panels, sticky bars, games) work as they do opened alone.
+ */
+.document-body.is-html-page > .html-page-bar { display: flex; align-items: center; gap: 8px; min-height: 40px; box-sizing: border-box; padding: 4px 12px; }
+.html-page-bar > .play-bar { flex: 1 1 auto; min-width: 0; margin: 0; }
+.html-page-views { display: inline-flex; flex: 0 0 auto; margin-left: auto; border: 1px solid var(--line); border-radius: 7px; overflow: hidden; }
+.html-page-bar .html-page-views button { border: 0; border-radius: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12.5px; line-height: 1.3; padding: 4px 10px; cursor: pointer; }
+.html-page-bar .html-page-views button[aria-pressed="true"] { background: color-mix(in srgb, var(--text) 9%, transparent); color: var(--text); }
+.html-page-views button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.document-body.is-html-page[data-html-view="page"] { display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.document-body.is-html-page[data-html-view="page"] > :not(.html-page-bar):not(.vault-file-viewer):not(.vault-file-status) { display: none; }
+.document-body.is-html-page[data-html-view="page"] > .vault-file-viewer.is-fill,
+.document-body.is-html-page[data-html-view="page"] > .vault-file-status.is-fill { flex: 1 1 auto; min-height: 0; margin: 0; }
+.vault-file-status.is-fill { display: grid; place-items: center; border: 0; border-radius: 0; background: var(--bg); }
+.vault-file-viewer.is-fill > .vault-html-stage { flex: 1 1 auto; min-height: 0; border-radius: 0; }
+.vault-file-viewer.is-fill .vault-html-frame { height: 100%; border: 0; border-radius: 0; }
+/* The notes view: the page stays loaded behind it, so a game is where it was on the way back. */
+.document-body.is-html-page[data-html-view="notes"] > .vault-file-viewer,
+.document-body.is-html-page[data-html-view="notes"] > .vault-file-notes-label { display: none; }
+.document-body.is-html-page[data-html-view="notes"] > .html-page-bar { padding: 0 0 8px; }
+@media (pointer: coarse) { .html-page-views button { min-height: 40px; padding: 4px 14px; } }
