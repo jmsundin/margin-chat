@@ -38,6 +38,8 @@ const AGENT_DEFAULT_SERVICE_ID = "meta-api";
 const AGENT_MODEL_LABELS = { "meta-api": "Meta's Muse Wonder", "anthropic-api": "Claude Opus", "xai-api": "xAI's Grok" };
 /** A roadmap of 60 steps with notes is about 8,000 tokens of tool call, before the model's thinking. */
 const AGENT_OUTPUT_TOKENS = 16_000;
+/** Output room for a plain answer from a model that can't turn its reasoning off (Muse Wonder). */
+const REASONING_REPLY_OUTPUT_TOKENS = 8_000;
 const PREPAID_BALANCE_REQUIRED = "Your prepaid AI balance is empty. Add money in Billing or subscribe for $20/month to use hosted models. You can also use your own provider API key.";
 const SEMANTIC_CONTEXT_LIMIT = 24;
 /** Vault passages added to a plain reply with "Search my workspace", by AI mode. */
@@ -485,7 +487,11 @@ export function createChatService({ database, documentService, env, runtimeConfi
         database,
         // An agent call writes its thinking and whole tool calls (a roadmap's every stage and step) inside
         // this limit, so it gets more room than a plain answer; the run's budget still caps what is spent.
-        maxOutputTokens: credential.source === "hosted" ? agentProvider ? Math.max(context.hostedMaxOutputTokens, agentOutputTokens()) : context.hostedMaxOutputTokens : undefined,
+        // Muse Wonder always reasons before it answers, and its reasoning counts as output, so a plain answer
+        // from it needs room for both or it stops before writing a word.
+        maxOutputTokens: credential.source === "hosted" ? agentProvider ? Math.max(context.hostedMaxOutputTokens, agentOutputTokens())
+          : !instructionOverride && providerName(route.serviceId) === "meta" ? Math.max(context.hostedMaxOutputTokens, REASONING_REPLY_OUTPUT_TOKENS)
+          : context.hostedMaxOutputTokens : undefined,
         maxInputCharacters: prepared.chatRequest.contextCharacterBudget,
         model: route.model,
         signal: context.signal,
