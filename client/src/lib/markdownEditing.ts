@@ -92,8 +92,8 @@ export function getMarkdownEnterEdit(value: string, cursor: number): MarkdownEdi
     return { from: cursor, insert, selection: cursor + 1, to: cursor };
   }
 
-  // Inside a fence, Enter is deliberately ordinary editor behavior.
-  if (isInsideFenceBefore(value, line.start)) return null;
+  // Inside a fence, Enter is a plain new line that keeps the current line's indentation.
+  if (isInsideFenceBefore(value, line.start)) return codeLineBreak(value, cursor);
 
   const list = line.value.match(LIST_PATTERN);
   if (list && cursor >= line.start + line.value.length - list[5].length) {
@@ -152,6 +152,14 @@ export function getMarkdownEnterEdit(value: string, cursor: number): MarkdownEdi
   // Keep the exact text before the cursor observable for future block rules.
   void beforeCursor;
   return null;
+}
+
+/** A new line in code that starts with the same spaces and tabs as the current line, up to the caret. */
+export function codeLineBreak(value: string, cursor: number): MarkdownEdit {
+  const line = getLineContext(value, cursor);
+  const indent = /^[ \t]*/.exec(line.value.slice(0, cursor - line.start))?.[0] ?? "";
+  const insert = `\n${indent}`;
+  return { from: cursor, insert, selection: cursor + insert.length, to: cursor };
 }
 
 /** Removes an empty Markdown continuation marker before normal Backspace behavior. */

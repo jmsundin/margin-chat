@@ -11,7 +11,7 @@ import { getDocumentBlockAuthorship, type DocumentBlock } from "@margin-chat/wor
 import type { RichDocumentAuthorship, RichDocumentEditorProps, RichDocumentRect, RichDocumentSelection } from "./RichDocumentEditor";
 import { describeAge, describeRun } from "../lib/documentAuthorship";
 import { renderObsidianMarkdownToHtml } from "../lib/markdown";
-import { getMarkdownBackspaceEdit, getMarkdownEnterEdit } from "../lib/markdownEditing";
+import { codeLineBreak, getMarkdownBackspaceEdit, getMarkdownEnterEdit } from "../lib/markdownEditing";
 import { formatDocumentDateTime } from "../lib/documentDateTime";
 import { drawingMarkdown, EMPTY_DRAWING, isDrawingMarkdown, readDrawing } from "../lib/documentDrawing";
 import { findMermaidFences, MERMAID_BLOCK_SELECTOR, replaceMermaidFence } from "../lib/mermaidDiagrams";
@@ -1049,7 +1049,12 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       view.dispatch({ changes: { from: edit.from, to: edit.to, insert: edit.insert }, selection: EditorSelection.cursor(edit.selection), userEvent: "input", scrollIntoView: true });
       return true;
     }
-    if (inCode(view.state, head)) { view.dispatch(view.state.replaceSelection("\n"), { userEvent: "input", scrollIntoView: true }); return true; }
+    if (inCode(view.state, head)) {
+      // Code keeps the current line's indentation on the new line.
+      const line = codeLineBreak(doc.toString(), head);
+      view.dispatch({ changes: { from: line.from, to: line.to, insert: line.insert }, selection: EditorSelection.cursor(line.selection), userEvent: "input", scrollIntoView: true });
+      return true;
+    }
     // Enter starts a new line, which is a new block. At the end of a line that saved blank lines after it, the new line goes after them.
     const end = visibleEnd(textOf(doc), block);
     // On an empty line just started with Shift+Enter, Enter replaces it with a new line block.

@@ -15,6 +15,7 @@ import { CODE_LANGUAGE_LABELS, codeCellKind, previewDocument, previewPage, sqlSe
 import { CodeCellScopeContext, RUN_ALL_CELLS_EVENT } from "../lib/codeRunner/codeCellScope";
 import { runCode, type RunEvent, type RunResult } from "../lib/codeRunner/runner";
 import { codeSuggestions } from "../lib/codeRunner/ghostText";
+import { newlineKeepingIndent } from "../lib/codeRunner/keepIndent";
 import { requestCodeSuggestion } from "../lib/api";
 import { ApiError } from "../lib/apiError";
 import { HTML_FRAME_SANDBOX, htmlFrameDocument, readHtmlFrameMessage } from "../lib/htmlDocuments";
@@ -123,6 +124,7 @@ export default function CodeCell({ language, source, index, dark }: CodeCellProp
             { key: "Mod-Enter", run: () => { latest.current.run(); return true; } },
             { key: "Shift-Enter", run: () => { if (kind !== "run") return false; latest.current.run(); return true; } },
             { key: "Escape", run: (target) => { target.contentDOM.blur(); return true; } },
+            { key: "Enter", run: newlineKeepingIndent },
             ...closeBracketsKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab,
           ]),
           EditorView.updateListener.of((update) => {
