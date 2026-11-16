@@ -92,8 +92,11 @@ export function getMarkdownEnterEdit(value: string, cursor: number): MarkdownEdi
     return { from: cursor, insert, selection: cursor + 1, to: cursor };
   }
 
-  // Inside a fence, Enter is a plain new line that keeps the current line's indentation.
-  if (isInsideFenceBefore(value, line.start)) return codeLineBreak(value, cursor);
+  // Inside a fence, Enter is ordinary editor behavior, except that an indented line's new line keeps its indentation.
+  if (isInsideFenceBefore(value, line.start)) {
+    const code = codeLineBreak(value, cursor);
+    return code.insert === "\n" ? null : code;
+  }
 
   const list = line.value.match(LIST_PATTERN);
   if (list && cursor >= line.start + line.value.length - list[5].length) {

@@ -99,7 +99,8 @@ describe("HTML pages open as documents", () => {
 
   test("a page's saved localStorage goes back in as data that can't end the bridge script", () => {
     const page = htmlFrameDocument("<html><head></head><body></body></html>", { note: "</script><script>alert(1)</script>" });
-    expect(page.match(/<\/script>/gu)?.length).toBe(1);
+    // The bridge and the keep-indentation helper are the only two scripts.
+    expect(page.match(/<\/script>/gu)?.length).toBe(2);
     expect(page).toContain("\\u003c/script>");
     // Stand-ins for storage and cookies, which the sandbox would otherwise make throw.
     expect(page).toContain("localStorage");

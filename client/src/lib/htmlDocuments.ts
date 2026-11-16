@@ -702,7 +702,7 @@ export function htmlFrameDocument(html: string, storage: Record<string, string> 
   // Escaped so the page's saved text can't close the script early.
   const saved = JSON.stringify(readStorageData(storage) ?? {}).replace(/</gu, "\\u003c").replace(/\u2028/gu, "\\u2028").replace(/\u2029/gu, "\\u2029");
   const viewport = VIEWPORT.test(html) ? "" : `<meta name="viewport" content="width=device-width,initial-scale=1">`;
-  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"},"${theme === "dark" ? "dark" : "light"}","${layout === "fill" ? "fill" : "inline"}");(${keepIndentOnEnter.toString()})(window);</script>${viewport}`;
+  const script = `<script>(${bridge.toString()})(${saved},${assets ? "true" : "false"},"${theme === "dark" ? "dark" : "light"}","${layout === "fill" ? "fill" : "inline"}");</script><script>(${keepIndentOnEnter.toString()})(window);</script>${viewport}`;
   const head = /<head(?:\s[^>]*)?>/iu.exec(html);
   if (head) return html.slice(0, head.index + head[0].length) + script + html.slice(head.index + head[0].length);
   const root = /<html(?:\s[^>]*)?>/iu.exec(html);
