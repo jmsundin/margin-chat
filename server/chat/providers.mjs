@@ -22,7 +22,7 @@ export async function requestProviderJson({ apiKey, body, provider, url, signal,
     });
     if (!response.ok) tracker.markRejected();
     const payload = await response.json().catch(() => null);
-    if (!response.ok) throw providerHttpError(response.status, extractApiErrorMessage(payload) ?? fallbackError, provider);
+    if (!response.ok) throw providerHttpError(response.status, extractApiErrorMessage(payload) ?? withStatus(fallbackError, response.status), provider);
     tracker.recordUsage(payload);
     return payload;
   });
@@ -53,7 +53,7 @@ export async function requestResponsesApiStream({ apiKey, body, fallbackError, o
     });
     if (!response.ok) {
       tracker.markRejected();
-      throw providerHttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? fallbackError, provider);
+      throw providerHttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? withStatus(fallbackError, response.status), provider);
     }
     await onReady?.();
     if (response.headers.get("content-type")?.includes("application/json")) {
@@ -72,17 +72,44 @@ export async function requestResponsesApiStream({ apiKey, body, fallbackError, o
       if ((event.type === "response.output_text.delta" || event.type === "response.refusal.delta") && typeof event.delta === "string") {
         reply += event.delta;
         await onDelta?.(event.delta);
-      } else if (event.type === "response.completed" || (acceptIncomplete && event.type === "response.incomplete")) {
+      } else if (event.type === "response.completed" || (event.type === "response.incomplete" && (acceptIncomplete || reply.trim()))) {
+        // An answer cut short by its output limit is kept as far as it was written, rather than thrown away.
         completedPayload = event.response ?? null;
         tracker.recordUsage(completedPayload);
       } else if (["response.failed", "response.incomplete", "error"].includes(event.type)) {
         tracker.recordUsage(event.response ?? event);
-        throw new HttpError(502, extractApiErrorMessage(event.response ?? event) ?? fallbackError);
+        throw new HttpError(502, streamFailureMessage(event, provider) ?? fallbackError);
       }
     }
     if (!completedPayload) throw new HttpError(502, `${provider} stream ended before completion.`);
     return { completedPayload, reply, usage: normalizeProviderUsage(provider, completedPayload) };
   });
+}
+
+const PROVIDER_NAMES = { openai: "OpenAI", xai: "xAI", meta: "Muse Wonder (Meta)", anthropic: "Claude", gemini: "Gemini", huggingface: "Hugging Face" };
+
+/** "meta request failed." says nothing; with the HTTP status it at least tells a refusal from an outage. */
+function withStatus(message, status) {
+  return status ? `${message.replace(/\.$/u, "")} (HTTP ${status}).` : message;
+}
+
+/**
+ * Why a Responses API stream stopped, in words, for a failed or cut-short response that carries
+ * no error message of its own (such as one that spent its whole output limit reasoning).
+ */
+export function streamFailureMessage(event, provider) {
+  const response = event?.response ?? event;
+  const message = extractApiErrorMessage(response) ?? extractApiErrorMessage(event);
+  if (message) return message;
+  const name = PROVIDER_NAMES[provider] ?? provider;
+  const reason = response?.incomplete_details?.reason;
+  if (event?.type === "response.incomplete" || response?.status === "incomplete") {
+    return reason === "max_output_tokens"
+      ? `${name} used its whole output limit thinking before it wrote an answer. Try again, ask a shorter question, or switch to Fast mode.`
+      : `${name} stopped before it wrote an answer${reason ? ` (${String(reason).replaceAll("_", " ")})` : ""}. Try again.`;
+  }
+  const code = response?.error?.code ?? response?.error?.type ?? event?.code;
+  return `${name} stopped partway through its answer${code ? ` (${code})` : ""}. Try again in a moment.`;
 }
 
 /** Puts the image the user is asking about into the latest user message, in each provider's shape. */
@@ -94,11 +121,15 @@ function withImage(messages, image, imagePart, textPart) {
     ? { ...message, content: [imagePart(image), textPart(message.content)] } : message);
 }
 
+const META_REPLY_EFFORT = { fast: "low", balanced: "medium", thorough: "high" };
+
 function responsesBody(args, provider) {
   const messages = withImage(extractConversationMessages(args.chatRequest.messages).map(({ role, content }) => ({ role, content })), args.image,
     (image) => ({ type: "input_image", image_url: `data:${image.mediaType};base64,${image.data}` }), (text) => ({ type: "input_text", text }));
+  // Muse Wonder can't skip reasoning; the AI mode sets how long it thinks, as in Agent mode.
+  const reasoning = provider === "meta" ? { reasoning: { effort: META_REPLY_EFFORT[args.chatRequest.ai?.mode] ?? "medium" } } : {};
   return provider !== "xai"
-    ? { input: messages, instructions: args.systemInstruction, max_output_tokens: args.maxOutputTokens, model: args.model }
+    ? { input: messages, instructions: args.systemInstruction, max_output_tokens: args.maxOutputTokens, model: args.model, ...reasoning }
     : { input: [{ content: args.systemInstruction, role: "system" }, ...messages], max_output_tokens: args.maxOutputTokens, model: args.model };
 }
 
@@ -161,7 +192,7 @@ async function otherProviderReply(args, provider, stream) {
     });
     if (!response.ok) {
       tracker.markRejected();
-      throw providerHttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? `${provider} request failed.`, provider);
+      throw providerHttpError(response.status, extractApiErrorMessage(await parseProviderErrorResponse(response)) ?? withStatus(`${provider} request failed.`, response.status), provider);
     }
     let reply = "";
     let resolvedModel = args.model;
@@ -435,6 +466,17 @@ export function extractApiErrorMessage(payload) {
 
   if (typeof payload?.message === "string" && payload.message) {
     return payload.message;
+  }
+
+  // Some APIs answer { detail: "..." } or { detail: [{ msg: "..." }] }.
+  if (typeof payload?.detail === "string" && payload.detail) {
+    return payload.detail;
+  }
+  const detail = Array.isArray(payload?.detail)
+    ? payload.detail.map((item) => typeof item?.msg === "string" ? item.msg : typeof item?.message === "string" ? item.message : "").find(Boolean)
+    : null;
+  if (detail) {
+    return detail;
   }
 
   return null;
