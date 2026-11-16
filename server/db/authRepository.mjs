@@ -1,5 +1,6 @@
 import { createStatusError } from "../lib/errors.mjs";
 import { mapBillingRow } from "../billing/status.mjs";
+import { CANONICAL_EMAIL_SQL } from "../auth/botProtection.mjs";
 
 export async function createUser(
   client,
@@ -330,4 +331,13 @@ function mapUserRow(row) {
     id: row.id,
     role: row.role,
   };
+}
+
+/** Whether an account already uses the inbox this canonical address reaches (Gmail dots and "+tags" ignored). */
+export async function hasAccountForCanonicalEmail(client, canonical) {
+  const result = await client.query(
+    `select 1 from marginchat_users where ${CANONICAL_EMAIL_SQL("email")} = $1 limit 1`,
+    [canonical],
+  );
+  return result.rowCount > 0;
 }

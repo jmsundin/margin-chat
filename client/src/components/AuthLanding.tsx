@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import TurnstileCheck, { signupNeedsWebsite, turnstileOnThisPage } from "./TurnstileCheck";
 import { SUPPORT_EMAIL } from "../lib/siteRoutes";
 import "./AuthLanding.css";
 
@@ -14,6 +15,7 @@ interface AuthLandingProps {
   onLogin: (args: { email: string; password: string }) => void | Promise<void>;
   onRequestPasswordReset: (args: {
     email: string;
+    turnstileToken?: string;
   }) => Promise<{ resetToken?: string } | null>;
   onResetPassword: (args: {
     password: string;
@@ -23,6 +25,8 @@ interface AuthLandingProps {
     displayName: string;
     email: string;
     password: string;
+    website?: string;
+    turnstileToken?: string;
   }) => void | Promise<void>;
   onToggleTheme: () => void;
   theme: ThemeMode;
@@ -55,6 +59,13 @@ export default function AuthLanding({
   const [resetToken, setResetToken] = useState(initialResetToken);
   const [newPassword, setNewPassword] = useState("");
   const [confirmNewPassword, setConfirmNewPassword] = useState("");
+  // Bot checks: the Turnstile token (each works once, so a failed submit asks for a new one) and the hidden field.
+  const checkOn = turnstileOnThisPage();
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const [turnstileReset, setTurnstileReset] = useState(0);
+  const [honeypot, setHoneypot] = useState("");
+  useEffect(() => { if (errorMessage) setTurnstileReset((count) => count + 1); }, [errorMessage]);
+  const waitingForCheck = checkOn && !turnstileToken;
 
   function switchMode(nextMode: AuthMode) {
     setLocalError(null);
@@ -74,7 +85,8 @@ export default function AuthLanding({
     setNotice(null);
     setShowParentError(true);
 
-    const result = await onRequestPasswordReset({ email: resetEmail });
+    const result = await onRequestPasswordReset({ email: resetEmail, ...(turnstileToken ? { turnstileToken } : {}) });
+    setTurnstileReset((count) => count + 1);
 
     if (!result) {
       return;
@@ -135,6 +147,8 @@ export default function AuthLanding({
       displayName: signupDisplayName,
       email: signupEmail,
       password: signupPassword,
+      ...(honeypot ? { website: honeypot } : {}),
+      ...(turnstileToken ? { turnstileToken } : {}),
     });
   }
 
@@ -208,8 +222,22 @@ export default function AuthLanding({
           {isSignup ? themeButton : null}
         </div>
 
-        {mode === "signup" ? (
+        {mode === "signup" && signupNeedsWebsite() ? (
+          <div className="auth-form">
+            <p className="auth-form-copy">Create your account on the Margin Chat website, then come back here and log in.</p>
+            <a className="primary-button auth-submit" href={`${SITE_ORIGIN}/signup`} rel="noreferrer" target="_blank">Sign up on marginchat.com</a>
+            <p className="auth-switch">
+              Already have an account?{" "}
+              <button className="auth-switch-button" onClick={() => switchMode("login")} type="button">Log in</button>
+            </p>
+          </div>
+        ) : mode === "signup" ? (
           <form className="auth-form" onSubmit={handleSignupSubmit}>
+            {/* People never see or reach this field; scripts that fill in every input do. */}
+            <label aria-hidden="true" className="auth-honeypot">
+              Website
+              <input autoComplete="off" name="website" tabIndex={-1} type="text" value={honeypot} onChange={(event) => setHoneypot(event.target.value)} />
+            </label>
             <label className="auth-field">
               <span>Name</span>
               <input
@@ -251,9 +279,10 @@ export default function AuthLanding({
               </span>
             </label>
 
+            {checkOn ? <TurnstileCheck onToken={setTurnstileToken} onError={setLocalError} resetKey={turnstileReset} theme={theme} /> : null}
             {activeError ? <p className="auth-error" role="alert">{activeError}</p> : null}
 
-            <button className="primary-button auth-submit" disabled={isSubmitting} type="submit">
+            <button className="primary-button auth-submit" disabled={isSubmitting || waitingForCheck} type="submit">
               {isSubmitting ? "Creating account..." : "Create account"}
             </button>
             <p className="auth-signup-note">You start with a “Start here” document and a short tour. Writing, notes and the Map are free; AI uses your own API key or credit you add.</p>
@@ -327,11 +356,12 @@ export default function AuthLanding({
                 value={resetEmail}
               />
             </label>
+            {checkOn ? <TurnstileCheck onToken={setTurnstileToken} onError={setLocalError} resetKey={turnstileReset} theme={theme} /> : null}
             {activeError ? <p className="auth-error" role="alert">{activeError}</p> : null}
             {notice ? <p className="auth-notice" role="status">{notice}</p> : null}
-            <button className="primary-button auth-submit" disabled={isSubmitting} type="submit">
+            {signupNeedsWebsite() ? <a className="primary-button auth-submit" href={`${SITE_ORIGIN}/login`} rel="noreferrer" target="_blank">Reset on marginchat.com</a> : <button className="primary-button auth-submit" disabled={isSubmitting || waitingForCheck} type="submit">
               {isSubmitting ? "Creating reset link..." : "Continue"}
-            </button>
+            </button>}
             <button className="auth-link-button" onClick={() => switchMode("login")} type="button">
               Back to login
             </button>

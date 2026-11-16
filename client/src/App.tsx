@@ -372,6 +372,8 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
     displayName: string;
     email: string;
     password: string;
+    website?: string;
+    turnstileToken?: string;
   }) {
     setAuthSubmitting(true);
     setAuthError(null);
@@ -389,7 +391,7 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
     }
   }
 
-  async function handleRequestPasswordReset(args: { email: string }) {
+  async function handleRequestPasswordReset(args: { email: string; turnstileToken?: string }) {
     setAuthSubmitting(true);
     setAuthError(null);
 

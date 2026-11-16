@@ -474,7 +474,7 @@ export function createApiHandler({
       if (route?.id === "authSignup") {
         await throttleAttempt(signupByAddress, request);
         const body = await readJsonBody(request, AUTH_BODY_LIMIT);
-        const result = await authService.signup(body);
+        const result = await authService.signup(body, { remoteIp: clientAddress(request) });
 
         sendJson(
           response,
@@ -508,7 +508,7 @@ export function createApiHandler({
 
       if (route?.id === "passwordResetRequest") {
         await throttleAttempt(resetByAddress, request);
-        const result = await authService.requestPasswordReset(await readJsonBody(request, AUTH_BODY_LIMIT));
+        const result = await authService.requestPasswordReset(await readJsonBody(request, AUTH_BODY_LIMIT), { remoteIp: clientAddress(request) });
 
         sendJson(response, 200, result);
         return;
