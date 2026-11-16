@@ -25,6 +25,7 @@ import RichDocumentEditor, { RichDocumentPlaceholder } from "./LazyRichDocumentE
 import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
 import VaultFileViewer from "./VaultFileViewer";
+import type { HtmlPlayActions } from "./HtmlPageMenu";
 import { useHtmlPageLayout, useHtmlPagePrefs } from "../lib/htmlPagePrefs";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
@@ -108,7 +109,10 @@ export interface DocumentPanelProps {
    */
   pageBar?: ReactNode;
   /** A bar above a file's view, for the way of working that fits it (Play on an HTML page). */
-  fileBar?: ReactNode;
+  /** Play's actions for an HTML page, shown with the page's own controls in the header. */
+  htmlPlay?: HtmlPlayActions;
+  /** Where an HTML page's controls go when the app's own top row holds them (a phone); otherwise this panel's header. */
+  htmlControlsTarget?: HTMLElement | null;
   /**
    * The quiet page: nothing above the text unless it has something to say (an instruction the AI
    * follows here, or authorship marks that are on). The view and authorship switches are in ⋯.
@@ -210,15 +214,14 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   // An HTML page is an app, not paper: it fills the panel and scrolls inside its own frame, unless the person chose inline.
   const htmlPage = conversation.vaultFile?.kind === "html";
   const [htmlPrefs] = useHtmlPagePrefs(conversation.id);
-  // Where the page's own view puts its title menu: the bar belongs to the panel, the menu's actions to the page.
-  const [htmlBarStart, setHtmlBarStart] = useState<HTMLElement | null>(null);
+  // The bar over a full screen page, where the page's view puts its controls.
+  const [htmlBar, setHtmlBar] = useState<HTMLElement | null>(null);
   // Full screen: the page over the whole app window under its bar. The body is restyled in place, so the page isn't loaded again.
   const [htmlFullFor, setHtmlFullFor] = useState<string | null>(null);
   const htmlFull = htmlPage && htmlFullFor === conversation.id;
   const htmlChosenLayout = useHtmlPageLayout(htmlPrefs.layout);
   const htmlLayout = htmlFull ? "fill" : htmlChosenLayout;
   const htmlFill = htmlPage && htmlLayout === "fill";
-  const htmlFullButton = useRef<HTMLButtonElement>(null);
   const htmlWasFull = useRef(false);
   const [htmlViewFor, setHtmlViewFor] = useState<{ id: string; view: "page" | "notes" }>({ id: conversation.id, view: "page" });
   const htmlView = htmlViewFor.id === conversation.id ? htmlViewFor.view : "page";
@@ -226,10 +229,11 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const showEditor = !board || editorBlocks.some((block) => block.content.trim());
   const bodyRef = useRef<HTMLDivElement>(null);
   const leaveHtmlFull = useCallback(() => setHtmlFullFor(null), []);
+  const panelRoot = () => bodyRef.current?.closest<HTMLElement>(".document-panel") ?? null;
   useEffect(() => {
     if (!htmlFull) {
       // Back where the person was: on the button that opened full screen.
-      if (htmlWasFull.current) htmlFullButton.current?.focus();
+      if (htmlWasFull.current) window.setTimeout(() => (panelRoot()?.querySelector<HTMLElement>(".html-page-full-screen") ?? window.document.querySelector<HTMLElement>(".html-page-header-slot .html-page-title"))?.focus(), 0);
       htmlWasFull.current = false;
       return;
     }
@@ -712,25 +716,12 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     <div className={`panel-body document-body${board ? " is-board" : ""}${htmlFill ? " is-html-page" : ""}${htmlFull ? " is-html-full-screen" : ""}`} data-html-view={htmlFill ? htmlView : undefined}
       role={htmlFull ? "dialog" : undefined} aria-label={htmlFull ? `${conversation.title || "Page"} — full screen` : undefined} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
-        {htmlPage ? <div className="html-page-bar">
-          <span className="html-page-bar-start" ref={setHtmlBarStart} />
-          {props.fileBar}
-          {/* Filling the panel, the page's notes are a second view instead of a strip below it. */}
-          {htmlFill ? <div className="html-page-views" role="group" aria-label="Show">
-            <button type="button" aria-pressed={htmlView === "page"} onClick={() => setHtmlView("page")}>Page</button>
-            <button type="button" aria-pressed={htmlView === "notes"} onClick={() => setHtmlView("notes")}>Notes</button>
-          </div> : null}
-          {htmlFull ? <button ref={htmlFullButton} type="button" className="document-full-screen-button html-page-full-screen" aria-keyshortcuts="Escape"
-            aria-label={`Leave full screen: ${conversation.title || "Page"}`} title="Leave full screen (Esc)" onClick={leaveHtmlFull}>
-            <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M8 3v5H3M12 3v5h5M8 17v-5H3M12 17v-5h5" /></svg>
-          </button> : <button ref={htmlFullButton} type="button" className="document-full-screen-button html-page-full-screen" aria-keyshortcuts="Escape"
-            aria-label={`Full screen: ${conversation.title || "Page"}`} title="Full screen (Esc to leave)" onClick={() => setHtmlFullFor(conversation.id)}>
-            <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><path d="M3 8V3h5M17 8V3h-5M3 12v5h5M17 12v5h-5" /></svg>
-          </button>}
-        </div> : props.fileBar}
+        {/* A page's controls live in the header; over a full screen page, which covers the header, they get a slim bar of their own. */}
+        {htmlFull ? <div className="html-page-bar" ref={setHtmlBar} /> : null}
         <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={(id) => { setHtmlFullFor(null); props.onOpenBranch(id); }} toolbarTarget={fileControls}
-          htmlLayout={htmlPage ? htmlLayout : undefined} htmlBarStart={htmlBarStart} onHtmlEscape={htmlFull ? leaveHtmlFull : undefined}/>
+          htmlLayout={htmlPage ? htmlLayout : undefined} htmlControls={htmlPage ? { target: htmlFull ? htmlBar : props.htmlControlsTarget !== undefined ? props.htmlControlsTarget : fileControls, place: htmlFull ? "bar" : "header", play: props.htmlPlay,
+            view: htmlFill ? htmlView : undefined, onView: setHtmlView, full: htmlFull, onFull: (full) => setHtmlFullFor(full ? conversation.id : null) } : undefined} onHtmlEscape={htmlFull ? leaveHtmlFull : undefined}/>
         <div className="vault-file-notes-label">Notes</div>
       </> : null}
       {props.notice}

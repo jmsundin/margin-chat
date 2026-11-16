@@ -4,7 +4,7 @@ import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReference } from "../types";
 import { useVaultMedia } from "../lib/vaultMedia";
 import { htmlPageTheme, useAppTheme, useHtmlPageLayout, useHtmlPagePrefs, useSmallScreen } from "../lib/htmlPagePrefs";
-import HtmlPageMenu from "./HtmlPageMenu";
+import HtmlPageMenu, { type HtmlPlayActions } from "./HtmlPageMenu";
 import { htmlAssetContentType, htmlAssetPath, htmlPageHasAssets, inlineHtmlAssets } from "../lib/htmlAssets";
 import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
@@ -32,8 +32,16 @@ export interface VaultFileViewerProps {
   toolbarTarget?: HTMLElement | null;
   /** How an HTML page is laid out, when the panel around it decides; otherwise the page's own remembered choice. */
   htmlLayout?: "fill" | "inline";
-  /** The start of the bar above an HTML page, where its title menu goes. */
-  htmlBarStart?: HTMLElement | null;
+  /** An HTML page's controls, which the panel around it places: in its header, or in the bar over a full screen page. */
+  htmlControls?: {
+    target: HTMLElement | null;
+    place: "header" | "bar";
+    play?: HtmlPlayActions;
+    view?: "page" | "notes";
+    onView?: (view: "page" | "notes") => void;
+    full: boolean;
+    onFull: (full: boolean) => void;
+  };
   /** Escape pressed inside an HTML page, which the page didn't use itself. */
   onHtmlEscape?: () => void;
 }
@@ -892,11 +900,13 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob }) {
     void mediaRef.current?.writeText?.(htmlPageDataPath(props.file.path), encodeHtmlPageData(empty)).catch(() => undefined);
     reload();
   };
-  const menu = props.htmlBarStart && html ? createPortal(<HtmlPageMenu title={name} prefs={prefs} layoutFixed={small} onPrefs={setPrefs}
+  const controls = props.htmlControls;
+  const menu = controls?.target && html ? createPortal(<HtmlPageMenu title={name} prefs={prefs} layoutFixed={small} onPrefs={setPrefs}
+    place={controls.place} play={controls.play} view={controls.view} onView={controls.onView} full={controls.full} onFull={controls.onFull}
     onOpenInTab={() => openHtmlPageInTab(name, htmlFrameDocument(html.text, loadHtmlStorage(props.conversation.id)?.data ?? {}, { theme }))}
     onDownload={() => downloadText(name, html.text)}
     onCopySource={() => { void navigator.clipboard?.writeText(html.text).catch(() => undefined); }}
-    onReload={reload} onResetData={resetData} />, props.htmlBarStart) : null;
+    onReload={reload} onResetData={resetData} />, controls.target) : null;
   if (source === null) return <div className={`vault-file-status${layout === "fill" ? " is-fill" : ""}`} role="status">Opening {name}…</div>;
   const firstOfEach = new Set<string>();
   return <section className={`vault-file-viewer vault-file-html${layout === "fill" ? " is-fill" : ""}`} aria-label={`HTML page: ${props.file.path}`}>
