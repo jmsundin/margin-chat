@@ -10,7 +10,7 @@ import {
   requestHuggingFaceResponse, requestHuggingFaceResponseStream,
   requestMetaResponse, requestMetaResponseStream,
   requestOpenAIResponse, requestOpenAIResponseStream,
-  requestXAIResponse, requestXAIResponseStream,
+  requestXAIResponse, requestXAIResponseStream, isProviderBusy,
 } from "./providers.mjs";
 import { buildAgentInstruction, buildSystemInstruction } from "./systemPrompt.mjs";
 import { buildChatTitleInstruction, parseGeneratedCategories, parseGeneratedDocumentCategories, parseGeneratedMapLevels, sanitizeCleanedDictation, sanitizeCodeSuggestion, sanitizeGeneratedChatTitle, sanitizeGeneratedClusterLabel, validateChatTitleRequest } from "./title.mjs";
@@ -68,6 +68,18 @@ function retrievalPassage(passage, label) {
 }
 
 /** Marks the passages a reply cites as [Vault N] (also "[Vault 1, 3]"). */
+/** How long to wait before asking a busy provider again. */
+const BUSY_RETRY_DELAYS_MS = [1000, 3000];
+const PROVIDER_LABELS = { anthropic: "Claude", openai: "OpenAI", meta: "Meta", xai: "xAI", gemini: "Gemini", huggingface: "Hugging Face" };
+const providerLabel = (serviceId) => PROVIDER_LABELS[providerName(serviceId)] ?? "The AI provider";
+function waitFor(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) { reject(signal.reason); return; }
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+  });
+}
+
 export function markCitedPassages(retrieval, reply) {
   if (!retrieval?.passages?.length || typeof reply !== "string") return retrieval;
   const cited = new Set();
@@ -437,7 +449,9 @@ export function createChatService({ database, documentService, env, runtimeConfi
     } : null;
     const agentPermits = vaultToolAccess(prepared.chatRequest, workspace);
     const vaultTools = Boolean(agentPermits);
-    for (const route of routes) {
+    let busyTries = 0;
+    for (let routeIndex = 0; routeIndex < routes.length; routeIndex++) {
+      const route = routes[routeIndex];
       context.signal?.throwIfAborted();
       agentSearches = [];
       const credential = getProviderCredential(route.serviceId, context);
@@ -556,7 +570,18 @@ export function createChatService({ database, documentService, env, runtimeConfi
           reply: result.reply,
         };
       } catch (error) {
-        if (context.signal?.aborted || error?.name === "AbortError" || error?.billingFailure || error?.statusCode === 402 || streamStarted || chatRequest.serviceId !== "backend-services") throw error;
+        if (context.signal?.aborted || error?.name === "AbortError" || error?.billingFailure || error?.statusCode === 402 || streamStarted) throw error;
+        // A model the person picked that's busy for a moment is asked again, before any of its answer
+        // has arrived, rather than showing the provider's "overloaded" as an error.
+        if (chatRequest.serviceId !== "backend-services") {
+          if (!isProviderBusy(error)) throw error;
+          if (busyTries < BUSY_RETRY_DELAYS_MS.length) {
+            await waitFor(BUSY_RETRY_DELAYS_MS[busyTries++], context.signal);
+            routeIndex--;
+            continue;
+          }
+          throw new HttpError(error.statusCode, `${providerLabel(route.serviceId)} is busy right now and didn't answer after ${busyTries + 1} tries. Try again in a minute, or pick another model. (${error.message})`);
+        }
         failures.push(error);
         fallbacks.push({ provider: route.serviceId, model: route.model,
           reason: `Provider request failed${error?.statusCode ? ` (HTTP ${error.statusCode})` : ""} before any response text was delivered.` });

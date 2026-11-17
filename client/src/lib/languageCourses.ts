@@ -1,4 +1,5 @@
 import { apiFetch } from "./apiTransport";
+import type { Course, CourseLesson } from "@margin-chat/workspace-contracts/languageCourses";
 
 /**
  * Language courses on the client: where the learner is in each lesson and what
@@ -122,3 +123,56 @@ const read = (key: string) => { try { return localStorage.getItem(key); } catch 
 export const autoMarkKnown = () => read(AUTO_KNOWN_KEY) !== "off";
 export const autoKnownExplained = () => read(AUTO_KNOWN_EXPLAINED_KEY) === "1";
 export { AUTO_KNOWN_KEY, AUTO_KNOWN_EXPLAINED_KEY };
+
+// ----- the library -----
+
+export type { Course, CourseLesson };
+
+export interface LearningProfile { lang: string; nativeLang: string; level: string; dailyGoalWords: number; settings: Record<string, unknown>; createdAt: string | null; updatedAt: string | null }
+export interface Enrollment { courseId: string; lang: string; enrolledAt: string | null; lastLessonId: string | null }
+export interface LibraryData {
+  lang: string; profiles: LearningProfile[]; profile: LearningProfile | null;
+  courses: Course[]; lessons: CourseLesson[]; enrollments: Enrollment[]; progress: LessonProgress[];
+}
+
+async function readJson<T>(response: Response, fallback: string): Promise<T> {
+  if (response.ok) return await response.json() as T;
+  let message = fallback;
+  try { const body = await response.json() as { error?: string }; if (body.error) message = body.error; } catch { /* keep the fallback */ }
+  if (response.status === 401) message = "Sign in to keep your lessons and progress.";
+  const error = new Error(message) as Error & { status?: number };
+  error.status = response.status;
+  throw error;
+}
+
+export async function fetchLibrary(userId: string, lang: string, signal?: AbortSignal, fetcher: typeof apiFetch = apiFetch): Promise<LibraryData> {
+  const response = await fetcher(`/api/learn/library?lang=${encodeURIComponent(lang)}`, { credentials: "same-origin", cache: "no-store", headers: { "X-Margin-Vault-User": userId }, signal });
+  return readJson<LibraryData>(response, "Your lessons couldn't be loaded. Try again.");
+}
+
+export async function fetchProfiles(userId: string, signal?: AbortSignal, fetcher: typeof apiFetch = apiFetch): Promise<LearningProfile[]> {
+  const response = await fetcher("/api/learn/profiles", { credentials: "same-origin", cache: "no-store", headers: { "X-Margin-Vault-User": userId }, signal });
+  return (await readJson<{ profiles: LearningProfile[] }>(response, "Your languages couldn't be loaded. Try again.")).profiles;
+}
+
+export async function saveProfile(userId: string, profile: { lang: string; level?: string; nativeLang?: string; dailyGoalWords?: number; settings?: Record<string, unknown> }, fetcher: typeof apiFetch = apiFetch): Promise<LearningProfile> {
+  const response = await fetcher("/api/learn/profiles", { method: "PUT", credentials: "same-origin", cache: "no-store", headers: jsonHeaders(userId), body: JSON.stringify(profile) });
+  return (await readJson<{ profile: LearningProfile }>(response, "Your language couldn't be saved. Try again.")).profile;
+}
+
+export async function enrollInCourse(userId: string, courseId: string, lang: string, fetcher: typeof apiFetch = apiFetch): Promise<Enrollment> {
+  const response = await fetcher(`/api/learn/courses/${encodeURIComponent(courseId)}/enroll`, { method: "POST", credentials: "same-origin", cache: "no-store", headers: jsonHeaders(userId), body: JSON.stringify({ lang }) });
+  return (await readJson<{ enrollment: Enrollment }>(response, "The course couldn't be added. Try again.")).enrollment;
+}
+
+/** Mini stories shipped with the app, loaded only when the library opens. */
+const SHIPPED_STORIES: Record<string, () => Promise<{ default: import("@margin-chat/workspace-contracts/languageCourses").MiniStory[] }>> = {
+  de: () => import("@margin-chat/workspace-contracts/miniStories/de"),
+};
+export const hasShippedStories = (lang: string) => lang in SHIPPED_STORIES;
+export async function loadShippedCourse(lang: string): Promise<{ course: Course; lessons: CourseLesson[] } | null> {
+  const load = SHIPPED_STORIES[lang];
+  if (!load) return null;
+  const { builtInMiniStories } = await import("@margin-chat/workspace-contracts/languageCourses");
+  return builtInMiniStories(lang, (await load()).default);
+}

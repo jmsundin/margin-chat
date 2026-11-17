@@ -861,7 +861,12 @@ export function createApiHandler({
         const userId = authContext.user.id;
         if (request.method === "GET") {
           if (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "Open your lessons from Margin Chat.");
-          if (route.id === "learnProgress") { sendJson(response, 200, await languageCourses.readProgress({ userId, lang: url.searchParams.get("lang") ?? "" }), { "Cache-Control": "private, no-store" }); return; }
+          const lang = url.searchParams.get("lang") ?? "";
+          const result = route.id === "learnProgress" ? await languageCourses.readProgress({ userId, lang })
+            : route.id === "learnLibrary" ? await languageCourses.library({ userId, lang })
+            : route.id === "learnProfiles" ? await languageCourses.profiles({ userId })
+            : route.id === "learnLesson" ? await languageCourses.lesson({ userId, lessonId: route.params.id }) : null;
+          if (result) { sendJson(response, 200, result, { "Cache-Control": "private, no-store" }); return; }
         } else {
           if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
               !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -872,6 +877,8 @@ export function createApiHandler({
           if (route.id === "learnLessonProgress") result = await languageCourses.saveProgress({ userId, lessonId: route.params.id, body });
           else if (route.id === "learnLessonComplete") result = await languageCourses.saveProgress({ userId, lessonId: route.params.id, body: { ...body, complete: true } });
           else if (route.id === "learnEvents") result = await languageCourses.recordEvents({ userId, body });
+          else if (route.id === "learnProfiles") result = await languageCourses.saveProfile({ userId, body });
+          else if (route.id === "learnCourseEnroll") result = await languageCourses.enroll({ userId, courseId: route.params.id, body });
           if (result) { sendJson(response, 200, result, { "Cache-Control": "private, no-store" }); return; }
         }
       }

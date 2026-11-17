@@ -1,4 +1,4 @@
-import { isBuiltInLessonId, isCourseLanguage } from "@margin-chat/workspace-contracts/languageCourses";
+import { isBuiltInLessonId, isCourseLanguage, isLearningLevel } from "@margin-chat/workspace-contracts/languageCourses";
 import { HttpError } from "../lib/errors.mjs";
 
 /** Language courses: where a learner is in each lesson, and what they studied each day. */
@@ -65,5 +65,49 @@ export function createLanguageCourseService({ database }) {
     return { progress: await database.readProgress({ userId, lang: readLang(lang) }) };
   }
 
-  return { saveProgress, recordEvents, readProgress };
+  /**
+   * Everything the library shows for one language that lives in the account: the learner's
+   * profiles, their own courses and lessons (without tokens), enrollments and progress.
+   * Mini stories shipped with the app come with the app.
+   */
+  async function library({ userId, lang: value }) {
+    const lang = readLang(value);
+    const [profiles, courses, lessons, enrollments, progress] = await Promise.all([
+      database.readLearningProfiles({ userId }), database.listCourses({ userId, lang }), database.listLessons({ userId, lang }),
+      database.readEnrollments({ userId, lang }), database.readProgress({ userId, lang }),
+    ]);
+    return { lang, profiles, profile: profiles.find((profile) => profile.lang === lang) ?? null, courses, lessons, enrollments, progress };
+  }
+
+  async function profiles({ userId }) {
+    return { profiles: await database.readLearningProfiles({ userId }) };
+  }
+
+  async function saveProfile({ userId, body }) {
+    if (!body || typeof body !== "object") throw new HttpError(400, "Send the profile as JSON.");
+    const lang = readLang(body.lang);
+    if (body.level !== undefined && !isLearningLevel(body.level)) throw new HttpError(400, "Pick a level from A1 to C2.");
+    if (body.nativeLang !== undefined && !/^[a-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/u.test(body.nativeLang)) throw new HttpError(400, "Pick the language meanings should be in.");
+    if (body.nativeLang === lang) throw new HttpError(400, "Meanings need to be in a different language from the one you're learning.");
+    const goal = body.dailyGoalWords === undefined ? undefined : count(body.dailyGoalWords, 100_000);
+    let settings;
+    if (body.settings !== undefined) {
+      if (!body.settings || typeof body.settings !== "object" || Array.isArray(body.settings) || JSON.stringify(body.settings).length > 4000) throw new HttpError(400, "Settings must be a small JSON object.");
+      settings = body.settings;
+    }
+    return { profile: await database.saveLearningProfile({ userId, lang, nativeLang: body.nativeLang, level: body.level, dailyGoalWords: goal, settings }) };
+  }
+
+  async function lesson({ userId, lessonId: id }) {
+    const found = isBuiltInLessonId(id) ? null : await database.readLesson({ userId, lessonId: lessonId(id) });
+    if (!found) throw new HttpError(404, "That lesson isn't here.");
+    return { lesson: found };
+  }
+
+  async function enroll({ userId, courseId, body }) {
+    if (typeof courseId !== "string" || !/^[A-Za-z0-9_-]{1,80}$/u.test(courseId)) throw new HttpError(404, "That course isn't here.");
+    return { enrollment: await database.enroll({ userId, courseId, lang: readLang(body?.lang) }) };
+  }
+
+  return { saveProgress, recordEvents, readProgress, library, profiles, saveProfile, lesson, enroll };
 }

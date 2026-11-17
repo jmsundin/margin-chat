@@ -49,6 +49,10 @@ export const API_ROUTES = Object.freeze([
   { id: "languageLookup", methods: ["GET"], path: "/api/language-lookup" },
   // Language courses (server/languageCourses): lessons, where the learner is in each, and what they studied.
   { id: "learnProgress", methods: ["GET"], path: "/api/learn/progress" },
+  { id: "learnLibrary", methods: ["GET"], path: "/api/learn/library" },
+  { id: "learnProfiles", methods: ["GET", "PUT"], path: "/api/learn/profiles" },
+  { id: "learnLesson", methods: ["GET"], path: "/api/learn/lessons/:id", parameters: { id: "[A-Za-z0-9_-]{1,80}" } },
+  { id: "learnCourseEnroll", methods: ["POST"], path: "/api/learn/courses/:id/enroll", parameters: { id: "[A-Za-z0-9_-]{1,80}" } },
   { id: "learnLessonProgress", methods: ["POST"], path: "/api/learn/lessons/:id/progress", parameters: { id: "[A-Za-z0-9_-]{1,80}" } },
   { id: "learnLessonComplete", methods: ["POST"], path: "/api/learn/lessons/:id/complete", parameters: { id: "[A-Za-z0-9_-]{1,80}" } },
   { id: "learnEvents", methods: ["POST"], path: "/api/learn/events" },
