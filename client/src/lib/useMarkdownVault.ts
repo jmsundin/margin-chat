@@ -910,7 +910,9 @@ export function useMarkdownVault(args: {
         // A phone may close a hidden app without another event, so keep a copy before saving.
         rescueUnsavedEdits();
         if (localSaveTimer.current !== undefined || stateRef.current !== displayedState.current) saveNow();
-        return;
+        // A browser tab rests while hidden. The desktop app keeps its vault folder and the cloud in step while
+        // its window is behind others or minimized, as people edit in the browser or in other apps meanwhile.
+        if (!isDesktopApp()) return;
       }
       scheduleAutomaticRefresh();
     };

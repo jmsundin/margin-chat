@@ -14,6 +14,7 @@ import { scanWhileFolderSettles } from "./fileSnapshot";
 import { decodeVaultFsText, isIgnoredVaultPath, joinVaultFsPath, type VaultFs, type VaultFsStat } from "@margin-chat/vault-sync";
 import { toVaultFs } from "./vaultFsAccess";
 import { desktopVaultBridge, desktopVaultFs, isDesktopVaultFs, unwrap, type DesktopVaultFs } from "./vaultFsDesktop";
+import { isDesktopApp } from "./platform";
 import { isSyncableVaultFileSize, isVaultFileDocumentPath, vaultFileContentType, type VaultFileListing } from "./vaultFileDocuments";
 
 const DIRECTORY_DATABASE_NAME = "margin-chat-local-storage";
@@ -304,7 +305,9 @@ export function watchLocalDirectory(userId: string, directoryId: string, onChang
 
   async function scan() {
     if (stopped || scanning) return;
-    if (typeof document !== "undefined" && document.visibilityState === "hidden") { schedule(FOLDER_WATCH_MIN_MS); return; }
+    // A hidden browser tab waits until it is shown again. The desktop app is the folder's own app, so it
+    // keeps looking while its window is behind others or minimized; other apps' changes still reach the cloud.
+    if (typeof document !== "undefined" && document.visibilityState === "hidden" && !isDesktopApp()) { schedule(FOLDER_WATCH_MIN_MS); return; }
     scanning = true;
     const started = Date.now();
     try {

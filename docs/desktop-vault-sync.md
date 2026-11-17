@@ -15,7 +15,7 @@ Design note for the spec "Margin Chat — Desktop-First + Seamless Local/Cloud V
 | Folder scan, stability of reads, write discipline, companions | `client/src/lib/workspaceStorage.ts`, `fileSnapshot.ts` | Now runs on `VaultFs` (this phase). |
 | Folder reconcile loop (read folder → deletion guard → `engine.edit`/`import` → write folder) | `useMarkdownVault.ts` (`readFolder`, `writeFolder`, `checkFolderAccess`) | Inside the React hook, not a library. |
 | Deletion guard | `client/src/lib/folderDeletionGuard.ts` | Pure function; reusable as is. |
-| Folder watching | `workspaceStorage.ts` (`watchLocalDirectory`) | Browser folder observer when present, otherwise a signature poll every 2.5–60 s while the page is visible. |
+| Folder watching | `workspaceStorage.ts` (`watchLocalDirectory`) | Browser folder observer when present, otherwise a signature poll every 2.5–60 s while the page is visible (in the desktop app, also while its window is hidden). |
 | First-run folder choice | `components/VaultFolderGate.tsx`, `lib/desktopVault.ts` | Uses the browser directory picker and folder handles. |
 | Keeping folder access across launches | `desktop/permissions.mjs` | Answers Chromium's permission check for `margin://app`. |
 
@@ -108,6 +108,10 @@ Tests: `tests/desktop-vault-sync.test.ts` runs the app's sync against the real v
 - **Phone-width pass (§7.2, §9.9):** the new menu item, File menu and toasts exist only with the desktop bridge, so the website and phones render exactly as before. Checked at iPhone 13 and at 1440×920 in the preview harness: document menu, Cmd/Ctrl+K search and the workspace show no desktop-only controls and no new errors.
 
 Still behind `MARGIN_DESKTOP_NATIVE_VAULT=1`: turning the native vault on by default (and then removing `desktop/permissions.mjs`'s folder check) is the remaining step, for Jon to decide once he has tried phases 1-4 on his Mac.
+
+## The desktop app without the native vault (today's default)
+
+Without `MARGIN_DESKTOP_NATIVE_VAULT=1` the page syncs the folder through the browser's folder access, as on the web. A browser tab rests while hidden, but the desktop app keeps syncing while its window is behind other windows or minimized (macOS reports such a window as hidden): the 15 s refresh and the folder poll keep running, so edits made in the browser reach the folder and files saved by other apps reach the cloud without the window coming back. Nothing syncs once every window is closed.
 
 ## Phase plan
 
