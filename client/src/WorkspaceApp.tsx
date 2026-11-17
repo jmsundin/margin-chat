@@ -149,6 +149,7 @@ import RoadmapView from "./components/RoadmapView";
 import type { MapPathActions } from "./components/MapPaths";
 import { buildMapPath, createMapPath, isPathDocument, pathNameFromGoal } from "./lib/mapPaths";
 import FlashcardReview from "./components/FlashcardReview";
+import { LanguageLibrary } from "./components/LanguageLibrary";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
 import { useLanguageTerms } from "./lib/languageTerms";
 import { studyQueue } from "./lib/languageCourses";
@@ -216,7 +217,7 @@ import {
   loadStoredState,
 } from "./lib/appState";
 import { getConversationRequestPayload } from "./lib/chatContext";
-import { buildLookupMessages, defaultLanguagePair, guessTextLanguage, languageName, plainReadingText, rememberLanguagePair, meaningCardLine, parseLookupReply, partialLookupReply, savedMeaningIn, wordsDeckTitle, type LanguagePair, type LookupAnswer, type LookupRequest, type PartialLookup, type SavedMeaning } from "./lib/languageLearning";
+import { buildLookupMessages, defaultLanguagePair, guessTextLanguage, languageName, plainReadingText, rememberLanguagePair, meaningCardLine, parseLookupReply, partialLookupReply, savedMeaningIn, wordsDeckTitle, type DocumentLanguageLearning, type LanguagePair, type LookupAnswer, type LookupRequest, type PartialLookup, type SavedMeaning } from "./lib/languageLearning";
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
@@ -1581,6 +1582,7 @@ function WorkspaceAppContent({
   const flashcards = useFlashcards({ userId: user.id, conversations: state.conversations, enabled: vault.ready });
   const languageTerms = useLanguageTerms({ userId: user.id, enabled: vault.ready });
   /** The open review: every card, or one document with its notes and side documents. */
+  const [languageLibraryOpen, setLanguageLibraryOpen] = useState(false);
   const [flashcardReview, setFlashcardReview] = useState<{ title: string; docIds?: ReadonlySet<string>; docId?: string } | null>(null);
   const flashcardCountByDoc = useMemo(() => {
     const counts = new Map<string, number>();
@@ -3481,10 +3483,12 @@ function WorkspaceAppContent({
   }
 
   /** What tapped or selected text means: one short model call with only the text and its sentence, nothing else from the vault. */
-  async function handleLookUpMeaning(conversationId: string, request: LookupRequest, signal: AbortSignal, onPartial?: (partial: PartialLookup) => void): Promise<LookupAnswer> {
-    const conversation = currentStateRef.current.conversations[conversationId];
+  /** Asks the AI what a word means. A lesson in the library (no document) uses the open document's model. */
+  async function handleLookUpMeaning(conversationId: string | null, request: LookupRequest, signal: AbortSignal, onPartial?: (partial: PartialLookup) => void): Promise<LookupAnswer> {
+    const current = currentStateRef.current;
+    const conversation = current.conversations[conversationId ?? current.activeConversationId] ?? Object.values(current.conversations)[0];
     if (!conversation) throw new Error("This document is no longer open.");
-    if (isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
+    if (conversationId && isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
     const lookup = createMainConversation({ id: createId("conversation"), createdAt: new Date().toISOString(), serviceId: conversation.serviceId, modelId: conversation.modelId });
     lookup.title = "Look up a meaning";
     let written = "";
@@ -3615,6 +3619,20 @@ function WorkspaceAppContent({
   }
 
   /** Other documents whose text has this word or phrase, for a term's card. */
+  /** What the reader needs for a lesson in the library: the same lookups, word list and study counts as a document. */
+  function lessonLearning(pair: LanguagePair, lessonId: string): DocumentLanguageLearning {
+    return {
+      pair, onChange: () => undefined,
+      lookUp: (request, signal, onPartial) => handleLookUpMeaning(null, request, signal, onPartial),
+      dictionary: (request, signal) => requestLanguageLookup({ term: request.term, sentence: request.sentence, src: request.pair.target, tgt: request.pair.base, expectedUserId: user.id, signal }),
+      save: handleSaveMeaning, savedMeaning: savedMeaningFor,
+      docId: `lesson:${lessonId}`, terms: languageTerms.terms, setTerm: languageTerms.setTerm, setTerms: languageTerms.setTerms,
+      recordStudy: (event) => studyQueue(user.id).add({ ...event, lessonId: event.lessonId ?? lessonId, lang: pair.target }),
+      aiAllowed: true, mentions: documentsMentioning,
+      openDocument: (id) => { setLanguageLibraryOpen(false); handleSelectConversation(id); },
+    };
+  }
+
   function documentsMentioning(text: string): Array<{ id: string; title: string }> {
     const wanted = text.trim().toLocaleLowerCase();
     if (wanted.length < 2) return [];
@@ -7494,6 +7512,7 @@ function WorkspaceAppContent({
               onOpenSearch={() => handleOpenSearch()}
               flashcardsDue={flashcards.totalCards ? flashcards.dueCount : null}
               onOpenFlashcards={!features.flashcards ? undefined : () => { setFlashcardReview({ title: "All cards" }); if (isMobileViewport) setLeftSidebarOpen(false); }}
+              onOpenLanguages={!features.language ? undefined : () => { setLanguageLibraryOpen(true); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onPinThread={handlePinThread}
               onRenameThread={handleRenameThread}
               revealInFolder={sidebarRevealInFolder}
@@ -8194,6 +8213,9 @@ function WorkspaceAppContent({
       onGenerate={(request, signal) => handleSuggestFlashcards(makeCards, request, signal)}
       onAdd={(drafts, request) => handleAddFlashcards(makeCards, drafts, request)}
       onClose={() => { setMakeCards(null); newDeckRef.current = null; }}/> : null}
+    {languageLibraryOpen ? <LanguageLibrary userId={user.id} terms={languageTerms.terms} learningFor={lessonLearning}
+      documents={Object.values(state.conversations).flatMap((item) => item.languageLearning && !item.vaultFile ? [{ id: item.id, title: item.title || "Untitled", lang: item.languageLearning.target, words: (getEditableDocumentText(item).match(/\S+/gu) ?? []).length }] : [])}
+      onOpenDocument={(id) => handleSelectConversation(id)} onClose={() => setLanguageLibraryOpen(false)} /> : null}
     {flashcardReview ? <FlashcardReview flashcards={flashcards} title={flashcardReview.title} docIds={flashcardReview.docIds}
       onClose={() => setFlashcardReview(null)}
       onImportAnki={handleImportAnki}

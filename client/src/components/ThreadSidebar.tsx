@@ -75,6 +75,8 @@ interface ThreadSidebarProps {
   /** Cards to study now; null hides Review (no cards written yet). */
   flashcardsDue?: number | null;
   onOpenFlashcards?: () => void;
+  /** Opens the language library: courses, mini stories and lessons. Only with Language learning on. */
+  onOpenLanguages?: () => void;
   /** A new board document: one full-page canvas. */
   onNewBoard?: () => void;
   onPinThread: (conversationId: string) => void;
@@ -157,6 +159,16 @@ function BoardIcon() {
       <rect x="3" y="4" width="18" height="12.5" rx="1.5" />
       <path d="M7 12.5l3-3 2.5 2.5L17 7.5" />
       <path d="M9 20.5l3-4 3 4" />
+    </svg>
+  );
+}
+
+function LanguagesIcon() {
+  return (
+    <svg aria-hidden="true" className="sidebar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8">
+      {/* An open book with a speech mark: reading to learn a language. */}
+      <path d="M3 5.5c2.6-1 5.4-1 8 .6v13c-2.6-1.6-5.4-1.6-8-.6z" />
+      <path d="M21 5.5c-2.6-1-5.4-1-8 .6v13c2.6-1.6 5.4-1.6 8-.6z" />
     </svg>
   );
 }
@@ -376,6 +388,7 @@ export default function ThreadSidebar({
   onOpenSearch,
   flashcardsDue = null,
   onOpenFlashcards,
+  onOpenLanguages,
   onNewBoard,
   onPinThread,
   onRenameThread,
@@ -1030,6 +1043,17 @@ export default function ThreadSidebar({
                 >
                   <CardsIcon />
                   <span>Flashcards</span>
+                </button>
+              ) : null}
+              {onOpenLanguages ? (
+                <button
+                  className="sidebar-workspace-action"
+                  onClick={() => { closeWorkspaceActions(); onOpenLanguages(); }}
+                  title="Courses, mini stories and lessons in the languages you're learning"
+                  type="button"
+                >
+                  <LanguagesIcon />
+                  <span>Languages</span>
                 </button>
               ) : null}
               {!groupsEnabled ? null : newGroupName === null ? (

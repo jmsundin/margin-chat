@@ -399,4 +399,25 @@ describe("progress through the account", () => {
     await expect(service.recordEvents({ userId: "u1", body: { events: Array.from({ length: 201 }, () => ({ lang: "de", type: "words_read", count: 1 })) } })).rejects.toThrow("at most");
     expect(await service.recordEvents({ userId: "u1", body: { events: [{ lang: "de", type: "words_read", count: 3, at: "2999-01-01T00:00:00Z" }] } })).toEqual({ saved: 1 });
   });
+
+  test("the library: a profile per language, enrolment, and only the learner's own lessons", async () => {
+    const { createLanguageCourseService } = await import("../server/languageCourses/index.mjs");
+    const { client } = await database();
+    const service = createLanguageCourseService({ database: new Proxy({}, { get: (_target, name: string) => (args: any) => (courses as any)[name](client, args) }) });
+    const { profile } = await service.saveProfile({ userId: "u2", body: { lang: "de", level: "A2", nativeLang: "en", dailyGoalWords: 30 } });
+    expect(profile).toMatchObject({ lang: "de", level: "A2", nativeLang: "en", dailyGoalWords: 30 });
+    // A later change keeps what it doesn't send.
+    expect((await service.saveProfile({ userId: "u2", body: { lang: "de", level: "B1" } })).profile).toMatchObject({ level: "B1", dailyGoalWords: 30 });
+    await expect(service.saveProfile({ userId: "u2", body: { lang: "de", level: "D9" } })).rejects.toThrow("A1 to C2");
+    await expect(service.saveProfile({ userId: "u2", body: { lang: "de", nativeLang: "de" } })).rejects.toThrow("different language");
+    await service.enroll({ userId: "u2", courseId: "de-mini-stories", body: { lang: "de" } });
+    await expect(service.enroll({ userId: "u2", courseId: "../x", body: { lang: "de" } })).rejects.toThrow("isn't here");
+    const library = await service.library({ userId: "u2", lang: "de" });
+    expect(library.profile).toMatchObject({ level: "B1" });
+    expect(library.enrollments).toMatchObject([{ courseId: "de-mini-stories" }]);
+    expect(library.lessons).toEqual([]);
+    // Shipped lessons come with the app, not from the account.
+    await expect(service.lesson({ userId: "u2", lessonId: "de-ms-01-a" })).rejects.toThrow("isn't here");
+    expect((await service.profiles({ userId: "u2" })).profiles).toHaveLength(1);
+  });
 });
