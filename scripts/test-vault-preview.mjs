@@ -23,6 +23,10 @@ import { validateWorkspaceAnalysis } from "../server/semantic/index.mjs";
 import { readImportPage } from "../server/chat/agent/webImport.mjs";
 import { createProposalTools, describeProposalStep, documentInPrompt } from "../server/chat/agent/proposalTools.mjs";
 import { createLanguageLookupService } from "../server/languageTerms/lookup.mjs";
+import { PGlite } from "@electric-sql/pglite";
+import { vector } from "@electric-sql/pglite-pgvector";
+import { loadMigrations, migrateDatabase } from "../server/db/migrations.mjs";
+import * as languageCourseRepository from "../server/db/languageCourseRepository.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
@@ -244,6 +248,25 @@ const database = {
     };
   },
 };
+// Language courses run on an in-process Postgres, so lessons and progress behave as they do in production.
+let coursesDatabase = null;
+async function coursesClient(userId) {
+  coursesDatabase ??= (async () => {
+    const pg = new PGlite({ extensions: { vector } });
+    const client = { async query(sql, values) {
+      const result = values === undefined && sql.includes(";") ? (await pg.exec(sql)).at(-1) : await pg.query(sql, values);
+      return { ...result, rowCount: result.rows.length || result.affectedRows || 0 };
+    } };
+    await migrateDatabase(client, { migrations: await loadMigrations() });
+    return client;
+  })();
+  const client = await coursesDatabase;
+  if (userId) await client.query("insert into marginchat_users (id, email, password_hash, display_name) values ($1, $2, 'fixture', $1) on conflict do nothing", [userId, `${userId}@fixture.test`]);
+  return client;
+}
+for (const name of Object.keys(languageCourseRepository)) {
+  database[name] = async (args) => languageCourseRepository[name](await coursesClient(args?.userId), args);
+}
 // PREVIEW_STORAGE_DELAY_MS models cloud storage latency per read (Vercel Blob is ~50-150 ms).
 // PREVIEW_COLD=1 starts each request on a fresh vault service, like a cold serverless instance.
 const storageDelayMs = Number(process.env.PREVIEW_STORAGE_DELAY_MS) || 0;

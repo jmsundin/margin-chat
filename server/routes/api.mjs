@@ -17,6 +17,7 @@ import { FLASHCARD_SYNC_BODY_LIMIT, createFlashcardService } from "../flashcards
 import { LANGUAGE_TERM_SYNC_BODY_LIMIT, createLanguageTermService } from "../languageTerms/index.mjs";
 import { createLanguageSpeechService } from "../languageTerms/speech.mjs";
 import { createLanguageLookupService } from "../languageTerms/lookup.mjs";
+import { LEARN_BODY_LIMIT, createLanguageCourseService } from "../languageCourses/index.mjs";
 import { RATCHET_BODY_LIMIT, createRatchetService } from "../ratchet/index.mjs";
 import { INTERFACE_SETTINGS_BODY_LIMIT, createInterfaceSettingsService } from "../interfaceSettings/index.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
@@ -171,6 +172,7 @@ export function createApiHandler({
   const library = createLibraryService({ database, env });
   const flashcards = createFlashcardService({ database });
   const languageTerms = createLanguageTermService({ database });
+  const languageCourses = createLanguageCourseService({ database });
   const languageSpeech = languageSpeechService ?? createLanguageSpeechService({ env });
   const readLessonPage = lessonPageReader ?? readPublicPage;
   const languageLookup = languageLookupService ?? createLanguageLookupService({ database, env });
@@ -851,6 +853,27 @@ export function createApiHandler({
         const body = await readJsonBody(request, LANGUAGE_TERM_SYNC_BODY_LIMIT);
         sendJson(response, 200, await languageTerms.sync({ userId: authContext.user.id, body }), { "Cache-Control": "private, no-store" });
         return;
+      }
+
+      if (route?.id?.startsWith("learn")) {
+        // Like the word list: any signed-in account keeps its courses and progress.
+        requireExpectedVaultAccount(request, authContext.user);
+        const userId = authContext.user.id;
+        if (request.method === "GET") {
+          if (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "Open your lessons from Margin Chat.");
+          if (route.id === "learnProgress") { sendJson(response, 200, await languageCourses.readProgress({ userId, lang: route.params.lang }), { "Cache-Control": "private, no-store" }); return; }
+        } else {
+          if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
+              !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
+            throw new HttpError(403, "Study from Margin Chat.");
+          }
+          const body = await readJsonBody(request, LEARN_BODY_LIMIT);
+          let result;
+          if (route.id === "learnLessonProgress") result = await languageCourses.saveProgress({ userId, lessonId: route.params.id, body });
+          else if (route.id === "learnLessonComplete") result = await languageCourses.saveProgress({ userId, lessonId: route.params.id, body: { ...body, complete: true } });
+          else if (route.id === "learnEvents") result = await languageCourses.recordEvents({ userId, body });
+          if (result) { sendJson(response, 200, result, { "Cache-Control": "private, no-store" }); return; }
+        }
       }
 
       if (route?.id === "languageLessonPage") {
