@@ -1165,6 +1165,25 @@ async function checkDesktopGate() {
   await act(async () => { await current.vault.checkFolder(); });
   assert.equal(current.vault.folderUnavailable, false, "The folder coming back was not noticed.");
   checks.push("a folder gone while the app is open shows a notice and keeps the workspace");
+
+  // The app's window is behind the browser or minimized (macOS reports it hidden) while people edit in the
+  // browser and in other apps: the folder and the cloud still meet, both ways, without the window coming back.
+  await act(async () => { await current.vault.syncNow(); });
+  Object.defineProperty(browser.document, "visibilityState", { configurable: true, value: "hidden" });
+  try {
+    await remote.commit(user.id, [{ path: "Docs/from-browser.md", content: doc("from-browser", "Written in the browser while the app was hidden."), baseRevision: null }]);
+    await writeText(second.handle, "Docs/from-editor.md", "# From another editor\n\nSaved in the folder while the app was hidden.\n");
+    await act(async () => { browser.document.dispatchEvent(new browser.Event("visibilitychange")); });
+    await until(async () => (await readText(second.handle, "Docs/from-browser.md").catch(() => "")).includes("Written in the browser while the app was hidden."),
+      "A browser edit did not reach the folder while the app's window was hidden.");
+    await until(async () => {
+      const files = (await remote.snapshot(user.id)).manifest.files;
+      return Object.entries(files).some(([path, entry]: [string, any]) => path.endsWith(".md") && !entry.deleted && path.includes("from-editor"));
+    }, "A file saved in the folder did not reach the cloud while the app's window was hidden.");
+  } finally {
+    Object.defineProperty(browser.document, "visibilityState", { configurable: true, value: "visible" });
+  }
+  checks.push("with the window hidden, the folder and the cloud still sync both ways");
   console.log(JSON.stringify({ checks }));
 }
 try {

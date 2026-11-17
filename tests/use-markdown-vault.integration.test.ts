@@ -122,7 +122,7 @@ test("a vault kept only in this browser is warned about until it is downloaded o
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(6);
 }, 15000);
 
-test("the desktop app asks for a vault folder, opens a remembered one at launch and reads it in the background, and never writes to a folder it can't open", async () => {
+test("the desktop app asks for a vault folder, opens a remembered one at launch and reads it in the background, keeps syncing with its window hidden, and never writes to a folder it can't open", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/vaultHookHarness.ts", "--desktop-gate"], {
     cwd: new URL("..", import.meta.url).pathname, stdout: "pipe", stderr: "pipe",
   });
@@ -132,7 +132,7 @@ test("the desktop app asks for a vault folder, opens a remembered one at launch 
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Desktop vault folder integration failed:\n${stdout}\n${stderr}`);
-  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(9);
+  expect(JSON.parse(stdout.trim().split("\n").at(-1)!).checks).toHaveLength(10);
 }, 15000);
 
 test("keys typed together share one save on this device, hiding or closing the app saves at once, a cut-off save comes back, and edits left in an older copy come back", async () => {
