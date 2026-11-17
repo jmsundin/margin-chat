@@ -7,7 +7,6 @@ import { getEditableDocument } from "../lib/editableDocument";
 import { findBoardBlock, isBoardDocument, withBoardBlock } from "../lib/boardDocument";
 import type { BoardNoteRequest } from "../lib/boardAI";
 import { getDocumentBlockAuthorship } from "@margin-chat/workspace-contracts";
-import WriteBackLine from "./WriteBackLine";
 import { joinDocumentBlocks } from "../lib/continuousDocument";
 import { getGenerationBlocks, proposeAIChildNodes, type AIChildNodeProposal } from "../lib/aiChildNodes";
 import type { DiagramAIRequest, DocumentAIRequest } from "../lib/documentAI";
@@ -118,8 +117,6 @@ export interface DocumentPanelProps {
    * follows here, or authorship marks that are on). The view and authorship switches are in ⋯.
    */
   quiet?: boolean;
-  /** "Write back…" under a paragraph the AI wrote: the reply goes in below it and the AI answers after. */
-  onWriteBack?: (blockId: string, text: string) => void;
   /** The full path of parents in the header, as in Map View's side panel. */
   parentBreadcrumbs?: ReactNode;
   /** @deprecated Group assignment is available in the document menu. */
@@ -496,20 +493,6 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     if (visibleId) props.onVisibleOutlineChange(conversation.id, visibleId);
   }
 
-  /** The AI paragraph whose "Write back…" line is open, from clicking or tapping it. */
-  const [writeBackId, setWriteBackId] = useState<string | null>(null);
-  function pickWriteBack(target: EventTarget | null) {
-    if (!props.onWriteBack || !(target instanceof Element) || target.closest("[data-write-back]")) return;
-    const line = target.closest<HTMLElement>(".live-document-block[data-document-block-id]");
-    // Only this document's own lines: a margin note inside the page has its own.
-    if (!line || line.closest(".document-body") !== bodyRef.current || target.closest("a, button, [data-annotation-branches]")) { setWriteBackId(null); return; }
-    const id = line.dataset.documentBlockId!;
-    const block = latestDocument.current.blocks.find((item) => item.id === id);
-    if (!block || !block.content.trim() || getDocumentBlockAuthorship(block, conversation.messages) !== "ai" || streamingIds.includes(id)) { setWriteBackId(null); return; }
-    // A drag to select text is for the selection toolbar, not a reply.
-    window.requestAnimationFrame(() => { if (window.getSelection()?.isCollapsed !== false) setWriteBackId(id); });
-  }
-
   function openHighlight(target: EventTarget | null) {
     const mark=target instanceof Element ? target.closest<HTMLElement>("[data-annotation-branches]") : null;
     if(!mark || !window.getSelection()?.isCollapsed)return;
@@ -714,7 +697,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
     {props.roadmapFill && props.roadmap ? <div className="document-roadmap-fill">{props.roadmap}</div> : <div className={`document-panel-content${props.marginNotes?.length ? " has-margin-notes" : ""}`}
       style={props.marginNotes?.length ? { "--document-margin-width": `${marginWidth}px` } as CSSProperties : undefined}>
     <div className={`panel-body document-body${board ? " is-board" : ""}${htmlFill ? " is-html-page" : ""}${htmlFull ? " is-html-full-screen" : ""}`} data-html-view={htmlFill ? htmlView : undefined}
-      role={htmlFull ? "dialog" : undefined} aria-label={htmlFull ? `${conversation.title || "Page"} — full screen` : undefined} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);pickWriteBack(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
+      role={htmlFull ? "dialog" : undefined} aria-label={htmlFull ? `${conversation.title || "Page"} — full screen` : undefined} ref={bodyRef} onScroll={reportVisibleOutline} onClickCapture={(event)=>{const claim=event.target instanceof Element ? event.target.closest<HTMLElement>("[data-ratchet-claim]") : null;if(claim?.dataset.ratchetClaim && props.onOpenClaim && window.getSelection()?.isCollapsed !== false){props.onOpenClaim(claim.dataset.ratchetClaim);return;}openHighlight(event.target);}} onKeyDownCapture={(event)=>{if(event.key === "Enter" && (event.target as Element).closest?.("[data-annotation-branches]")){event.preventDefault();openHighlight(event.target);}}}>
       {conversation.vaultFile ? <>
         {/* A page's controls live in the header; over a full screen page, which covers the header, they get a slim bar of their own. */}
         {htmlFull ? <div className="html-page-bar" ref={setHtmlBar} /> : null}
@@ -779,8 +762,6 @@ export default function DocumentPanel(props: DocumentPanelProps) {
           {document.prompts.filter((item) => promptBlockIds.get(item.id) === block.id && !document.generations.some((generation) => generation.promptId === item.id && generation.alternativeOf)).map(renderPromptMarker)}
           {agentFollowUps.get(block.id)}
           {!mobileKeyboard.mobile && invocation?.blockId === block.id ? renderAIComposer() : null}
-          {writeBackId === block.id && props.onWriteBack ? <WriteBackLine disabled={props.isSubmitting} onClose={() => setWriteBackId(null)}
-            onSend={(text) => { setWriteBackId(null); props.onWriteBack?.(block.id, text); }} /> : null}
         </>}/> : <RichDocumentPlaceholder blocks={editorBlocks} />}
       {props.isSubmitting && props.hideAgentStatus ? null : props.isSubmitting && (props.agentProgress || (props.agentMode?.enabled && props.agentMode.available))
         ? <div className="document-writing-status is-agent" role="status">
