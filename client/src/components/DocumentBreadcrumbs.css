@@ -11,6 +11,8 @@
 .document-breadcrumb-trigger { display: flex; align-items: center; gap: 6px; max-width: 240px; padding: 4px 6px 4px 8px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; font-size: 13px; white-space: nowrap; cursor: pointer; }
 .document-breadcrumb-trigger:hover, .document-breadcrumb-trigger[aria-expanded="true"] { border-color: var(--line); background: var(--button-surface); }
 .document-breadcrumb-trigger[aria-current="page"] { font-weight: 600; }
+.document-breadcrumb.is-alone .document-breadcrumb-trigger { padding-right: 8px; }
+.document-breadcrumb.is-alone .document-breadcrumb-trigger:disabled { cursor: default; color: var(--ink); opacity: 1; border-color: transparent; background: transparent; }
 .document-breadcrumb.is-ahead :is(.document-breadcrumb-trigger, .document-breadcrumb-link) { color: var(--muted); }
 .document-breadcrumb-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .document-breadcrumb-icon { flex: 0 0 auto; width: 14px; height: 14px; color: var(--muted); }

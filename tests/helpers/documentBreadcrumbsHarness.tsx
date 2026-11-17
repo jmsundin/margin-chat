@@ -124,7 +124,14 @@ try {
   assert.equal(crumbs()[1].classList.contains("is-ahead"), true);
   assert.equal(container.querySelector(".document-breadcrumbs .document-breadcrumb-icon"), null, "Crumbs show titles without icons.");
   assert.equal(trigger(0).getAttribute("aria-current"), "page");
-  assert.equal(trigger(0).getAttribute("aria-label"), "Urban heat draft (Peer documents: 1)");
+  assert.equal(crumbs()[0].classList.contains("is-alone"), true, "A document with no peers shows no peer menu.");
+  assert.equal(crumbs()[0].querySelector(".document-breadcrumb-chevron"), null, "A level with nothing else to pick has no chevron.");
+  assert.equal(trigger(0).getAttribute("aria-expanded"), null);
+  await hover(crumbs()[0]);
+  await wait(250);
+  assert.equal(menu(), null, "Pausing over a level with no other documents opens nothing.");
+  await hover(crumbs()[0], "pointerout");
+  assert.equal(crumbs()[1].querySelector(".document-breadcrumb-chevron") !== null, true, "A level with several children keeps its menu.");
   assert(back().disabled, "Back starts disabled.");
   checks.push("one breadcrumb under the toolbar shows the focused document's level and its children");
 

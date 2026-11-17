@@ -111,6 +111,9 @@ async function focusPane(id: string) {
   await settle();
 }
 async function openFromBreadcrumbs(id: string) {
+  // A document alone at its level is a plain crumb: clicking it opens the document.
+  const lone = container.querySelector(`.document-breadcrumb.is-alone [data-breadcrumb-document-id="${id}"]`);
+  if (lone) { await click(lone); return; }
   await click((await breadcrumbRow(id)).querySelector(".document-breadcrumb-row-title"));
 }
 function focusedCrumbLabel() { return element('.document-breadcrumb-trigger[aria-current="page"] .document-breadcrumb-label').textContent; }
@@ -123,10 +126,12 @@ async function breadcrumbRow(id: string): Promise<any> {
     if (found) return found;
     if (breadcrumbMenu()) await click(trigger);
   }
-  assert.fail(`No breadcrumb level lists ${id}`);
+  assert.fail(`No breadcrumb level lists ${id}: ${[...container.querySelectorAll(".document-breadcrumb")].map((c: any) => c.className + ":" + c.textContent).join(" | ")}`);
 }
 /** The tag a breadcrumb row shows for a document (Here, Open, Minimized or none), with the level closed again. */
 async function breadcrumbTag(id: string) {
+  // A document alone at its level is a plain crumb with no menu, so it carries no tag.
+  if (container.querySelector(`.document-breadcrumb.is-alone [data-breadcrumb-document-id="${id}"]`)) return "alone";
   const tag = (await breadcrumbRow(id)).querySelector(".document-breadcrumb-tag")?.textContent ?? null;
   await click(browser.document.body);
   assert.equal(breadcrumbMenu(), null);
@@ -318,7 +323,8 @@ try {
 
   await menuAction(nestedId, "Minimize document");
   assert.equal(container.querySelector(`[data-document-id="${nestedId}"]`), null);
-  assert.equal(await breadcrumbTag(nestedId), "Minimized", "The breadcrumb bar marks the minimized document.");
+  assert.equal(await breadcrumbTag(nestedId), "alone", "The only child of its parent is a plain crumb in the path, with no menu to open.");
+  assert(getDocumentWorkspace(latest.conversations, nestedId).minimizedIds.includes(nestedId));
   assert.equal(latest.activeConversationId, sideId);
   assert.equal(latest.conversations[nestedId].parentId, sideId);
   assert.deepEqual(latest.conversations[nestedId].document, nestedContent);
@@ -342,8 +348,7 @@ try {
 
   await menuAction(nestedId, "Minimize document");
   assert.equal(latest.activeConversationId, sideId);
-  await click((await breadcrumbRow(nestedId)).querySelector('[aria-label="Open Nested research beside"]'));
-  assert.equal(latest.activeConversationId, sideId, "Open beside restores the minimized document without moving focus.");
+  await click(element('.document-side-restore[aria-label="Open side document: Nested research"]'));
   await focusPane(nestedId);
   assert.deepEqual(panes(), [mainId, siblingId, sideId, nestedId]);
   assert.equal(latest.activeConversationId, nestedId);
