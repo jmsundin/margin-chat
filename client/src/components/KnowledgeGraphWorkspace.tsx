@@ -545,7 +545,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
             const made = pathActions.onDraftPath(goal);
             if ("error" in made) return made.error;
             setPicking(null); setActivePath(made.id); return null;
-          }} /> : null}</>}
+          }}
+          onRevise={activePath && pathActions.onRevisePath ? (request) => pathActions.onRevisePath!(activePath.id, request) : undefined} /> : null}</>}
         menuItems={menuActions} menuFooter={moreFeatures} scopeRequest={scopeRequest}
         focusRequest={personalProps.focusRequest ?? personalFocus}
         onFocusRequestHandled={(id) => { if (personalProps.focusRequest?.requestId === id) personalProps.onFocusRequestHandled?.(id); else setPersonalFocus(null); }}

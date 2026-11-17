@@ -81,7 +81,10 @@ export interface AgentRoadmapProposal extends AgentProposalBase {
   roadmapId: string;
   roadmapTitle: string;
   goal: string;
-  stages: { title: string; steps: { key: string; documentId?: string; notes?: string; title?: string; why?: string; needs: string[] }[] }[];
+  /** A change to the roadmap already in `roadmapId`: `stages` is the whole roadmap afterwards, and a step
+   * with `nodeId` is one already on it (keeping its progress). Steps left out come off the roadmap. */
+  revise?: true;
+  stages: { title: string; steps: { key: string; nodeId?: string; documentId?: string; notes?: string; title?: string; why?: string; needs: string[] }[] }[];
 }
 export type AgentProposal = AgentEditProposal | AgentDocumentProposal | AgentRoadmapProposal;
 export interface AgentWebSource {

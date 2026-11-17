@@ -175,12 +175,13 @@ function proposalsOf(input) {
           // A step without a document carries notes for a new one.
           const notes = !documentId && typeof step.notes === "string" && step.notes.length <= 2_000 ? step.notes : null;
           if (!key || (!documentId && (notes === null || !text(step.title, 200).trim()))) return [];
-          return [{ key, ...(documentId ? { documentId } : { notes }), ...(text(step.title, 200).trim() ? { title: text(step.title, 200) } : {}),
+          return [{ key, ...(documentId ? { documentId } : { notes }), ...(proposal.revise === true && idText(step.nodeId) ? { nodeId: idText(step.nodeId) } : {}),
+            ...(text(step.title, 200).trim() ? { title: text(step.title, 200) } : {}),
             ...(text(step.why, 300).trim() ? { why: text(step.why, 300) } : {}),
             needs: (Array.isArray(step.needs) ? step.needs : []).map((value) => text(value, 60).trim()).filter(Boolean).slice(0, 60) }];
         }) })).filter((stage) => stage.title.trim() && stage.steps.length);
       if (stages.length) return [{ ...base, kind: "roadmap", roadmapId: idText(proposal.roadmapId), roadmapTitle: text(proposal.roadmapTitle, 300),
-        goal: text(proposal.goal, 200), stages }];
+        goal: text(proposal.goal, 200), ...(proposal.revise === true ? { revise: true } : {}), stages }];
     }
     return [];
   }).slice(0, 8);
