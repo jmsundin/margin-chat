@@ -1918,7 +1918,11 @@ function WorkspaceAppContent({
       setPlayContent(page.id, content);
       counts[page.id] = content.questions.length;
     }
-    setPlayCounts((current) => Object.keys(counts).length === Object.keys(current).length && Object.entries(counts).every(([id, count]) => current[id] === count) ? current : counts);
+    // Only when a count changed: this runs on every edit, and a needless update per keystroke chained
+    // renders until React stopped them (#185).
+    const same = Object.keys(counts).length === Object.keys(playCounts).length && Object.entries(counts).every(([id, count]) => playCounts[id] === count);
+    if (!same) setPlayCounts(counts);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [playPages, playSources, flashcards.scheduled, state.conversations, documentFamilyIds]);
   const [vaultAnswer, setVaultAnswer] = useState<VaultAnswerState | null>(null);
   const [mapSpotlight, setMapSpotlight] = useState<MapSpotlight | null>(null);
