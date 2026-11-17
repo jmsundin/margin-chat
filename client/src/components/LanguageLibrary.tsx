@@ -181,7 +181,7 @@ export function LanguageLibrary({ userId, terms, setTerm, learningFor, documents
 
   let body: ReactNode;
   if (profiles === null) body = <p className="language-library-quiet" role="status">Loading your languages…</p>;
-  else if (!profiles.length || adding) body = <Onboarding taken={profiles.map((item) => item.lang)} error={error} onChoose={(choice) => void choose(choice)} onCancel={profiles.length ? () => setAdding(false) : undefined} />;
+  else if (!profiles.length || adding) body = <Onboarding taken={profiles.map((item) => item.lang)} preferred={study ? documents.find((item) => item.id === study.documentId)?.lang : null} error={error} onChoose={(choice) => void choose(choice)} onCancel={profiles.length ? () => setAdding(false) : undefined} />;
   else if (!lang || !profile) body = <p className="language-library-quiet" role="status">Loading…</p>;
   else if (view.kind === "vocabulary") body = <Vocabulary lang={lang} terms={terms} setTerm={setTerm} onReview={() => setView({ kind: "review" })} />;
   else if (view.kind === "review") body = <WordReview lang={lang} terms={terms} setTerm={setTerm}
@@ -249,9 +249,10 @@ function KnownCount({ lang, terms, goal }: { lang: string; terms: ReadonlyMap<st
   </span>;
 }
 
-function Onboarding({ taken, error, onChoose, onCancel }: { taken: string[]; error: string | null; onChoose: (choice: { lang: string; level: string; nativeLang: string }) => void; onCancel?: () => void }) {
+function Onboarding({ taken, preferred, error, onChoose, onCancel }: { taken: string[]; preferred?: string | null; error: string | null; onChoose: (choice: { lang: string; level: string; nativeLang: string }) => void; onCancel?: () => void }) {
   const choices = COURSE_LANGUAGES.filter((language) => !taken.includes(language.code));
-  const [lang, setLang] = useState(choices.find((language) => hasShippedStories(language.code))?.code ?? choices[0]?.code ?? "de");
+  // "Study this" on a Spanish page starts on Spanish, not on the first language with mini stories.
+  const [lang, setLang] = useState(choices.find((language) => language.code === preferred)?.code ?? choices.find((language) => hasShippedStories(language.code))?.code ?? choices[0]?.code ?? "de");
   const [level, setLevel] = useState("A1");
   const [nativeLang, setNativeLang] = useState(lang === "en" ? "de" : "en");
   return <form className="language-library-onboarding" onSubmit={(event) => { event.preventDefault(); onChoose({ lang, level, nativeLang: nativeLang === lang ? (lang === "en" ? "de" : "en") : nativeLang }); }}>

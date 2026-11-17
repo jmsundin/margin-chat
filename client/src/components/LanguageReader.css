@@ -76,6 +76,8 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
 .language-reader-bar { position: sticky; bottom: 0; z-index: 5; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 8px 0 calc(8px + env(safe-area-inset-bottom, 0px));
   border-top: 1px solid var(--lr-line); background: var(--lr-bg, var(--bg)); color: var(--lr-muted); font-size: .8rem; }
 .language-reader:not([data-theme]) .language-reader-bar { background: var(--bg); }
+/* The bar sticks above the page's bottom padding; this fills that strip so the text scrolling under the bar can't show below it. */
+.language-reader-bar::after { content: ""; position: absolute; left: 0; right: 0; top: 100%; height: var(--document-bottom-padding, 0px); background: inherit; pointer-events: none; }
 .language-reader-play { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--lr-ink); color: var(--lr-card); font-size: .8rem; cursor: pointer; }
 .language-reader-views { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--lr-line); border-radius: 999px; background: var(--lr-card); }
 .language-reader-views button { border: 0; background: transparent; color: var(--lr-muted); font: inherit; padding: 4px 13px; border-radius: 999px; cursor: pointer; }

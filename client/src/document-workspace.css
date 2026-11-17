@@ -58,7 +58,7 @@
 .margin-document-family > .document-margin-notes { margin-left: 12px; border-left: 1px solid var(--line); padding-left: 8px; }
 .margin-document-family > .document-margin-notes > .document-margin-notes-list { overflow: visible; }
 .chat-panel.document-panel.is-compact-document { margin: 0; border-radius: 8px; box-shadow: none; transform: none; }
-.is-compact-document .document-body { --document-top-padding: 12px; --document-left-padding: 14px; --document-right-padding: 14px; padding-bottom: 32px; }
+.is-compact-document .document-body { --document-top-padding: 12px; --document-left-padding: 14px; --document-right-padding: 14px; --document-bottom-padding: 32px; }
 .is-compact-document .document-origin { font-size: 11px; }
 .is-compact-document .document-origin span { display: none; }
 .is-compact-document .rich-document-content { font-size: 14px; }
