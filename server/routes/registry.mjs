@@ -50,6 +50,7 @@ export const API_ROUTES = Object.freeze([
   // Language courses (server/languageCourses): lessons, where the learner is in each, and what they studied.
   { id: "learnProgress", methods: ["GET"], path: "/api/learn/progress" },
   { id: "learnLibrary", methods: ["GET"], path: "/api/learn/library" },
+  { id: "learnStats", methods: ["GET"], path: "/api/learn/stats" },
   { id: "learnProfiles", methods: ["GET", "PUT"], path: "/api/learn/profiles" },
   { id: "learnLessons", methods: ["POST"], path: "/api/learn/lessons" },
   { id: "learnLesson", methods: ["GET", "DELETE"], path: "/api/learn/lessons/:id", parameters: { id: "[A-Za-z0-9_-]{1,80}" } },

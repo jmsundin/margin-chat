@@ -8235,7 +8235,7 @@ function WorkspaceAppContent({
       onGenerate={(request, signal) => handleSuggestFlashcards(makeCards, request, signal)}
       onAdd={(drafts, request) => handleAddFlashcards(makeCards, drafts, request)}
       onClose={() => { setMakeCards(null); newDeckRef.current = null; }}/> : null}
-    {languageLibraryOpen ? <LanguageLibrary userId={user.id} terms={languageTerms.terms} learningFor={lessonLearning}
+    {languageLibraryOpen ? <LanguageLibrary userId={user.id} terms={languageTerms.terms} setTerm={languageTerms.setTerm} learningFor={lessonLearning}
       documents={Object.values(state.conversations).flatMap((item) => item.languageLearning && !item.vaultFile ? [{
         id: item.id, title: item.title || "Untitled", lang: item.languageLearning.target, words: (getEditableDocumentText(item).match(/\S+/gu) ?? []).length,
         text: () => getEditableDocument(item).blocks.map((block) => block.content),

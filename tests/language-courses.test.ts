@@ -517,3 +517,45 @@ describe("mini stories the AI writes", () => {
     await expect(service.createLessons({ userId: "u3", body: { lang: "de", story: true, lessons: lessons.slice(0, 2) } })).rejects.toThrow("retelling and questions");
   });
 });
+
+describe("review and stats", () => {
+  test("a word's card moves on from its kept schedule; due words are those being learned with a meaning or a due card", async () => {
+    const { nextFromSchedule, previewFromSchedule } = await import("../client/src/lib/flashcardSchedule");
+    const { dueWords, lastDays } = await import("../client/src/lib/languageCourses");
+    const now = Date.parse("2026-11-17T10:00:00Z");
+    const first = nextFromSchedule(null, 3, now);
+    expect(first.reps).toBe(1);
+    expect(first.due).toBeGreaterThan(now);
+    const later = nextFromSchedule(first, 3, first.due);
+    expect(later.reps).toBe(2);
+    expect(later.due - first.due).toBeGreaterThan(first.due - now);
+    const preview = previewFromSchedule(later, later.due);
+    expect(preview[1]).toBeLessThan(preview[3]);
+    expect(preview[3]).toBeLessThan(preview[4]);
+    expect(nextFromSchedule(later, 1, later.due).lapses).toBe(1);
+
+    const term = (key: string, status: number, meaning: string, srs?: { due: number } | null) => ({ language: "de", key, status, meaning, srs });
+    const due = dueWords([term("a", 2, "x", { due: now - 5 }), term("b", 2, "x", { due: now + 1000 }), term("c", 3, "x"), term("d", 3, ""), term("e", 5, "x", { due: 0 }), term("f", 2, "x", { due: now - 10 })], "de", now);
+    expect(due.map((item) => item.key)).toEqual(["c", "f", "a"]);
+
+    const days = lastDays([{ day: "2026-11-16", words_read: 40, words_known: 3, meanings_saved: 1, reader_seconds: 300, lesson_completed: 0, reviewed: 2 }], 3, new Date(2026, 10, 17, 9));
+    expect(days.map((day) => [day.day, day.words_read])).toEqual([["2026-11-15", 0], ["2026-11-16", 40], ["2026-11-17", 0]]);
+  });
+
+  test("stats: the last 30 days in the learner's time zone, and the words they know", async () => {
+    const { createLanguageCourseService } = await import("../server/languageCourses/index.mjs");
+    const { client } = await database();
+    const service = createLanguageCourseService({ database: new Proxy({}, { get: (_target, name: string) => (args: any) => (courses as any)[name](client, args) }) });
+    const late = new Date(); late.setUTCHours(23, 30, 0, 0);
+    if (late.getTime() > Date.now()) late.setUTCDate(late.getUTCDate() - 1);
+    await service.recordEvents({ userId: "u2", body: { events: [{ lang: "de", type: "words_read", count: 120, at: late.toISOString() }] } });
+    const utc = await service.stats({ userId: "u2", lang: "de", offsetMinutes: 0 });
+    const ahead = await service.stats({ userId: "u2", lang: "de", offsetMinutes: 120 });
+    expect(utc.days).toHaveLength(1);
+    expect(utc.days[0].words_read).toBe(120);
+    // Two hours ahead of UTC, half past eleven at night is already the next day.
+    expect(Date.parse(ahead.days[0].day) - Date.parse(utc.days[0].day)).toBe(86_400_000);
+    expect(utc.words).toMatchObject({ known: expect.any(Number), learning: expect.any(Number), due: expect.any(Number) });
+    await expect(service.stats({ userId: "u2", lang: "zh" })).rejects.toThrow("spaces");
+  });
+});

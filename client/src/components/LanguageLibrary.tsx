@@ -5,10 +5,11 @@ import {
 import { LEARNING_LANGUAGES, languageName, type DocumentLanguageLearning, type LanguagePair } from "../lib/languageLearning";
 import { termId, type LanguageTerm } from "../lib/languageReader";
 import {
-  createLessons, documentSections, enrollInCourse, fetchLibrary, fetchProfiles, hasShippedStories, loadShippedCourse, saveLessonProgress, saveProfile, sentenceOfTokenIndex, studyQueue, tokenIndexOfSentence,
+  createLessons, documentSections, dueWords, enrollInCourse, fetchLibrary, fetchProfiles, hasShippedStories, loadShippedCourse, saveLessonProgress, saveProfile, sentenceOfTokenIndex, studyQueue, tokenIndexOfSentence,
   type Course, type CourseLesson, type LearningProfile, type LessonProgress, type LibraryData,
 } from "../lib/languageCourses";
 import { LanguageReader, type LessonSummary, type ReaderLesson } from "./LanguageReader";
+import { StudyStatsView, Vocabulary, WordReview } from "./LanguageStudy";
 import "./LanguageLibrary.css";
 
 /** A document the learner reads in Language mode, offered as something to study. */
@@ -23,6 +24,8 @@ export function documentLessons(document: StudyDocument) {
 interface Props {
   userId: string;
   terms: ReadonlyMap<string, LanguageTerm>;
+  /** Rates a word or gives it a meaning or a review schedule. */
+  setTerm: (language: string, text: string, patch: import("../lib/languageTerms").TermPatch) => void;
   /** What the reader needs to look words up and rate them, for a lesson in a language pair. */
   learningFor: (pair: LanguagePair, lessonId: string) => DocumentLanguageLearning;
   documents: ReadonlyArray<StudyDocument>;
@@ -38,7 +41,8 @@ interface Props {
   onClose: () => void;
 }
 
-type View = { kind: "shelves" } | { kind: "course"; courseId: string } | { kind: "lesson"; lessonId: string; from: "shelves" | "course" };
+type View = { kind: "shelves" } | { kind: "course"; courseId: string } | { kind: "lesson"; lessonId: string; from: "shelves" | "course" }
+  | { kind: "vocabulary" } | { kind: "review" } | { kind: "stats" };
 const LAST_LANG_KEY = "margin-chat:learn-language";
 const SWEET_SPOT = [5, 20] as const;
 
@@ -47,7 +51,7 @@ const rememberLang = (lang: string) => { try { localStorage.setItem(LAST_LANG_KE
 const COURSE_LANGUAGES = LEARNING_LANGUAGES.filter((language) => isCourseLanguage(language.code));
 
 /** The language library: courses, mini stories and the learner's own lessons, measured in words known. */
-export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenDocument, study, writeWithAI, readPage, slots, onClose }: Props) {
+export function LanguageLibrary({ userId, terms, setTerm, learningFor, documents, onOpenDocument, study, writeWithAI, readPage, slots, onClose }: Props) {
   const [profiles, setProfiles] = useState<LearningProfile[] | null>(null);
   const [lang, setLang] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -154,13 +158,21 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
   const lastCourse = useRef<string | null>(null);
   if (view.kind === "course") lastCourse.current = view.courseId;
 
+  const tabbed = view.kind === "shelves" || view.kind === "vocabulary" || view.kind === "stats";
+  const due = useMemo(() => (lang ? dueWords(terms.values(), lang).length : 0), [terms, lang]);
   const header = <header className="language-library-head">
-    {view.kind !== "shelves" ? <button type="button" className="language-library-back" onClick={() => setView(view.kind === "lesson" && view.from === "course" && lastCourse.current ? { kind: "course", courseId: lastCourse.current } : { kind: "shelves" })}>
-      ‹ {view.kind === "lesson" && view.from === "course" ? "Course" : "Library"}</button> : <strong className="language-library-name">Languages</strong>}
-    {profiles?.length && lang && view.kind === "shelves" ? <select className="language-library-lang" aria-label="Language" value={lang} onChange={(event) => switchLang(event.target.value)}>
+    {view.kind === "course" || view.kind === "lesson" || view.kind === "review" ? <button type="button" className="language-library-back"
+      onClick={() => setView(view.kind === "review" ? { kind: "vocabulary" } : view.kind === "lesson" && view.from === "course" && lastCourse.current ? { kind: "course", courseId: lastCourse.current } : { kind: "shelves" })}>
+      ‹ {view.kind === "review" ? "Vocabulary" : view.kind === "lesson" && view.from === "course" ? "Course" : "Library"}</button> : <strong className="language-library-name">Languages</strong>}
+    {profiles?.length && lang && tabbed ? <select className="language-library-lang" aria-label="Language" value={lang} onChange={(event) => switchLang(event.target.value)}>
       {profiles.map((item) => <option key={item.lang} value={item.lang}>{languageName(item.lang)}</option>)}
       <option value="+">Add a language…</option>
     </select> : null}
+    {lang && profile && tabbed ? <nav className="language-library-tabs" aria-label="Library">
+      <button type="button" aria-current={view.kind === "shelves" ? "page" : undefined} onClick={() => setView({ kind: "shelves" })}>Lessons</button>
+      <button type="button" aria-current={view.kind === "vocabulary" ? "page" : undefined} onClick={() => setView({ kind: "vocabulary" })}>Words{due ? <small title={`${due} to review`}>{due}</small> : null}</button>
+      <button type="button" aria-current={view.kind === "stats" ? "page" : undefined} onClick={() => setView({ kind: "stats" })}>Stats</button>
+    </nav> : null}
     {view.kind === "lesson" && open ? <span className="language-library-crumb">{open.title}</span> : null}
     <span className="language-library-spacer" />
     {lang && profile ? <KnownCount lang={lang} terms={terms} goal={profile.dailyGoalWords} /> : null}
@@ -171,6 +183,10 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
   if (profiles === null) body = <p className="language-library-quiet" role="status">Loading your languages…</p>;
   else if (!profiles.length || adding) body = <Onboarding taken={profiles.map((item) => item.lang)} error={error} onChoose={(choice) => void choose(choice)} onCancel={profiles.length ? () => setAdding(false) : undefined} />;
   else if (!lang || !profile) body = <p className="language-library-quiet" role="status">Loading…</p>;
+  else if (view.kind === "vocabulary") body = <Vocabulary lang={lang} terms={terms} setTerm={setTerm} onReview={() => setView({ kind: "review" })} />;
+  else if (view.kind === "review") body = <WordReview lang={lang} terms={terms} setTerm={setTerm}
+    onReviewed={() => studyQueue(userId).add({ lang, type: "reviewed", count: 1 })} onDone={() => setView({ kind: "vocabulary" })} />;
+  else if (view.kind === "stats") body = <StudyStatsView userId={userId} lang={lang} terms={terms} />;
   else if (view.kind === "lesson" && open) {
     const course = allCourses.find((item) => item.id === open.courseId) ?? null;
     const siblings = course ? lessonsOf(course.id) : [open];
@@ -206,7 +222,7 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
   }
 
   return <div className="language-library" role="dialog" aria-modal="true" aria-label="Language library" tabIndex={-1} ref={dialog} data-view={view.kind}
-    onKeyDown={(event) => { if (event.key === "Escape" && view.kind === "shelves" && !(event.target as HTMLElement).closest("input, textarea, select")) { event.preventDefault(); onClose(); } }}>
+    onKeyDown={(event) => { if (event.key === "Escape" && tabbed && !(event.target as HTMLElement).closest("input, textarea, select")) { event.preventDefault(); onClose(); } }}>
     {header}
     <div className="language-library-body">{body}</div>
   </div>;

@@ -210,10 +210,19 @@ export function createLanguageCourseService({ database }) {
     return { course, lessons: await database.listLessons({ userId, lang, courseId: course.id }), created: false, refreshed: true };
   }
 
+  /** The last 30 days of study in a language, each day in the learner's own time zone, and the words they know. */
+  async function stats({ userId, lang: value, offsetMinutes }) {
+    const lang = readLang(value);
+    const offset = Number.isFinite(offsetMinutes) ? Math.max(-14 * 60, Math.min(14 * 60, Math.round(offsetMinutes))) : 0;
+    const since = new Date(Date.now() - 31 * 86_400_000).toISOString();
+    const [days, words] = await Promise.all([database.readDailyStats({ userId, lang, since, offsetMinutes: offset }), database.readWordCounts({ userId, lang })]);
+    return { lang, days, words };
+  }
+
   async function removeLesson({ userId, lessonId: id }) {
     if (isBuiltInLessonId(id)) throw new HttpError(400, "Lessons that come with the app can't be deleted.");
     return { deleted: await database.deleteLesson({ userId, lessonId: lessonId(id) }) };
   }
 
-  return { saveProgress, recordEvents, readProgress, library, profiles, saveProfile, lesson, enroll, createLessons, removeLesson };
+  return { saveProgress, recordEvents, readProgress, library, profiles, saveProfile, lesson, enroll, createLessons, removeLesson, stats };
 }

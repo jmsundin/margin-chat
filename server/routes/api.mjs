@@ -864,6 +864,7 @@ export function createApiHandler({
           const lang = url.searchParams.get("lang") ?? "";
           const result = route.id === "learnProgress" ? await languageCourses.readProgress({ userId, lang })
             : route.id === "learnLibrary" ? await languageCourses.library({ userId, lang })
+            : route.id === "learnStats" ? await languageCourses.stats({ userId, lang, offsetMinutes: Number(url.searchParams.get("offset")) })
             : route.id === "learnProfiles" ? await languageCourses.profiles({ userId })
             : route.id === "learnLesson" ? await languageCourses.lesson({ userId, lessonId: route.params.id }) : null;
           if (result) { sendJson(response, 200, result, { "Cache-Control": "private, no-store" }); return; }

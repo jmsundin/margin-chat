@@ -34,7 +34,7 @@ export interface LanguageTerm {
 }
 
 /** A word's review schedule, the same card state flashcards keep. */
-export interface TermSchedule { state: "new" | "learning" | "review" | "relearning"; due: number; stability: number; difficulty: number; reps: number; lapses: number; lastReview: number | null }
+export interface TermSchedule { state: "new" | "learning" | "review" | "relearning"; due: number; stability: number; difficulty: number; reps: number; lapses: number; lastReview: number | null; /** Learning step reached, while learning. */ step?: number }
 
 export const MAX_PHRASE_WORDS = 8;
 export const termId = (language: string, key: string) => `${language}\n${key}`;

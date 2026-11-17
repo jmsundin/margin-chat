@@ -216,3 +216,37 @@ export async function deleteLesson(userId: string, lessonId: string, fetcher: ty
   const response = await fetcher(`/api/learn/lessons/${encodeURIComponent(lessonId)}`, { method: "DELETE", credentials: "same-origin", cache: "no-store", headers: jsonHeaders(userId) });
   await readJson<{ deleted: boolean }>(response, "That lesson couldn't be deleted. Try again.");
 }
+
+// ----- review and stats -----
+
+export interface StudyDay { day: string; words_read: number; words_known: number; meanings_saved: number; reader_seconds: number; lesson_completed: number; reviewed: number }
+export interface StudyStats { lang: string; days: StudyDay[]; words: { known: number; learning: number; due: number } }
+
+export async function fetchStats(userId: string, lang: string, signal?: AbortSignal, fetcher: typeof apiFetch = apiFetch): Promise<StudyStats> {
+  // The day each event counts in is the learner's own: minutes ahead of UTC.
+  const offset = -new Date().getTimezoneOffset();
+  const response = await fetcher(`/api/learn/stats?lang=${encodeURIComponent(lang)}&offset=${offset}`, { credentials: "same-origin", cache: "no-store", headers: { "X-Margin-Vault-User": userId }, signal });
+  return readJson<StudyStats>(response, "Your stats couldn't be loaded. Try again.");
+}
+
+/** The last `count` days as YYYY-MM-DD in local time, oldest first, each with its study (zero when none). */
+export function lastDays(days: ReadonlyArray<StudyDay>, count: number, now = new Date()): StudyDay[] {
+  const byDay = new Map(days.map((day) => [day.day, day] as const));
+  const out: StudyDay[] = [];
+  for (let back = count - 1; back >= 0; back--) {
+    const at = new Date(now.getFullYear(), now.getMonth(), now.getDate() - back);
+    const key = `${at.getFullYear()}-${String(at.getMonth() + 1).padStart(2, "0")}-${String(at.getDate()).padStart(2, "0")}`;
+    out.push(byDay.get(key) ?? { day: key, words_read: 0, words_known: 0, meanings_saved: 0, reader_seconds: 0, lesson_completed: 0, reviewed: 0 });
+  }
+  return out;
+}
+
+/** Words in a language that are due in Review: being learned (1-4), with a meaning or a schedule, due now. Soonest first. */
+export function dueWords<T extends { language: string; status: number; meaning: string; srs?: { due: number } | null }>(terms: Iterable<T>, lang: string, now = Date.now()): T[] {
+  const due: T[] = [];
+  for (const term of terms) {
+    if (term.language !== lang || term.status < 1 || term.status > 4) continue;
+    if (term.srs ? term.srs.due <= now : Boolean(term.meaning.trim())) due.push(term);
+  }
+  return due.sort((a, b) => (a.srs?.due ?? 0) - (b.srs?.due ?? 0));
+}
