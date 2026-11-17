@@ -142,7 +142,7 @@ import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
-import { plainPreview, applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapOutline, roadmapOutlinePrompt, roadmapRevisePrompt, roadmapOutlineProposal, roadmapExplainPrompt, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
+import { plainPreview, applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapOutline, roadmapOutlinePrompt, roadmapRevisePrompt, roadmapOutlineProposal, roadmapExplainPrompt, roadmapLanguageLine, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
 import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/boardDocument";
 import { buildBoardNoteMessage, type BoardNoteRequest } from "./lib/boardAI";
 import RoadmapView from "./components/RoadmapView";
@@ -6175,13 +6175,15 @@ function WorkspaceAppContent({
     if (!conversation || !goal.trim()) return null;
     if (isHiddenFromAI(conversation)) return HIDDEN_FROM_AI_MESSAGE;
     if (chatExecutions.has(conversationId) || plainRoadmapDrafts[conversationId]) return "AI is still writing in this document. Try again when it finishes.";
-    if (options.agent === false) { void draftRoadmapWithoutAgent(conversationId, goal.trim()); return null; }
+    // A roadmap drafted from a document in Language mode knows the language being learned.
+    const pair = conversation.languageLearning ?? currentStateRef.current.conversations[currentStateRef.current.activeConversationId]?.languageLearning ?? null;
+    if (options.agent === false) { void draftRoadmapWithoutAgent(conversationId, goal.trim(), pair); return null; }
     if (!supportsAgentMode(conversation.serviceId)) return "This model can't use Agent mode. Pick another model, or turn Agent mode off to draft from the model's own knowledge.";
     const blocks = getEditableDocument(conversation).blocks;
     const last = blocks.at(-1);
     if (!last) return "This document can't take an AI reply yet. Type something in it, then try again.";
     handleDocumentSubmit(conversationId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", agent: true,
-      prompt: roadmapDraftPrompt(goal) });
+      prompt: roadmapDraftPrompt(goal, { pair }) });
     return null;
   }
 
@@ -6196,19 +6198,20 @@ function WorkspaceAppContent({
     const last = getEditableDocument(conversation).blocks.at(-1);
     if (!last) return "This document can't take an AI reply yet. Type something in it, then try again.";
     handleDocumentSubmit(conversationId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", agent: true,
-      prompt: roadmapRevisePrompt(request) });
+      // The language the roadmap was drafted in carries over, as it does for Explain.
+      prompt: [roadmapLanguageLine(conversation), roadmapRevisePrompt(request)].filter(Boolean).join("\n\n") });
     return null;
   }
 
   /** Draft with AI with Agent mode off: one answer as an outline, read into a draft that waits for approval like an agent's. */
-  async function draftRoadmapWithoutAgent(conversationId: string, goal: string) {
+  async function draftRoadmapWithoutAgent(conversationId: string, goal: string, pair: LanguagePair | null = null) {
     const conversation = currentStateRef.current.conversations[conversationId];
     if (!conversation) return;
     const controller = new AbortController();
     setPlainRoadmapDrafts((current) => ({ ...current, [conversationId]: { controller, since: Date.now() } }));
     setDocumentErrors(({ [conversationId]: _cleared, ...rest }) => rest);
     const now = new Date().toISOString();
-    const prompt: Message = { id: createId("message"), role: "user", content: roadmapOutlinePrompt(goal), createdAt: now };
+    const prompt: Message = { id: createId("message"), role: "user", content: roadmapOutlinePrompt(goal, { pair }), createdAt: now };
     try {
       const { reply, metadata } = await requestChatReply({
         ...prepareAIContext(currentStateRef.current.conversations, conversation, [prompt]),
@@ -6257,11 +6260,13 @@ function WorkspaceAppContent({
     const last = getEditableDocument(conversation).blocks.at(-1);
     if (!last) return "That document can't take an AI reply yet. Open it and type something, then try again.";
     const topic = conversation.title || "this topic";
+    const language = roadmapLanguageLine(roadmapDocument);
     // Explain runs as an agent where the model can, so it can check the vault and search the web for sources.
     const agent = action === "deeper" || supportsAgentMode(conversation.serviceId);
     handleDocumentSubmit(docId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", background: true,
       ...(agent ? { agent: true as const } : {}),
-      prompt: action === "deeper" ? roadmapDiveDeeperPrompt(topic, roadmapDocument?.title ?? "") : roadmapExplainPrompt(topic, roadmapDocument?.title ?? "", context, { web: agent }) });
+      // The roadmap's language (what its goal asked for, and any language being learned) carries into its lessons.
+      prompt: action === "deeper" ? roadmapDiveDeeperPrompt(topic, roadmapDocument?.title ?? "", language) : roadmapExplainPrompt(topic, roadmapDocument?.title ?? "", context, { web: agent, language }) });
     // The sub-roadmap is proposed under the answer in the step's document, which is open beside the roadmap.
     return null;
   }
