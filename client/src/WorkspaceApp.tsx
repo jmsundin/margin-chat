@@ -6832,13 +6832,12 @@ function WorkspaceAppContent({
   }
 
   function renderDocumentControls(conversation: Conversation, view: "chat" | "graph" = "chat") {
-    // On phones the breadcrumb bar lists notes and children (and reopens closed notes), so the header skips them.
-    const noteCount = isMobileViewport || (hasDocumentModes(conversation) && ["board", "code"].includes(documentModeFor(conversation))) ? 0 : getMarginDocuments(conversation).length;
+    // No Notes button: the breadcrumb bar lists a document's notes, and going to one reopens its margin.
     const claimCount = view === "chat" ? ratchet.documents[conversation.id]?.claims.length ?? 0 : 0;
     const roadmap = view === "chat" && isPathDocument(conversation) ? buildMapPath(conversation, state.conversations) : null;
     const steps = view === "chat" ? (roadmapSteps.get(conversation.id) ?? []).filter((step) => step.pathId !== conversation.id).slice(0, 2) : [];
     const modeSwitch = view === "chat" && !isMobileViewport ? renderDocumentModeSwitch(conversation) : null;
-    if (!(view === "chat" && noteCount) && !claimCount && !roadmap && !steps.length && !modeSwitch) return null;
+    if (!claimCount && !roadmap && !steps.length && !modeSwitch) return null;
     return <>
       {modeSwitch}
       {roadmap ? <button type="button" className="document-roadmap-chip" title="Show this roadmap on the map"
@@ -6850,12 +6849,6 @@ function WorkspaceAppContent({
         title={hiddenClaims[conversation.id] ? "Show checked claims" : "Hide checked claims"}
         onClick={() => setHiddenClaims((current) => ({ ...current, [conversation.id]: !current[conversation.id] }))}>
         Claims <span>{claimCount}</span>
-      </button> : null}
-      {view === "chat" && noteCount ? <button type="button" className="document-margin-notes-toggle"
-        aria-label={`${closedMarginNotes[conversation.id] ? "Show" : "Hide"} margin notes for ${conversation.title}`}
-        aria-expanded={!closedMarginNotes[conversation.id]}
-        onClick={() => setClosedMarginNotes((current) => ({ ...current, [conversation.id]: !current[conversation.id] }))}>
-        Notes <span>{noteCount}</span>
       </button> : null}
     </>;
   }
@@ -7182,9 +7175,6 @@ function WorkspaceAppContent({
           onClick={() => {
             setClosedMarginNotes((current) => ({ ...current, [conversation.id]: true }));
             if (getConversationPath(state.conversations, activeConversation.id).some((item) => item.id === conversation.id)) handleFocusVisibleDocument(conversation.id);
-            const panel = panelRefs.current[conversation.id];
-            (panel?.querySelector<HTMLButtonElement>(".document-margin-notes-toggle")
-              ?? panel?.closest("[data-dock-document-id]")?.querySelector<HTMLButtonElement>(".document-margin-notes-toggle"))?.focus();
           }}>×</button>
       </header>
       <div className="document-margin-notes-list">

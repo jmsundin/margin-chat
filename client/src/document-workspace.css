@@ -65,10 +65,7 @@
 .document-panel .document-presentation-toggle { flex: 0 0 28px; height: 28px; margin-top: 10px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 18px; }
 .document-panel .document-presentation-toggle:hover { color: var(--ink); background: var(--button-active-surface); }
 .document-panel .document-presentation-toggle:focus-visible { outline: 2px solid var(--accent); }
-.document-panel .document-margin-notes-toggle { flex-shrink: 0; margin-top: 10px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--button-surface); color: var(--muted); font-size: 12px; white-space: nowrap; }
-.document-margin-notes-toggle[aria-expanded="true"] { color: var(--accent); background: var(--accent-soft); }
-.document-margin-notes-toggle span { margin-left: 4px; }
-.document-margin-notes-header button:focus-visible, .document-margin-notes-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.document-margin-notes-header button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .document-with-margin-notes { display: flex; flex: 1; gap: 16px; min-width: 0; min-height: 0; overflow-x: auto; }
 .document-with-margin-notes > .chat-panel.document-panel { flex: 1 0 min(100%, 360px); width: auto; min-width: min(100%, 360px); }
 .document-dock-pane-body .document-with-margin-notes > .chat-panel.document-panel { width: auto; min-width: min(100%, 360px); }
@@ -76,7 +73,6 @@
 :is(.conversation-graph-node-reader, .conversation-graph-dock-body) > .document-with-margin-notes > .chat-panel.document-panel { background: var(--panel-bg); border: 0; border-radius: 0; box-shadow: none; margin: 0; transform: none; }
 @media (max-width: 900px) {
   .document-margin-notes-header button { flex-basis: 44px; width: 44px; height: 44px; }
-  .document-panel .document-margin-notes-toggle { min-height: 44px; }
 }
 
 @media (max-width: 900px) {
