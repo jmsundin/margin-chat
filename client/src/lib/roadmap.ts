@@ -2,6 +2,7 @@ import { createEmptyRoadmap, normalizeRoadmap, ROADMAP_NODE_TYPE } from "@margin
 import { addAIChildNodes } from "./aiChildNodes";
 import type { AgentRoadmapProposal, AppState, Conversation, Roadmap, RoadmapNode, RoadmapStatus } from "../types";
 import { setDocumentRelation } from "./documentRelations";
+import { languageName, type LanguagePair } from "./languageLearning";
 
 /** A prerequisite: `from` needs `to` first. `source` says where the edge is stored. */
 export interface RoadmapEdge { from: string; to: string; source: "relation" | "local" }
@@ -425,24 +426,54 @@ export function roadmapDraftLink(input: string): string | null {
  */
 const ROADMAP_SCOPE = "Lay out the whole subject the way an expert teacher would (like a roadmap.sh course): every topic needed to learn it, from first steps to advanced, drawing on your own knowledge and, if you can search the web, on current, reliable sources. Don't limit the roadmap to what my vault has. Search my vault too: where one of my documents already teaches a topic, point that step at it; for every other topic, make a step with a new document whose notes list the key ideas to cover and the best sources you found (title and link). ";
 
-export function roadmapDraftPrompt(input: string): string {
+const LANGUAGE_LINE = "Language: my goal for this roadmap is";
+
+/**
+ * What a roadmap ask says about language, on a line of its own: write in the language the
+ * goal asks for, else the one it is written in (never English by default), with a mix the
+ * goal asks for kept exactly. When the user is learning a language (Language mode), every
+ * step also gets words, example sentences with translations, and practice in it.
+ * The line quotes the goal, so later asks in the roadmap (Explain, lessons, Dive deeper)
+ * can carry it as it is: see roadmapLanguageLine.
+ */
+export function roadmapLanguageNote(goal: string, pair?: LanguagePair | null): string {
+  const quoted = goal.replace(/\s+/gu, " ").trim().slice(0, 600);
+  const learning = pair && pair.target !== pair.base
+    ? ` I'm learning ${languageName(pair.target)} and my own language is ${languageName(pair.base)}: unless the goal says otherwise, explain in ${languageName(pair.base)}, and give every step ${languageName(pair.target)} words and phrases to learn, example sentences in ${languageName(pair.target)} with ${languageName(pair.base)} translations, and a short practice exercise.`
+    : " If the goal is to learn a language, give every step words and phrases in that language, example sentences with translations, and a short practice exercise.";
+  return `${LANGUAGE_LINE} \u201c${quoted}\u201d. Write everything (goal, stage and step titles, notes, lessons) in the language that goal asks for, or, if it names none, in the language it is written in, not in English by default. When it asks for a mix, such as explanations in one language with examples and translations in another, follow it exactly.${learning}`;
+}
+
+/** The language line of the newest roadmap ask in this document (see roadmapLanguageNote), for the asks that follow it. */
+export function roadmapLanguageLine(conversation: Pick<Conversation, "messages"> | null | undefined): string {
+  const messages = conversation?.messages ?? [];
+  for (let at = messages.length - 1; at >= 0; at -= 1) {
+    if (messages[at].role !== "user") continue;
+    const line = messages[at].content.split("\n").find((text) => text.startsWith(LANGUAGE_LINE));
+    if (line) return line;
+  }
+  return "";
+}
+
+export function roadmapDraftPrompt(input: string, options: { pair?: LanguagePair | null } = {}): string {
   const link = roadmapDraftLink(input);
-  if (!link) return `Draft a learning roadmap for: ${input.trim()}\n\n${ROADMAP_SCOPE}Then use propose_roadmap to lay it out in stages with their prerequisites. Add the stages to this roadmap document.`;
+  const language = roadmapLanguageNote(input, options.pair);
+  if (!link) return `Draft a learning roadmap for: ${input.trim()}\n\n${ROADMAP_SCOPE}Then use propose_roadmap to lay it out in stages with their prerequisites. Add the stages to this roadmap document.\n\n${language}`;
   const typedLink = DRAFT_LINK.exec(input)?.[0] ?? BARE_LINK.exec(input)?.[1] ?? "";
   const extra = input.replace(typedLink, " ").replace(/\s+/gu, " ").trim();
-  return `Build this roadmap from the page at ${link}\n\nRead the page, then use propose_roadmap to lay out its sections as stages and its topics as steps, in the page's order, adding any topic the page leaves out that a learner needs. Search my vault first: where one of my documents already teaches a topic, point the step at it; for every other topic, make a step with a new document whose notes list what the page says to cover and the best sources for it (title and link). Don't limit the roadmap to what my vault has. Add the stages to this roadmap document.${extra ? `\n\nAlso keep in mind: ${extra}` : ""}`;
+  return `Build this roadmap from the page at ${link}\n\nRead the page, then use propose_roadmap to lay out its sections as stages and its topics as steps, in the page's order, adding any topic the page leaves out that a learner needs. Search my vault first: where one of my documents already teaches a topic, point the step at it; for every other topic, make a step with a new document whose notes list what the page says to cover and the best sources for it (title and link). Don't limit the roadmap to what my vault has. Add the stages to this roadmap document.${extra ? `\n\nAlso keep in mind: ${extra}` : ""}\n\n${language}`;
 }
 
 /** What Explain with AI asks: a readable explanation of a step's topic, written into the step's document. */
-export function roadmapExplainPrompt(topic: string, roadmapTitle: string, context = "", options: { web?: boolean } = {}): string {
-  return `Explain “${topic}” so I can learn it. It is a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”.${context ? ` ${context}` : ""}\n\nCover what it is, why it matters here, the key ideas (the ones this document lists, if it lists any), a small worked example, and common mistakes. Use short sections with headings. End with two or three questions I can use to check I understood.${options.web
+export function roadmapExplainPrompt(topic: string, roadmapTitle: string, context = "", options: { web?: boolean; language?: string } = {}): string {
+  return `${options.language ? `${options.language}\n\n` : ""}Explain “${topic}” so I can learn it. It is a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”.${context ? ` ${context}` : ""}\n\nCover what it is, why it matters here, the key ideas (the ones this document lists, if it lists any), a small worked example, and common mistakes. Use short sections with headings. End with two or three questions I can use to check I understood.${options.web
     ? " Check my vault for notes on it, and search the web for current, reliable sources; use what you find, and end with a short Sources list of the pages you relied on (title and link)."
     : ""}`;
 }
 
 /** What Dive deeper asks Agent mode: the step's topic as a roadmap of its own, in the step's document. */
-export function roadmapDiveDeeperPrompt(topic: string, roadmapTitle: string): string {
-  return `Dive deeper into “${topic}”, a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”: build a roadmap of its subtopics in this document.\n\nUse propose_roadmap with this document as the roadmap: 2 to 5 stages and 6 to 16 steps, from what to learn first to the most advanced, drawing on what this document already lists and on your own knowledge of the topic. Search my vault first: where one of my documents already teaches a subtopic, point the step at it; for every other subtopic, make a step with a new document whose notes list what to cover. Don't repeat the other steps of the parent roadmap.`;
+export function roadmapDiveDeeperPrompt(topic: string, roadmapTitle: string, language = ""): string {
+  return `${language ? `${language}\n\n` : ""}Dive deeper into “${topic}”, a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”: build a roadmap of its subtopics in this document.\n\nUse propose_roadmap with this document as the roadmap: 2 to 5 stages and 6 to 16 steps, from what to learn first to the most advanced, drawing on what this document already lists and on your own knowledge of the topic. Search my vault first: where one of my documents already teaches a subtopic, point the step at it; for every other subtopic, make a step with a new document whose notes list what to cover. Don't repeat the other steps of the parent roadmap.`;
 }
 
 /** A Draft with AI request, as roadmapDraftPrompt writes it. */
@@ -474,9 +505,11 @@ export function roadmapDraftOutcome(conversation: Conversation): { messageId: st
 }
 
 /** Draft with AI without Agent mode: one answer laid out as an outline the app reads as stages and steps. */
-export function roadmapOutlinePrompt(input: string): string {
+export function roadmapOutlinePrompt(input: string, options: { pair?: LanguagePair | null } = {}): string {
   const link = roadmapDraftLink(input);
   return `Lay out a learning roadmap for: ${input.trim()}${link ? `\n\nFollow the page at ${link} if you know it.` : ""}
+
+${roadmapLanguageNote(input, options.pair)} Keep the Markdown form below exactly; only the words in it follow that language.
 
 Answer with only an outline in this exact Markdown form, in the order to learn things, with 2 to 8 stages and 4 to 40 steps in all:
 
