@@ -861,7 +861,7 @@ export function createApiHandler({
         const userId = authContext.user.id;
         if (request.method === "GET") {
           if (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "Open your lessons from Margin Chat.");
-          if (route.id === "learnProgress") { sendJson(response, 200, await languageCourses.readProgress({ userId, lang: route.params.lang }), { "Cache-Control": "private, no-store" }); return; }
+          if (route.id === "learnProgress") { sendJson(response, 200, await languageCourses.readProgress({ userId, lang: url.searchParams.get("lang") ?? "" }), { "Cache-Control": "private, no-store" }); return; }
         } else {
           if ((!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") ||
               !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {

@@ -102,7 +102,7 @@ export async function saveLessonProgress(userId: string, lessonId: string, updat
 }
 
 export async function readLessonProgress(userId: string, lang: string, signal?: AbortSignal, fetcher: typeof apiFetch = apiFetch): Promise<LessonProgress[]> {
-  const response = await fetcher(`/api/learn/${encodeURIComponent(lang)}/progress`, { credentials: "same-origin", cache: "no-store", headers: { "X-Margin-Vault-User": userId }, signal });
+  const response = await fetcher(`/api/learn/progress?lang=${encodeURIComponent(lang)}`, { credentials: "same-origin", cache: "no-store", headers: { "X-Margin-Vault-User": userId }, signal });
   if (!response.ok) throw new Error(response.status === 401 ? "Sign in to keep your place in lessons." : "Your lessons couldn't be loaded. Try again.");
   return ((await response.json()) as { progress: LessonProgress[] }).progress;
 }
