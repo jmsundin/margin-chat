@@ -172,6 +172,8 @@ export interface DocumentLanguageLearning {
   openDocument: (id: string) => void;
   /** Opens "New lesson": a new document to read, from the AI, a web page, a recording or this document. */
   newLesson?: () => void;
+  /** Opens this document as lessons in the language library ("Study this"). */
+  studyThis?: () => void;
 }
 
 const LOOKUP_INSTRUCTION = [

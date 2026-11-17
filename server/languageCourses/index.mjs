@@ -1,9 +1,16 @@
-import { isBuiltInLessonId, isCourseLanguage, isLearningLevel } from "@margin-chat/workspace-contracts/languageCourses";
+import { randomBytes } from "node:crypto";
+import { isBuiltInLessonId, isCourseLanguage, isLearningLevel, tokenizeLesson } from "@margin-chat/workspace-contracts/languageCourses";
 import { HttpError } from "../lib/errors.mjs";
 
 /** Language courses: where a learner is in each lesson, and what they studied each day. */
 
 export const LEARN_BODY_LIMIT = 64 * 1024;
+/** Lessons made from a document, a pasted text or a page: the whole text comes up at once. */
+export const LESSONS_BODY_LIMIT = 2 * 1024 * 1024;
+const MAX_LESSONS = 300;
+const MAX_LESSON_CHARS = 60_000;
+const newId = (prefix) => `${prefix}_${randomBytes(12).toString("base64url")}`;
+const text = (value, max) => (typeof value === "string" ? value.replace(/\s+/gu, " ").trim().slice(0, max) : "");
 const MAX_EVENTS = 200;
 const EVENT_TYPES = new Set(["words_read", "words_known", "meanings_saved", "reader_seconds", "lesson_completed", "reviewed"]);
 /** A lesson id: one shipped with the app (de-ms-01-a) or one stored for the learner (lsn_…). */
@@ -109,5 +116,79 @@ export function createLanguageCourseService({ database }) {
     return { enrollment: await database.enroll({ userId, courseId, lang: readLang(body?.lang) }) };
   }
 
-  return { saveProgress, recordEvents, readProgress, library, profiles, saveProfile, lesson, enroll };
+  /**
+   * Makes lessons the learner reads: from one of their documents (one course per document, which a
+   * refresh brings up to date), from a pasted text or a web page (a course of its own), or a lesson
+   * simplified to their level (beside the lesson it came from). The server cuts every lesson's tokens.
+   */
+  async function createLessons({ userId, body }) {
+    if (!body || typeof body !== "object") throw new HttpError(400, "Send the lessons as JSON.");
+    const lang = readLang(body.lang);
+    if (!Array.isArray(body.lessons) || !body.lessons.length) throw new HttpError(400, "There's no text to make lessons from.");
+    if (body.lessons.length > MAX_LESSONS) throw new HttpError(413, `A course can have at most ${MAX_LESSONS} lessons. Try a shorter text.`);
+    const level = isLearningLevel(body.level) ? body.level : "A2";
+    const documentId = typeof body.documentId === "string" && /^[A-Za-z0-9:._-]{1,120}$/u.test(body.documentId) ? body.documentId : null;
+    const sourceHash = typeof body.sourceHash === "string" ? body.sourceHash.slice(0, 64) : null;
+    const simplifiedFrom = isLessonId(body.simplifiedFrom) ? body.simplifiedFrom : null;
+    const items = body.lessons.flatMap((item, index) => {
+      if (!item || typeof item.body !== "string") return [];
+      if (item.body.length > MAX_LESSON_CHARS) throw new HttpError(413, "One part of that text is too long for a lesson. Add headings to split it.");
+      const cut = tokenizeLesson(item.body, lang);
+      if (!cut.wordCount) return [];
+      return [{ title: text(item.title, 200) || `Part ${index + 1}`, body: item.body.trim(), cut }];
+    });
+    if (!items.length) throw new HttpError(400, "There's no text to make lessons from.");
+    const title = text(body.title, 200) || items[0].title;
+    const source = simplifiedFrom ? "generated" : documentId ? "document" : "import";
+    const row = (item, courseId, pos, id = newId("lsn")) => ({
+      id, courseId, lang, pos, title: item.title, level, source, documentId, sourceHash, body: item.body, tokens: item.cut.tokens, norms: item.cut.norms,
+      wordCount: item.cut.wordCount, uniqueWordCount: item.cut.uniqueWordCount, variant: null, storyGroup: null, simplifiedFrom, translation: null, audioUrl: null,
+    });
+
+    // A lesson made simpler goes beside the one it came from, in the same course.
+    if (simplifiedFrom) {
+      const original = isBuiltInLessonId(simplifiedFrom) ? null : await database.readLesson({ userId, lessonId: simplifiedFrom });
+      const courseId = original?.courseId ?? null;
+      const siblings = courseId ? await database.listLessons({ userId, lang, courseId }) : [];
+      const pos = siblings.reduce((most, lesson) => Math.max(most, lesson.pos), -1) + 1;
+      const lessons = await database.saveLessons({ userId, lessons: items.slice(0, 1).map((item) => row(item, courseId, pos)) });
+      return { course: null, lessons, created: true };
+    }
+
+    let course = documentId ? await database.findCourseForDocument({ userId, documentId, lang }) : null;
+    if (course && body.replace !== true) {
+      // Already studied: the learner chooses whether to bring it up to date, nothing is rewritten silently.
+      const lessons = await database.listLessons({ userId, lang, courseId: course.id });
+      return { course, lessons, created: false, stale: Boolean(sourceHash) && lessons.some((lesson) => lesson.sourceHash !== sourceHash) };
+    }
+    if (!course) {
+      course = await database.saveCourse({ userId, course: { id: newId("crs"), lang, title, level, kind: "user", documentId, description: "" } });
+      if (!course) throw new HttpError(409, "That course couldn't be made. Try again.");
+      await database.enroll({ userId, courseId: course.id, lang });
+      const lessons = await database.saveLessons({ userId, lessons: items.map((item, pos) => row(item, course.id, pos)) });
+      return { course, lessons, created: true };
+    }
+
+    // A refresh: each part keeps its lesson (and the learner's place in it); parts that are gone go,
+    // unless the learner has read them.
+    const before = await database.listLessons({ userId, lang, courseId: course.id });
+    const read = new Set((await database.readProgress({ userId, lang, lessonIds: before.map((lesson) => lesson.id) })).map((progress) => progress.lessonId));
+    const fresh = [];
+    for (const [pos, item] of items.entries()) {
+      const existing = before[pos];
+      if (existing) await database.replaceLessonText({ userId, lessonId: existing.id, title: item.title, body: item.body, tokens: item.cut.tokens, norms: item.cut.norms, wordCount: item.cut.wordCount, uniqueWordCount: item.cut.uniqueWordCount, sourceHash });
+      else fresh.push(row(item, course.id, pos));
+    }
+    if (fresh.length) await database.saveLessons({ userId, lessons: fresh });
+    for (const extra of before.slice(items.length)) if (!read.has(extra.id)) await database.deleteLesson({ userId, lessonId: extra.id });
+    course = await database.saveCourse({ userId, course: { ...course, title, level: course.level } }) ?? course;
+    return { course, lessons: await database.listLessons({ userId, lang, courseId: course.id }), created: false, refreshed: true };
+  }
+
+  async function removeLesson({ userId, lessonId: id }) {
+    if (isBuiltInLessonId(id)) throw new HttpError(400, "Lessons that come with the app can't be deleted.");
+    return { deleted: await database.deleteLesson({ userId, lessonId: lessonId(id) }) };
+  }
+
+  return { saveProgress, recordEvents, readProgress, library, profiles, saveProfile, lesson, enroll, createLessons, removeLesson };
 }

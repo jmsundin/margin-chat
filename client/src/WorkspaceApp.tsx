@@ -1583,6 +1583,7 @@ function WorkspaceAppContent({
   const languageTerms = useLanguageTerms({ userId: user.id, enabled: vault.ready });
   /** The open review: every card, or one document with its notes and side documents. */
   const [languageLibraryOpen, setLanguageLibraryOpen] = useState(false);
+  const [languageStudy, setLanguageStudy] = useState<{ documentId: string; nonce: number } | null>(null);
   const [flashcardReview, setFlashcardReview] = useState<{ title: string; docIds?: ReadonlySet<string>; docId?: string } | null>(null);
   const flashcardCountByDoc = useMemo(() => {
     const counts = new Map<string, number>();
@@ -3489,18 +3490,26 @@ function WorkspaceAppContent({
     const conversation = current.conversations[conversationId ?? current.activeConversationId] ?? Object.values(current.conversations)[0];
     if (!conversation) throw new Error("This document is no longer open.");
     if (conversationId && isHiddenFromAI(conversation)) throw new Error(HIDDEN_FROM_AI_MESSAGE);
-    const lookup = createMainConversation({ id: createId("conversation"), createdAt: new Date().toISOString(), serviceId: conversation.serviceId, modelId: conversation.modelId });
-    lookup.title = "Look up a meaning";
     let written = "";
+    const reply = await askAIOnce(conversation, "Look up a meaning", buildLookupMessages(request, createId), signal, "fast",
+      onPartial ? (delta: string) => { written += delta; onPartial(partialLookupReply(written)); } : undefined);
+    return parseLookupReply(reply, request.pair);
+  }
+
+  /** One AI answer outside any document's history, with the model of `conversation`. */
+  async function askAIOnce(conversation: Conversation, title: string, messages: Message[], signal: AbortSignal, mode?: "fast", onDelta?: (delta: string) => void): Promise<string> {
+    const asking = createMainConversation({ id: createId("conversation"), createdAt: new Date().toISOString(), serviceId: conversation.serviceId, modelId: conversation.modelId });
+    asking.title = title;
     try {
+      const settings = normalizeAISettings(conversation.ai);
       const { reply } = await requestChatReply({
-        ai: { ...normalizeAISettings(conversation.ai), mode: "fast", contextScope: "conversation", agent: false, agentAuto: false, selectedConversationIds: [] },
+        ai: { ...settings, mode: mode ?? settings.mode, contextScope: "conversation", agent: false, agentAuto: false, selectedConversationIds: [] },
         workspaceContext: [], workspaceContextTruncated: false, expectedUserId: user.id,
-        conversation: getConversationRequestPayload({}, lookup), messages: buildLookupMessages(request, createId),
+        conversation: getConversationRequestPayload({}, asking), messages,
         modelId: conversation.modelId, serviceId: conversation.serviceId, signal,
-        ...(onPartial ? { onDelta: (delta: string) => { written += delta; onPartial(partialLookupReply(written)); } } : {}),
+        ...(onDelta ? { onDelta } : {}),
       });
-      return parseLookupReply(reply, request.pair);
+      return reply;
     } catch (error) {
       if (isApiErrorStatus(error, 401)) onAuthExpired();
       else if (isApiErrorStatus(error, 402)) onBillingRequired(getErrorText(error, "Add money to continue using hosted AI."));
@@ -3619,6 +3628,18 @@ function WorkspaceAppContent({
   }
 
   /** Other documents whose text has this word or phrase, for a term's card. */
+  /** Writes lesson text with the AI (simplifying a lesson to the learner's level), with the open document's model. */
+  async function handleWriteLesson(prompt: string, signal: AbortSignal): Promise<string> {
+    const current = currentStateRef.current;
+    const conversation = current.conversations[current.activeConversationId] ?? Object.values(current.conversations)[0];
+    if (!conversation) throw new Error("Open a document first, so the AI knows which model to use.");
+    const now = new Date().toISOString();
+    return askAIOnce(conversation, "Write a lesson", [
+      { id: createId("message"), role: "system", content: "You rewrite reading lessons for language learners. You answer with the lesson text only.", createdAt: now },
+      { id: createId("message"), role: "user", content: prompt, createdAt: now },
+    ], signal);
+  }
+
   /** What the reader needs for a lesson in the library: the same lookups, word list and study counts as a document. */
   function lessonLearning(pair: LanguagePair, lessonId: string): DocumentLanguageLearning {
     return {
@@ -7056,6 +7077,7 @@ function WorkspaceAppContent({
         recordStudy: (event) => { if (conversation.languageLearning) studyQueue(user.id).add({ ...event, lang: conversation.languageLearning.target }); }, aiAllowed: !isHiddenFromAI(conversation),
         mentions: documentsMentioning, openDocument: (id) => handleSelectConversation(id),
         newLesson: () => setLessonDialog({ fromId: conversation.id }),
+        studyThis: () => { setLanguageStudy({ documentId: conversation.id, nonce: Date.now() }); setLanguageLibraryOpen(true); },
       }}
       onAskBoardNote={(request) => handleAskBoardNote(conversation.id, request)}
       onSelection={(selection) => { const same = isSameSelectedPassage(selectionDraft, selection); setSelectionDraft(same && selectionDraft ? { ...selection, prompt: selectionDraft.prompt } : selection); if (same) return; setSelectionIntent("actions"); setSelectionLinkError(null); const diagram = isMermaidDiagramPassage(selection.quote); setSelectionResponseDestination(diagram ? "inline" : defaultSelectionDestination(conversation.document ? getEditableDocument(conversation).blocks : [], selection)); setSelectionReplaceText(diagram); }}
@@ -8214,8 +8236,16 @@ function WorkspaceAppContent({
       onAdd={(drafts, request) => handleAddFlashcards(makeCards, drafts, request)}
       onClose={() => { setMakeCards(null); newDeckRef.current = null; }}/> : null}
     {languageLibraryOpen ? <LanguageLibrary userId={user.id} terms={languageTerms.terms} learningFor={lessonLearning}
-      documents={Object.values(state.conversations).flatMap((item) => item.languageLearning && !item.vaultFile ? [{ id: item.id, title: item.title || "Untitled", lang: item.languageLearning.target, words: (getEditableDocumentText(item).match(/\S+/gu) ?? []).length }] : [])}
-      onOpenDocument={(id) => handleSelectConversation(id)} onClose={() => setLanguageLibraryOpen(false)} /> : null}
+      documents={Object.values(state.conversations).flatMap((item) => item.languageLearning && !item.vaultFile ? [{
+        id: item.id, title: item.title || "Untitled", lang: item.languageLearning.target, words: (getEditableDocumentText(item).match(/\S+/gu) ?? []).length,
+        text: () => getEditableDocument(item).blocks.map((block) => block.content),
+      }] : [])}
+      study={languageStudy} writeWithAI={handleWriteLesson}
+      readPage={async (url, signal) => {
+        const page = await requestLessonPage(url, { expectedUserId: user.id, signal });
+        return { title: page.title, text: page.text.split("\n").filter((line) => !/^\s*!\[/u.test(line)).join("\n").replace(/^#\s+.*\n+/u, "").trim() };
+      }}
+      onOpenDocument={(id) => handleSelectConversation(id)} onClose={() => { setLanguageLibraryOpen(false); setLanguageStudy(null); }} /> : null}
     {flashcardReview ? <FlashcardReview flashcards={flashcards} title={flashcardReview.title} docIds={flashcardReview.docIds}
       onClose={() => setFlashcardReview(null)}
       onImportAnki={handleImportAnki}

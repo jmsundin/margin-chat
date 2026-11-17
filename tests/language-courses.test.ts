@@ -193,7 +193,7 @@ async function database() {
     return { ...result, rowCount: result.rows.length || (result as { affectedRows?: number }).affectedRows || 0 };
   } };
   await migrateDatabase(client, { migrations: await loadMigrations() });
-  await pg.query("insert into marginchat_users (id,email,password_hash,display_name) values ('u1','u1@example.test','hash','U1'), ('u2','u2@example.test','hash','U2')");
+  await pg.query("insert into marginchat_users (id,email,password_hash,display_name) values ('u1','u1@example.test','hash','U1'), ('u2','u2@example.test','hash','U2'), ('u3','u3@example.test','hash','U3')");
   return { pg, client };
 }
 
@@ -419,5 +419,53 @@ describe("progress through the account", () => {
     // Shipped lessons come with the app, not from the account.
     await expect(service.lesson({ userId: "u2", lessonId: "de-ms-01-a" })).rejects.toThrow("isn't here");
     expect((await service.profiles({ userId: "u2" })).profiles).toHaveLength(1);
+  });
+
+  test("lessons from a document: made once, never rewritten unasked, and a refresh keeps each lesson and the place in it", async () => {
+    const { createLanguageCourseService } = await import("../server/languageCourses/index.mjs");
+    const { client } = await database();
+    const service = createLanguageCourseService({ database: new Proxy({}, { get: (_target, name: string) => (args: any) => (courses as any)[name](client, args) }) });
+    const parts = (n: number, word = "Hund") => Array.from({ length: n }, (_, i) => ({ title: `Teil ${i + 1}`, body: `Der ${word} läuft. Er ist ${i + 1} Jahre alt.` }));
+    const made = await service.createLessons({ userId: "u3", body: { lang: "de", title: "Mein Text", level: "A2", documentId: "conversation-1", sourceHash: "h1", lessons: parts(3) } });
+    expect(made).toMatchObject({ created: true, course: { kind: "user", documentId: "conversation-1", title: "Mein Text" } });
+    expect(made.lessons.map((lesson: any) => [lesson.pos, lesson.source, lesson.wordCount])).toEqual([[0, "document", 8], [1, "document", 8], [2, "document", 8]]);
+    expect((await service.library({ userId: "u3", lang: "de" })).enrollments).toMatchObject([{ courseId: made.course.id }]);
+    const [first, second, third] = made.lessons;
+    await service.saveProgress({ userId: "u3", lessonId: first.id, body: { lang: "de", percent: 40, lastTokenIndex: 5 } });
+    await service.saveProgress({ userId: "u3", lessonId: third.id, body: { lang: "de", percent: 10, lastTokenIndex: 1 } });
+
+    // The document changed: asking again only says so.
+    const again = await service.createLessons({ userId: "u3", body: { lang: "de", documentId: "conversation-1", sourceHash: "h2", lessons: parts(1, "Katze") } });
+    expect(again).toMatchObject({ created: false, stale: true });
+    expect(again.lessons.map((lesson: any) => lesson.body)).toEqual(made.lessons.map((lesson: any) => lesson.body));
+
+    // The learner asks to refresh: lesson 1 keeps its id and place; 2 (unread) goes; 3 (read) stays.
+    const refreshed = await service.createLessons({ userId: "u3", body: { lang: "de", documentId: "conversation-1", sourceHash: "h2", lessons: parts(1, "Katze"), replace: true } });
+    expect(refreshed.refreshed).toBe(true);
+    expect(refreshed.lessons.map((lesson: any) => lesson.id)).toEqual([first.id, third.id]);
+    expect(refreshed.lessons[0]).toMatchObject({ body: expect.stringContaining("Katze"), sourceHash: "h2" });
+    expect(refreshed.lessons.map((lesson: any) => lesson.id)).not.toContain(second.id);
+    expect((await service.readProgress({ userId: "u3", lang: "de" })).progress.find((row: any) => row.lessonId === first.id)).toMatchObject({ lastTokenIndex: 5 });
+
+    // A simpler version goes beside its lesson; a pasted text is a course of its own.
+    const simpler = await service.createLessons({ userId: "u3", body: { lang: "de", level: "A1", simplifiedFrom: first.id, lessons: [{ title: "Teil 1 (A1)", body: "Die Katze läuft." }] } });
+    expect(simpler.lessons[0]).toMatchObject({ courseId: made.course.id, pos: 3, source: "generated", simplifiedFrom: first.id, level: "A1" });
+    const pasted = await service.createLessons({ userId: "u3", body: { lang: "de", title: "Zeitung", lessons: [{ title: "", body: "Heute regnet es in Berlin." }] } });
+    expect(pasted).toMatchObject({ created: true, course: { title: "Zeitung", documentId: null } });
+    expect(pasted.lessons[0]).toMatchObject({ source: "import", title: "Part 1" });
+    expect((await service.lesson({ userId: "u3", lessonId: pasted.lessons[0].id })).lesson.tokens.length).toBeGreaterThan(5);
+    expect(await service.removeLesson({ userId: "u3", lessonId: pasted.lessons[0].id })).toEqual({ deleted: true });
+
+    await expect(service.createLessons({ userId: "u3", body: { lang: "de", lessons: [{ body: "  …  " }] } })).rejects.toThrow("no text");
+    await expect(service.createLessons({ userId: "u3", body: { lang: "de", lessons: Array.from({ length: 301 }, () => ({ body: "Ja." })) } })).rejects.toThrow("at most");
+    await expect(service.removeLesson({ userId: "u3", lessonId: "de-ms-01-a" })).rejects.toThrow("come with the app");
+  });
+});
+
+describe("a document read as lessons", () => {
+  test("headings start sections; code, tables, images and front matter aren't reading", async () => {
+    const { documentSections } = await import("../client/src/lib/languageCourses");
+    const sections = documentSections(["---\nlearning-language: de\n---\n# Erster Teil\n\nDas ist **gut**.", "```js\nconst x = 1;\n```", "| a | b |\n|---|---|", "![Bild](x.png)", "## Zweiter Teil\n\nNoch ein [Satz](https://x).\n\nUnd mehr."]);
+    expect(sections).toEqual([{ heading: "Erster Teil", paragraphs: ["Das ist gut."] }, { heading: "Zweiter Teil", paragraphs: ["Noch ein Satz.", "Und mehr."] }]);
   });
 });

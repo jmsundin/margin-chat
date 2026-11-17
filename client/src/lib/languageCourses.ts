@@ -1,4 +1,5 @@
 import { apiFetch } from "./apiTransport";
+import { plainReadingText } from "./languageLearning";
 import type { Course, CourseLesson } from "@margin-chat/workspace-contracts/languageCourses";
 
 /**
@@ -175,4 +176,41 @@ export async function loadShippedCourse(lang: string): Promise<{ course: Course;
   if (!load) return null;
   const { builtInMiniStories } = await import("@margin-chat/workspace-contracts/languageCourses");
   return builtInMiniStories(lang, (await load()).default);
+}
+
+// ----- lessons the learner makes -----
+
+/**
+ * A document's text as sections to cut into lessons: each heading starts a section, and every other
+ * block is read as plain paragraphs. Code, tables, images and front matter aren't reading.
+ */
+export function documentSections(contents: ReadonlyArray<string>): Array<{ heading?: string; paragraphs: string[] }> {
+  const sections: Array<{ heading?: string; paragraphs: string[] }> = [{ paragraphs: [] }];
+  const text = contents.join("\n\n").replace(/^---\n[\s\S]*?\n---\n?/u, "").replace(/```[\s\S]*?(?:```|$)/gu, "\n\n");
+  for (const raw of text.split(/\n\s*\n/u)) {
+    for (const line of raw.split("\n")) {
+      const heading = /^\s{0,3}#{1,6}\s+(.+)$/u.exec(line);
+      if (heading) { sections.push({ heading: plainReadingText(heading[1]), paragraphs: [] }); continue; }
+    }
+    const body = raw.split("\n").filter((line) => !/^\s{0,3}#{1,6}\s+/u.test(line) && !/^\s*\|/u.test(line) && !/^\s*!\[/u.test(line)).join("\n");
+    const paragraph = plainReadingText(body);
+    if (paragraph) sections[sections.length - 1].paragraphs.push(paragraph);
+  }
+  return sections.filter((section) => section.paragraphs.length);
+}
+
+export interface NewLessons {
+  lang: string; title: string; level?: string; lessons: Array<{ title: string; body: string }>;
+  documentId?: string; sourceHash?: string; simplifiedFrom?: string; replace?: boolean;
+}
+export interface MadeLessons { course: Course | null; lessons: CourseLesson[]; created: boolean; stale?: boolean; refreshed?: boolean }
+
+export async function createLessons(userId: string, request: NewLessons, fetcher: typeof apiFetch = apiFetch): Promise<MadeLessons> {
+  const response = await fetcher("/api/learn/lessons", { method: "POST", credentials: "same-origin", cache: "no-store", headers: jsonHeaders(userId), body: JSON.stringify(request) });
+  return readJson<MadeLessons>(response, "Those lessons couldn't be made. Try again.");
+}
+
+export async function deleteLesson(userId: string, lessonId: string, fetcher: typeof apiFetch = apiFetch): Promise<void> {
+  const response = await fetcher(`/api/learn/lessons/${encodeURIComponent(lessonId)}`, { method: "DELETE", credentials: "same-origin", cache: "no-store", headers: jsonHeaders(userId) });
+  await readJson<{ deleted: boolean }>(response, "That lesson couldn't be deleted. Try again.");
 }

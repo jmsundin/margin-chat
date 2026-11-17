@@ -1,18 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  LEARNING_LEVELS, isCourseLanguage, levelName, levelRank, newWordsBand, nextLessonIn, percentNew, sentenceTranslations, suggestedStory, tokenizeLesson, variantName,
+  LEARNING_LEVELS, isCourseLanguage, sourceFingerprint, splitIntoLessons, levelName, levelRank, newWordsBand, nextLessonIn, percentNew, sentenceTranslations, suggestedStory, tokenizeLesson, variantName,
 } from "@margin-chat/workspace-contracts/languageCourses";
 import { LEARNING_LANGUAGES, languageName, type DocumentLanguageLearning, type LanguagePair } from "../lib/languageLearning";
 import { termId, type LanguageTerm } from "../lib/languageReader";
 import {
-  enrollInCourse, fetchLibrary, fetchProfiles, hasShippedStories, loadShippedCourse, saveLessonProgress, saveProfile, sentenceOfTokenIndex, studyQueue, tokenIndexOfSentence,
+  createLessons, documentSections, enrollInCourse, fetchLibrary, fetchProfiles, hasShippedStories, loadShippedCourse, saveLessonProgress, saveProfile, sentenceOfTokenIndex, studyQueue, tokenIndexOfSentence,
   type Course, type CourseLesson, type LearningProfile, type LessonProgress, type LibraryData,
 } from "../lib/languageCourses";
 import { LanguageReader, type LessonSummary, type ReaderLesson } from "./LanguageReader";
 import "./LanguageLibrary.css";
 
 /** A document the learner reads in Language mode, offered as something to study. */
-export interface StudyDocument { id: string; title: string; lang: string; words: number }
+export interface StudyDocument { id: string; title: string; lang: string; words: number; text: () => ReadonlyArray<string> }
+
+/** A document's text cut into lessons at its headings, or every ~400 words, and a fingerprint of it to notice changes. */
+export function documentLessons(document: StudyDocument) {
+  const contents = document.text();
+  return { lessons: splitIntoLessons(documentSections(contents), { title: document.title }).map(({ title, body }) => ({ title, body })), sourceHash: sourceFingerprint(contents.join("\n\n")) };
+}
 
 interface Props {
   userId: string;
@@ -21,6 +27,12 @@ interface Props {
   learningFor: (pair: LanguagePair, lessonId: string) => DocumentLanguageLearning;
   documents: ReadonlyArray<StudyDocument>;
   onOpenDocument: (id: string) => void;
+  /** Opens with this document's lessons, making them first if need be ("Study this"). */
+  study?: { documentId: string; nonce: number } | null;
+  /** Asks the AI for text (simplifying a lesson); missing when AI isn't available. */
+  writeWithAI?: (prompt: string, signal: AbortSignal) => Promise<string>;
+  /** A web page's readable text, for a lesson from a link. */
+  readPage?: (url: string, signal: AbortSignal) => Promise<{ title: string; text: string }>;
   /** Extra shelves and actions later steps add (lessons from documents, new stories, review). */
   slots?: { documentAction?: (document: StudyDocument, lang: string, refresh: () => void) => ReactNode; header?: (lang: string, refresh: () => void) => ReactNode };
   onClose: () => void;
@@ -35,7 +47,7 @@ const rememberLang = (lang: string) => { try { localStorage.setItem(LAST_LANG_KE
 const COURSE_LANGUAGES = LEARNING_LANGUAGES.filter((language) => isCourseLanguage(language.code));
 
 /** The language library: courses, mini stories and the learner's own lessons, measured in words known. */
-export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenDocument, slots, onClose }: Props) {
+export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenDocument, study, writeWithAI, readPage, slots, onClose }: Props) {
   const [profiles, setProfiles] = useState<LearningProfile[] | null>(null);
   const [lang, setLang] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -104,6 +116,37 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
     if (saved) { setProfiles((list) => (list ?? []).map((item) => item.lang === saved.lang ? saved : item)); refresh(); }
   }
 
+  // ----- lessons from the learner's documents and texts -----
+  const [making, setMaking] = useState<string | null>(null);
+  const [adding2, setAddingLesson] = useState(false);
+  async function studyDocument(document: StudyDocument, replace = false) {
+    if (making) return;
+    const { lessons, sourceHash } = documentLessons(document);
+    if (!lessons.length) { setError("That document has no text to read yet."); return; }
+    setMaking(document.id); setError(null);
+    try {
+      const made = await createLessons(userId, { lang: document.lang, title: document.title, level: profile?.level, documentId: document.id, sourceHash, lessons, replace });
+      refresh();
+      if (made.course) setView({ kind: "course", courseId: made.course.id });
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "Those lessons couldn't be made."); }
+    finally { setMaking(null); }
+  }
+  const studied = useRef(0);
+  useEffect(() => {
+    if (!study || studied.current === study.nonce || !data || !profile) return;
+    const document = documents.find((item) => item.id === study.documentId);
+    if (!document || document.lang !== lang) return;
+    studied.current = study.nonce;
+    void studyDocument(document);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [study?.nonce, data, profile?.lang, lang]);
+  // "Study this" for a document in another language switches the library to it.
+  useEffect(() => {
+    const wanted = study ? documents.find((item) => item.id === study.documentId)?.lang : null;
+    if (wanted && wanted !== lang && profiles?.some((item) => item.lang === wanted)) switchLang(wanted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [study?.nonce, profiles]);
+
   // ----- reading a lesson -----
   const open = view.kind === "lesson" ? allLessons.find((lesson) => lesson.id === view.lessonId) ?? null : null;
   const openLesson = (lessonId: string) => setView((current) => ({ kind: "lesson", lessonId, from: current.kind === "course" ? "course" : "shelves" }));
@@ -132,7 +175,8 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
     const siblings = course ? lessonsOf(course.id) : [open];
     const next = nextLessonIn(siblings, open.id);
     body = <LessonView key={open.id} userId={userId} lesson={open} course={course} progress={progressOf.get(open.id) ?? null} pair={{ target: lang, base: profile.nativeLang }}
-      learning={learningFor({ target: lang, base: profile.nativeLang }, open.id)}
+      learning={learningFor({ target: lang, base: profile.nativeLang }, open.id)} level={profile.level} writeWithAI={writeWithAI}
+      onSimplified={(lessonId) => { refresh(); setView({ kind: "lesson", lessonId, from: view.from }); }}
       next={next ? { title: `${next.title}${next.variant ? ` · ${variantName(next.variant)}` : ""}`, open: () => openLesson(next.id) } : null}
       onSaved={refresh} onClose={() => setView({ kind: "shelves" })} />;
   } else if (view.kind === "course") {
@@ -145,8 +189,13 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
     body = <Shelves lang={lang} profile={profile} data={data} shipped={shipped} allLessons={allLessons} allCourses={allCourses} levels={levels} inRange={inRange} statusOf={statusOf}
       progressOf={progressOf} lessonsOf={lessonsOf} documents={documents.filter((document) => document.lang === lang)} error={error}
       onLevels={setLevels} onLevel={(level) => void changeLevel(level)} onOpenLesson={openLesson} onOpenCourse={(courseId) => setView({ kind: "course", courseId })}
-      onOpenDocument={(id) => { onOpenDocument(id); onClose(); }} documentAction={slots?.documentAction ? (document) => slots.documentAction!(document, lang, refresh) : undefined}
-      extra={slots?.header?.(lang, refresh)} />;
+      onOpenDocument={(id) => { onOpenDocument(id); onClose(); }}
+      documentAction={(document) => <DocumentStudy document={document} course={data?.courses.find((course) => course.documentId === document.id) ?? null}
+        lessons={data?.lessons ?? []} busy={making === document.id} onStudy={(replace) => void studyDocument(document, replace)}
+        onOpenCourse={(courseId) => setView({ kind: "course", courseId })} extra={slots?.documentAction?.(document, lang, refresh)} />}
+      extra={<>{<button type="button" className="language-library-add" onClick={() => setAddingLesson(true)}>Add a lesson…</button>}{slots?.header?.(lang, refresh)}</>} />;
+    if (adding2) body = <>{body}<AddLesson lang={lang} level={profile.level} userId={userId} readPage={readPage}
+      onDone={(made) => { setAddingLesson(false); refresh(); if (made?.course) setView({ kind: "course", courseId: made.course.id }); }} /></>;
   }
 
   return <div className="language-library" role="dialog" aria-modal="true" aria-label="Language library" tabIndex={-1} ref={dialog} data-view={view.kind}
@@ -299,7 +348,7 @@ function LessonCard({ lesson, course, progress, statusOf, onOpen }: { lesson: Co
   const percent = progress?.status === "completed" ? 100 : progress?.percent ?? 0;
   return <button type="button" className="language-library-card" onClick={onOpen} data-done={progress?.status === "completed" || undefined}>
     <span className="language-library-cover" data-variant={lesson.variant ?? undefined} aria-hidden="true">
-      {lesson.storyNumber ? <b>{lesson.storyNumber}</b> : null}{lesson.variant ? <small>{variantName(lesson.variant)}</small> : null}</span>
+      <b>{lesson.storyNumber ?? lesson.pos + 1}</b><small>{lesson.variant ? variantName(lesson.variant) : lesson.simplifiedFrom ? "Simplified" : lesson.source === "document" ? "Document" : "Lesson"}</small></span>
     <span className="language-library-card-title">{lesson.title}</span>
     <span className="language-library-card-meta">{course?.title ?? "Your lessons"} · {levelName(lesson.level)}</span>
     <NewWords lesson={lesson} statusOf={statusOf} />
@@ -335,7 +384,7 @@ function CoursePage({ course, lessons, progressOf, statusOf, enrolled, onEnroll,
   return <div className="language-library-course">
     <header>
       <h2>{course.title}</h2>
-      <p className="language-library-card-meta">{(course.levels ?? [course.level]).map(levelName).join(", ")} · {lessons.length} lessons</p>
+      <p className="language-library-card-meta">{(course.levels ?? [course.level]).map(levelName).join(", ")} · {lessons.length} lesson{lessons.length === 1 ? "" : "s"}</p>
       {course.description ? <p>{course.description}</p> : null}
       {enrolled ? <span className="language-library-pill">You're taking this course</span>
         : <button type="button" className="is-primary" onClick={onEnroll}>Take this course</button>}
@@ -359,10 +408,30 @@ function CoursePage({ course, lessons, progressOf, statusOf, enrolled, onEnroll,
 }
 
 /** One lesson in the reader, keeping its place in the account as the learner goes. */
-function LessonView({ userId, lesson, course, progress, pair, learning, next, onSaved, onClose }: {
+function LessonView({ userId, lesson, course, progress, pair, learning, level, writeWithAI, next, onSaved, onSimplified, onClose }: {
   userId: string; lesson: CourseLesson; course: Course | null; progress: LessonProgress | null; pair: LanguagePair; learning: DocumentLanguageLearning;
-  next: ReaderLesson["next"]; onSaved: () => void; onClose: () => void;
+  level: string; writeWithAI?: (prompt: string, signal: AbortSignal) => Promise<string>;
+  next: ReaderLesson["next"]; onSaved: () => void; onSimplified: (lessonId: string) => void; onClose: () => void;
 }) {
+  const [simplifying, setSimplifying] = useState<AbortController | null>(null);
+  const [simplifyError, setSimplifyError] = useState<string | null>(null);
+  useEffect(() => () => simplifying?.abort(), [simplifying]);
+  // Lessons that come with the app are already written for their level; the learner's own may not be.
+  const canSimplify = Boolean(writeWithAI) && lesson.source !== "builtin" && levelRank(level) < levelRank("C2");
+  async function simplify() {
+    if (!writeWithAI || simplifying) return;
+    const controller = new AbortController();
+    setSimplifying(controller); setSimplifyError(null);
+    try {
+      const text = await writeWithAI(simplifyPrompt(lesson, level), controller.signal);
+      const body = text.replace(/^```[a-z]*\n?|```$/gu, "").trim();
+      if (!tokenizeLesson(body, lesson.lang).wordCount) throw new Error("The AI didn't write a simpler version. Try again.");
+      const made = await createLessons(userId, { lang: lesson.lang, title: `${lesson.title} (${levelName(level)})`, level, simplifiedFrom: lesson.id, lessons: [{ title: `${lesson.title} (${levelName(level)})`, body }] });
+      if (made.lessons[0]) onSimplified(made.lessons[0].id);
+    } catch (failure) {
+      if (!controller.signal.aborted) setSimplifyError(failure instanceof Error ? failure.message : "The simpler version couldn't be made.");
+    } finally { setSimplifying(null); }
+  }
   const blocks = useMemo(() => lesson.body.split(/\n\s*\n/u).map((content, index) => ({ id: `${lesson.id}:${index}`, content })), [lesson.id, lesson.body]);
   const cut = useMemo(() => tokenizeLesson(lesson.body, lesson.lang), [lesson.body, lesson.lang]);
   const translations = useMemo(() => sentenceTranslations(lesson.translation, cut.sentenceCount), [lesson.translation, cut.sentenceCount]);
@@ -384,9 +453,94 @@ function LessonView({ userId, lesson, course, progress, pair, learning, next, on
       <p className="language-library-card-meta">{course?.title ?? "Your lessons"}{lesson.variant ? ` · ${variantName(lesson.variant)}` : ""} · {levelName(lesson.level)}</p>
       <h2 lang={lesson.lang}>{lesson.title}</h2>
       {lesson.titleTranslation ? <p className="language-library-quiet">{lesson.titleTranslation}</p> : null}
+      {lesson.simplifiedFrom ? <p className="language-library-quiet">Simplified to {levelName(lesson.level)} by AI.</p> : null}
+      {canSimplify ? <div className="language-library-simplify">
+        <button type="button" onClick={() => void simplify()} disabled={Boolean(simplifying)} title={`The AI rewrites this lesson as a new one, for ${levelName(level)} (${level}). This one stays as it is.`}>
+          {simplifying ? "Simplifying…" : "Simplify to my level"}</button>
+        {simplifying ? <button type="button" className="language-library-link" onClick={() => simplifying.abort()}>Stop</button> : null}
+        {simplifyError ? <span className="language-library-error" role="alert">{simplifyError}</span> : null}
+      </div> : null}
     </div>
     <div className="language-library-reader">
       <LanguageReader key={round} blocks={blocks} pair={pair} learning={learning} lesson={reader} />
     </div>
+  </div>;
+}
+
+function simplifyPrompt(lesson: CourseLesson, level: string): string {
+  const language = languageName(lesson.lang);
+  return [
+    `Rewrite this ${language} text for a learner at CEFR level ${level} (${levelName(level)}).`,
+    `Keep what happens and the order it happens in. Use short sentences and common words a ${level} learner knows; explain or leave out rare details.`,
+    `Write only the rewritten text, in ${language}, with a blank line between paragraphs. No title, no notes, no translation.`,
+    "",
+    lesson.body,
+  ].join("\n");
+}
+
+/** "Study this" on a document: makes its lessons, opens them, and offers a refresh when the document changed. */
+function DocumentStudy({ document, course, lessons, busy, onStudy, onOpenCourse, extra }: {
+  document: StudyDocument; course: Course | null; lessons: ReadonlyArray<CourseLesson>; busy: boolean;
+  onStudy: (replace: boolean) => void; onOpenCourse: (courseId: string) => void; extra?: ReactNode;
+}) {
+  const stale = useMemo(() => {
+    if (!course) return false;
+    const own = lessons.filter((lesson) => lesson.courseId === course.id && lesson.source === "document");
+    return own.length > 0 && own.some((lesson) => lesson.sourceHash !== documentLessons(document).sourceHash);
+  }, [course, lessons, document]);
+  return <div className="language-library-card-actions">
+    {course ? <button type="button" onClick={() => onOpenCourse(course.id)}>Open lessons</button>
+      : <button type="button" className="is-primary" disabled={busy} onClick={() => onStudy(false)}>{busy ? "Making lessons…" : "Study this"}</button>}
+    {stale ? <button type="button" className="language-library-stale" disabled={busy} onClick={() => onStudy(true)}
+      title="The document changed since its lessons were made. Refreshing keeps your place in each lesson.">{busy ? "Refreshing…" : "Source changed — refresh lessons?"}</button> : null}
+    {extra}
+  </div>;
+}
+
+/** A lesson from pasted text or a web page, cut at its headings or every ~400 words into a course of its own. */
+function AddLesson({ lang, level, userId, readPage, onDone }: {
+  lang: string; level: string; userId: string; readPage?: (url: string, signal: AbortSignal) => Promise<{ title: string; text: string }>;
+  onDone: (made: import("../lib/languageCourses").MadeLessons | null) => void;
+}) {
+  const [title, setTitle] = useState("");
+  const [text, setText] = useState("");
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  async function submit() {
+    setError(null);
+    controller.current = new AbortController();
+    try {
+      let source = text, name = title.trim();
+      if (!source.trim() && url.trim()) {
+        if (!readPage) throw new Error("Paste the text instead.");
+        setBusy("Reading the page…");
+        const page = await readPage(url.trim(), controller.current.signal);
+        source = page.text; name ||= page.title;
+      }
+      if (!source.trim()) throw new Error("Paste some text, or the address of a page.");
+      name ||= source.trim().split(/\s+/u).slice(0, 6).join(" ");
+      setBusy("Making lessons…");
+      const lessons = splitIntoLessons(documentSections([source]), { title: name }).map(({ title: part, body }) => ({ title: part, body }));
+      onDone(await createLessons(userId, { lang, title: name, level, lessons }));
+    } catch (failure) {
+      if (!controller.current?.signal.aborted) setError(failure instanceof Error ? failure.message : "That lesson couldn't be made.");
+    } finally { setBusy(null); }
+  }
+  return <div className="language-library-sheet" role="dialog" aria-label="Add a lesson" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); onDone(null); } }}>
+    <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <h2>Add a lesson in {languageName(lang)}</h2>
+      <p className="language-library-quiet">Paste a text, or the address of a page. Long texts become a course, one lesson per heading or about 400 words.</p>
+      <label>Title <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Optional" maxLength={200} /></label>
+      <label>Text <textarea value={text} onChange={(event) => setText(event.target.value)} rows={8} lang={lang} placeholder={`Paste ${languageName(lang)} text here`} autoFocus /></label>
+      {readPage ? <label>or a web page <input type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="https://" disabled={Boolean(text.trim())} /></label> : null}
+      {error ? <p className="language-library-error" role="alert">{error}</p> : null}
+      <div className="language-library-actions">
+        <button type="submit" className="is-primary" disabled={Boolean(busy)}>{busy ?? "Make lesson"}</button>
+        <button type="button" onClick={() => { controller.current?.abort(); onDone(null); }}>Cancel</button>
+      </div>
+    </form>
   </div>;
 }

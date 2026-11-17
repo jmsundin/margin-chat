@@ -17,7 +17,7 @@ import { FLASHCARD_SYNC_BODY_LIMIT, createFlashcardService } from "../flashcards
 import { LANGUAGE_TERM_SYNC_BODY_LIMIT, createLanguageTermService } from "../languageTerms/index.mjs";
 import { createLanguageSpeechService } from "../languageTerms/speech.mjs";
 import { createLanguageLookupService } from "../languageTerms/lookup.mjs";
-import { LEARN_BODY_LIMIT, createLanguageCourseService } from "../languageCourses/index.mjs";
+import { LEARN_BODY_LIMIT, LESSONS_BODY_LIMIT, createLanguageCourseService } from "../languageCourses/index.mjs";
 import { RATCHET_BODY_LIMIT, createRatchetService } from "../ratchet/index.mjs";
 import { INTERFACE_SETTINGS_BODY_LIMIT, createInterfaceSettingsService } from "../interfaceSettings/index.mjs";
 import { createVaultPassageService } from "../vault/passageIndex.mjs";
@@ -872,9 +872,14 @@ export function createApiHandler({
               !String(request.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
             throw new HttpError(403, "Study from Margin Chat.");
           }
-          const body = await readJsonBody(request, LEARN_BODY_LIMIT);
+          if (route.id === "learnLesson" && request.method === "DELETE") {
+            sendJson(response, 200, await languageCourses.removeLesson({ userId, lessonId: route.params.id }), { "Cache-Control": "private, no-store" });
+            return;
+          }
+          const body = await readJsonBody(request, route.id === "learnLessons" ? LESSONS_BODY_LIMIT : LEARN_BODY_LIMIT);
           let result;
-          if (route.id === "learnLessonProgress") result = await languageCourses.saveProgress({ userId, lessonId: route.params.id, body });
+          if (route.id === "learnLessons") result = await languageCourses.createLessons({ userId, body });
+          else if (route.id === "learnLessonProgress") result = await languageCourses.saveProgress({ userId, lessonId: route.params.id, body });
           else if (route.id === "learnLessonComplete") result = await languageCourses.saveProgress({ userId, lessonId: route.params.id, body: { ...body, complete: true } });
           else if (route.id === "learnEvents") result = await languageCourses.recordEvents({ userId, body });
           else if (route.id === "learnProfiles") result = await languageCourses.saveProfile({ userId, body });
