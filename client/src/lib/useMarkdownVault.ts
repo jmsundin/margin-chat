@@ -897,7 +897,9 @@ export function useMarkdownVault(args: {
 
   useEffect(() => {
     if (!ready || args.state === displayedState.current) return;
-    setMatchesCloud(false);
+    // Only when it changes: an update from this effect on every keystroke kept a long page re-rendering
+    // in a chain React stops with "Maximum update depth exceeded" (#185) while typing fast.
+    if (matchesCloud) setMatchesCloud(false);
     saveSoon();
     const timer = window.setTimeout(scheduleAutomaticRefresh, 900);
     return () => window.clearTimeout(timer);
