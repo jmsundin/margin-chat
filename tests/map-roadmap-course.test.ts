@@ -3,7 +3,7 @@ import { normalizeRoadmap } from "@margin-chat/workspace-contracts";
 import { createEmptyState, createStandaloneNoteConversation } from "../client/src/initialState";
 import { applyRoadmapChange, getRoadmap } from "../client/src/lib/roadmap";
 import { buildMapPath, createMapPath } from "../client/src/lib/mapPaths";
-import { layoutCourse } from "../client/src/components/MapRoadmapCourse";
+import { layoutCourse, lessonSummary } from "../client/src/components/MapRoadmapCourse";
 
 const at = "2026-11-15T01:00:00.000Z";
 
@@ -113,5 +113,31 @@ describe("Roadmap drafts cover the whole subject", () => {
     // A lesson AI writes as an agent checks the vault and the web, and lists its sources.
     expect(roadmapExplainPrompt("Caffeine", "Sleep better", "", { web: true })).toContain("Sources list");
     expect(roadmapExplainPrompt("Caffeine", "Sleep better")).not.toContain("search the web");
+  });
+});
+
+describe("stage index summaries", () => {
+  function lesson(title: string, markdown: string) {
+    const note = createStandaloneNoteConversation({ createdAt: at, id: "lesson", noteId: "lesson-note" });
+    note.title = title;
+    note.document = { schemaVersion: 1, prompts: [], generations: [], blocks: [{ id: "b1", kind: "markdown", content: markdown, createdAt: at, updatedAt: at, authorship: "user" }] };
+    return note;
+  }
+
+  test("drops a heading that repeats the title and keeps plain words", () => {
+    expect(lessonSummary(lesson("Path Operations", "# Path Operations\n\nPath operations are the **functions** FastAPI calls."))).toBe("Path operations are the functions FastAPI calls.");
+  });
+
+  test("an empty lesson has no summary", () => {
+    expect(lessonSummary(lesson("Empty", ""))).toBe("");
+    expect(lessonSummary(undefined)).toBe("");
+  });
+
+  test("long text is cut at a sentence or a word, never mid-word", () => {
+    const long = lessonSummary(lesson("Long", `${"word ".repeat(60)}end`), 50);
+    expect(long.endsWith("…")).toBe(true);
+    expect(long.length).toBeLessThanOrEqual(51);
+    expect(long.replace("…", "").trim().split(" ").every((part) => part === "word")).toBe(true);
+    expect(lessonSummary(lesson("S", "First sentence is here. Second sentence goes on and on and on."), 40)).toBe("First sentence is here.");
   });
 });

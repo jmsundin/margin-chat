@@ -108,3 +108,27 @@
   .map-course-step .map-path-step.is-docked .map-path-links { display: none; }
   .map-course-step .map-path-step.is-docked .map-path-actions button { min-height: 30px; padding: 3px 8px; white-space: nowrap; }
 }
+
+/* A stage is an index: it opens a list of what each of its lessons covers, each a link. */
+button.map-course-stage { font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s; }
+button.map-course-stage:hover { border-color: color-mix(in srgb, var(--ink) 35%, transparent); background: color-mix(in srgb, var(--ink) 12%, var(--panel-bg)); }
+button.map-course-stage:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+button.map-course-stage.is-open { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 30%, transparent); }
+.map-course-index { flex-basis: 100%; min-width: 0; padding-top: 8px; margin-top: 2px; border-top: 1px dashed var(--line); }
+.map-course-index header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.map-course-index header strong { font-size: 14px; font-weight: 650; min-width: 0; }
+.map-course-index-meta { color: var(--muted); font-size: 12px; }
+.map-course-index-close { margin-left: auto; width: 26px; height: 26px; border: 0; border-radius: 7px; background: none; color: var(--muted); font-size: 18px; line-height: 1; cursor: pointer; }
+.map-course-index-close:hover { background: var(--button-surface); color: var(--ink); }
+.map-course-index ol { list-style: none; margin: 8px 0 2px; padding: 0; display: grid; gap: 4px; max-height: min(44vh, 360px); overflow-y: auto; }
+.map-course-index li { display: flex; align-items: flex-start; gap: 4px; }
+.map-course-index li > button:first-child { flex: 1; min-width: 0; display: grid; gap: 2px; padding: 6px 8px; border: 1px solid transparent; border-radius: 8px; background: none; color: var(--ink); font: inherit; text-align: left; cursor: pointer; }
+.map-course-index li > button:first-child:hover { border-color: var(--line); background: var(--panel-bg); }
+.map-course-index li > button:first-child:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.map-course-index li > button:disabled { cursor: progress; opacity: .7; }
+.map-course-index-title { display: flex; align-items: center; gap: 6px; font-size: 13.5px; font-weight: 600; color: var(--accent-strong, var(--accent)); text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 35%, transparent); text-underline-offset: 3px; }
+.map-course-index-title small { color: var(--muted); font-weight: 500; text-decoration: none; }
+.map-course-index-title .map-course-mark { position: static; }
+.map-course-index-summary { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.map-course-index li.is-optional .map-course-index-title { font-style: italic; }
+.map-course-index li .map-course-dive { position: static; flex: 0 0 auto; margin-top: 6px; }
