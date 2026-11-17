@@ -27,6 +27,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite-pgvector";
 import { loadMigrations, migrateDatabase } from "../server/db/migrations.mjs";
 import * as languageCourseRepository from "../server/db/languageCourseRepository.mjs";
+import germanStories from "../packages/workspace-contracts/miniStories/de.mjs";
+import { readStoryLines } from "../packages/workspace-contracts/languageCourses.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
@@ -139,6 +141,21 @@ function syntheticRoadmapRevise(body) {
  * "lifespan" in them; each claim with passages is judged in turn supported,
  * contradicted, unsupported, citing its first passage's longest line word for word.
  */
+/**
+ * The mini-story writer's steps, answered from a story that ships with the app. The first story it's
+ * asked for comes back without translations, so the writer has to ask again.
+ */
+let storyAsks = 0;
+function syntheticStoryReply(asked) {
+  const story = germanStories[6];
+  if (asked.includes("Plan a short original story")) return `Here is the plan:\n\n\`\`\`json\n${JSON.stringify({ title: story.a[0], titleTranslation: story.a[1], newWords: ["Fahrrad", "kaputt", "reparieren", "Werkstatt", "Kette", "Reifen", "schieben", "pünktlich"], outline: "A bike breaks on the way to work and gets fixed." })}\n\`\`\``;
+  if (asked.includes("Write the story \\\"")) return storyAsks++ === 0 ? readStoryLines(story.a[2]).body : story.a[2];
+  if (asked.includes("Retell this")) return story.b[2];
+  if (asked.includes("questions and answers") && asked.includes("walk through this story")) return story.qa[2];
+  if (asked.includes("for a learner at CEFR") && asked.includes("Rewrite this")) return "Lena hat eine Katze.\n\nDie Katze heißt Mimi. Mimi ist klein.";
+  return null;
+}
+
 /** Language learning look-ups: a few Spanish words and their meanings, anything else translated in brackets. */
 function syntheticLookupReply(messages) {
   let request = {};
@@ -447,7 +464,8 @@ const server = createServer(async (request, response) => {
             const lessonReply = asked.includes("Answer with the title on the first line")
               ? "Una mañana en el mercado\n\nAna se levanta temprano. Hoy va al mercado con su madre.\n\nEn el mercado hay mucha gente. Ana compra pan, fruta y queso. Su madre habla con la vendedora.\n\nDespués vuelven a casa y preparan la comida."
               : null;
-            const reply = lessonReply ? lessonReply : lookupReply ? lookupReply : ratchetReply ? ratchetReply : asked.includes("The user wrote a note on a whiteboard")
+            const storyReply = syntheticStoryReply(asked);
+            const reply = storyReply ? storyReply : lessonReply ? lessonReply : lookupReply ? lookupReply : ratchetReply ? ratchetReply : asked.includes("The user wrote a note on a whiteboard")
               ? "```mermaid\nflowchart TD\n  N[Sleep under 6 hours] --> C[Higher cortisol]\n  N --> I[Worse insulin response]\n  C --> R[More belly fat]\n  I --> R\n  R --> Q{Fix sleep first?}\n```"
               : asked.includes("selected passage is a Mermaid diagram") || asked.includes("Help edit a Mermaid diagram")
               ? "Here is the updated diagram:\n\n```mermaid\nflowchart TD\n  A[Pack] --> S[Pack snacks]\n  S --> B{Rain?}\n  B -->|yes| C[Museum]\n  B -->|no| D[Beach]\n```\n\nI added a snack step."

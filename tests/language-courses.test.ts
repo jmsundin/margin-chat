@@ -469,3 +469,51 @@ describe("a document read as lessons", () => {
     expect(sections).toEqual([{ heading: "Erster Teil", paragraphs: ["Das ist gut."] }, { heading: "Zweiter Teil", paragraphs: ["Noch ein Satz.", "Und mehr."] }]);
   });
 });
+
+describe("mini stories the AI writes", () => {
+  test("plan, story, retelling and questions, each part checked and asked for again with the reason", async () => {
+    const stories = (await import("../packages/workspace-contracts/miniStories/de.mjs")).default;
+    const { writeMiniStory, checkPart, jsonIn } = await import("../client/src/lib/miniStoryWriter");
+    const story = stories[3];
+    const prompts: string[] = [];
+    let storyTries = 0;
+    const ask = async (prompt: string) => {
+      prompts.push(prompt);
+      if (prompt.startsWith("Plan")) return "```json\n" + JSON.stringify({ title: story.a[0], titleTranslation: story.a[1], newWords: ["Bus", "Fahrkarte"], outline: "x" }) + "\n```";
+      if (prompt.startsWith("Write the story")) return storyTries++ ? story.a[2] : "Anna fährt Bus. Sie hat eine Fahrkarte.";
+      if (prompt.startsWith("Retell")) return story.b[2];
+      return story.qa[2];
+    };
+    const steps: string[] = [];
+    const written = await writeMiniStory({ lang: "de", base: "en", level: "A1", known: ["und", "ist"], ask, signal: new AbortController().signal, onProgress: (step) => steps.push(step) });
+    expect(written.title).toBe(story.a[0]);
+    expect(steps).toEqual(["Planning the story…", "Writing the story…", "Retelling it…", "Writing questions…"]);
+    expect(prompts[0]).toContain("und, ist");
+    expect(prompts[2]).toContain("couldn't be used");
+    expect(prompts.find((prompt) => prompt.startsWith("Retell"))).toContain(" | ");
+    for (const part of ["a", "b", "qa"] as const) {
+      const { tokenizeLesson } = await import("../packages/workspace-contracts/languageCourses.mjs");
+      expect(written.parts[part].translation.split("\n").length).toBe(tokenizeLesson(written.parts[part].body, "de").sentenceCount);
+    }
+    expect(checkPart("Eins. Zwei. | One. Two.\nDrei. | Three.", "a", "de")).toMatchObject({ problem: expect.stringContaining("one sentence on each line") });
+    expect(jsonIn("Sure! {\"title\": \"T\"} hope it helps")).toEqual({ title: "T" });
+    await expect(writeMiniStory({ lang: "de", base: "en", level: "A1", known: [], ask: async () => "no", signal: new AbortController().signal })).rejects.toThrow("didn't plan");
+  });
+
+  test("the account keeps a written story as three lessons in the learner's own stories course", async () => {
+    const { createLanguageCourseService } = await import("../server/languageCourses/index.mjs");
+    const { readStoryLines } = await import("../packages/workspace-contracts/languageCourses.mjs");
+    const stories = (await import("../packages/workspace-contracts/miniStories/de.mjs")).default;
+    const { client } = await database();
+    const service = createLanguageCourseService({ database: new Proxy({}, { get: (_target, name: string) => (args: any) => (courses as any)[name](client, args) }) });
+    const lessons = (["a", "b", "qa"] as const).map((variant) => ({ variant, title: stories[0][variant][0], ...readStoryLines(stories[0][variant][2]) }));
+    const first = await service.createLessons({ userId: "u3", body: { lang: "de", level: "A1", story: true, lessons } });
+    expect(first.course).toMatchObject({ title: "My mini stories", tags: ["mini-stories"] });
+    expect(first.lessons.map((lesson: any) => [lesson.variant, lesson.pos, lesson.source, Boolean(lesson.translation)])).toEqual([["a", 0, "generated", true], ["b", 1, "generated", true], ["qa", 2, "generated", true]]);
+    expect(new Set(first.lessons.map((lesson: any) => lesson.storyGroup)).size).toBe(1);
+    const second = await service.createLessons({ userId: "u3", body: { lang: "de", level: "A1", story: true, lessons: lessons.map((lesson) => ({ ...lesson, translation: "too\nfew" })) } });
+    expect(second.course.id).toBe(first.course.id);
+    expect(second.lessons.map((lesson: any) => [lesson.pos, lesson.translation])).toEqual([[3, null], [4, null], [5, null]]);
+    await expect(service.createLessons({ userId: "u3", body: { lang: "de", story: true, lessons: lessons.slice(0, 2) } })).rejects.toThrow("retelling and questions");
+  });
+});
