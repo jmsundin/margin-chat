@@ -5002,28 +5002,6 @@ function WorkspaceAppContent({
     closeSelectionDraft();
   }
 
-  /**
-   * Write back: the user's reply to a paragraph the AI wrote goes in as their own line under it, and
-   * the AI answers below that, with the paragraph as what they're replying to.
-   */
-  function handleWriteBack(conversationId: string, aiBlockId: string, text: string) {
-    const conversation = currentStateRef.current.conversations[conversationId];
-    const document = conversation ? getEditableDocument(conversation) : null;
-    const aiBlock = document?.blocks.find((block) => block.id === aiBlockId);
-    if (!conversation || !document || !aiBlock || chatExecutions.has(conversationId)) return;
-    const now = new Date().toISOString();
-    const replyId = createId("block");
-    const updated = insertDocumentBlock(conversation, { id: replyId, kind: "markdown", content: text, authorship: "user", createdAt: now, updatedAt: now },
-      { blockId: aiBlock.id, offset: aiBlock.content.length }, now);
-    const next = replaceDocumentConversation(currentStateRef.current, updated);
-    currentStateRef.current = next;
-    setState(next);
-    // A plain answer, like Ask AI's, in every AI behaviour; it turns to questions only when the user asks for help thinking.
-    handleDocumentSubmit(conversationId, { blockId: replyId, from: text.length, to: text.length, sourceContent: text, destination: "inline", replaceSelection: false,
-      prompt: [`You wrote: "${aiBlock.content.trim()}"`, `I wrote back: "${text}"`,
-        "Reply to what I wrote back, briefly. If I asked something, answer it directly. Only if I ask you to help me think it through, ask me a question that moves my thinking on instead of answering."].join("\n\n") });
-  }
-
   /** Bold, a heading, a list…: the selection toolbar's format row writes the Markdown into the passage's block. */
   function handleFormatSelection(format: SelectionFormat) {
     if (!selectionDraft?.sourceBlockId) return;
@@ -6962,7 +6940,6 @@ function WorkspaceAppContent({
       emptyExamples={modes && writing && view === "chat" && !embedded && !inMargin && !guest ? PAGE_EXAMPLES : undefined}
       aiInstruction={writing && !conversation.vaultFile && !isCompactDocument(conversation) ? <>{renderAnswerSourcesLine(conversation)}<AIInstructionLine value={conversation.aiInstruction}
         inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /></> : undefined}
-      onWriteBack={(blockId, text) => handleWriteBack(conversation.id, blockId, text)}
       // The quiet page shows nothing above the text unless it has something to say: Tell the AI and
       // how the AI joins in are set in the Ask panel, and the page view in the document's ⋯ menu.
       quiet={quietPage && !conversation.vaultFile && !isCompactDocument(conversation)}

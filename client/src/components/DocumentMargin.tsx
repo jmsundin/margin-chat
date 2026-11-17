@@ -93,6 +93,14 @@ function anchorMarks(body: HTMLElement, id: string) {
   });
 }
 
+/**
+ * Beside an HTML page the page itself never scrolls (it fills the panel), so the margin scrolls on
+ * its own there: otherwise a long note, or many notes, run off the bottom with no way to reach them.
+ */
+function scrollsItself(aside: HTMLElement) {
+  return getComputedStyle(aside).overflowY === "auto";
+}
+
 /** Scrolling up or down inside a note that can still scroll belongs to that note. */
 function scrollsInside(target: EventTarget | null, stop: Element, deltaY: number) {
   for (let element = target instanceof Element ? target : null; element && element !== stop; element = element.parentElement) {
@@ -297,7 +305,8 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   useLayoutEffect(() => {
     const aside = asideRef.current;
     if (!expandedId || !aside || placements[expandedId]?.left !== undefined) { setExpandBy(0); return; }
-    const measure = () => setExpandBy(Math.max(0, Math.min(Math.round(width * 0.5), Math.floor(window.innerWidth - aside.getBoundingClientRect().right - 16))));
+    // A margin that scrolls by itself (beside an HTML page) clips sideways, so its note can't widen out.
+    const measure = () => setExpandBy(scrollsItself(aside) ? 0 : Math.max(0, Math.min(Math.round(width * 0.5), Math.floor(window.innerWidth - aside.getBoundingClientRect().right - 16))));
     measure();
     window.addEventListener("resize", measure);
     return () => window.removeEventListener("resize", measure);
@@ -327,7 +336,8 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     scrollTarget.current = null;
     const top = Math.min(placement.top, placement.anchorTop ?? placement.top);
     const bottom = placement.top + (itemRefs.current[id]?.offsetHeight ?? 0);
-    if (top < body.scrollTop || bottom > body.scrollTop + body.clientHeight) body.scrollTop = Math.max(0, top - 24);
+    const scroller = asideRef.current && scrollsItself(asideRef.current) ? asideRef.current : body;
+    if (top < scroller.scrollTop || bottom > scroller.scrollTop + scroller.clientHeight) scroller.scrollTop = Math.max(0, top - 24);
     syncScroll();
   }, [activeId, placements]);
 
@@ -376,7 +386,8 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     onWheel={(event) => {
       const body = bodyRef.current;
       if (!body || scrollsInside(event.target, event.currentTarget, event.deltaY)) return;
-      body.scrollTop += event.deltaY;
+      // A note's own body stops the wheel from reaching the margin, so the margin is moved here.
+      (scrollsItself(event.currentTarget) ? event.currentTarget : body).scrollTop += event.deltaY;
     }}>
     {linkedRule ? <style>{linkedRule}</style> : null}
     <div className="document-margin-track" ref={trackRef} style={{ height }}>

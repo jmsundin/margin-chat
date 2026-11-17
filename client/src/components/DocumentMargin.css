@@ -39,6 +39,10 @@
 /* A note the user clicked opens up to half again as wide, into the room right of the page; the
    margin clips above and below as before but lets that note out on the right. */
 .document-margin:has(.document-margin-item.is-expanded) { overflow: visible; clip-path: inset(0 -100vw); z-index: 3; }
+/* Beside an HTML page, which fills the panel and never scrolls, the margin scrolls by itself so a
+   long open note (or a long list of notes) can still be read to the end. */
+.document-panel-content:has(> .document-body.is-html-page[data-html-view="page"]) > .document-margin:not(.is-marks) {
+  overflow-x: hidden; overflow-y: auto; clip-path: none; overscroll-behavior: contain; scrollbar-width: thin; }
 /* Notes moved to the left of the text when the right margin is crowded: they still scroll with it. */
 .document-margin.has-left-notes { overflow-x: visible; overflow-y: clip; z-index: 2; }
 /* Notes glide to new places when one above them grows or shrinks, instead of jumping. The clicked
