@@ -71,6 +71,9 @@
   .map-course { top: calc(var(--map-header-bottom, 56px)); bottom: 116px; padding-bottom: 24px; }
   .map-course-legend { display: none; }
 }
+/* A map docked above the page hides its bottom toolbars on a phone, so the course fills the whole pane (it was cut off after the first stage). */
+.workspace-view.is-docked.is-narrow .map-course { bottom: 0; }
+@media (max-width: 900px) { .workspace-view.is-docked .map-course { bottom: 0; } }
 @media (prefers-reduced-motion: reduce) { .map-course-meter > span { transition: none; } }
 
 /* The open lesson's details sit in the sticky header, so the course below is never covered. */

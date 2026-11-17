@@ -8,7 +8,7 @@
   border-radius: 10px;
   box-shadow: 0 1px 3px rgb(0 0 0 / 4%);
 }
-.document-body { --document-top-padding:20px; --document-left-padding:24px; --document-right-padding:32px; position: relative; padding: var(--document-top-padding) var(--document-right-padding) 72px var(--document-left-padding); overflow-y: auto; }
+.document-body { --document-top-padding:20px; --document-left-padding:24px; --document-right-padding:32px; --document-bottom-padding:72px; position: relative; padding: var(--document-top-padding) var(--document-right-padding) var(--document-bottom-padding) var(--document-left-padding); overflow-y: auto; }
 .document-dock-pane-body .document-body { --document-right-padding:24px; }
 .document-panel-content { position: relative; display: flex; flex: 1 1 auto; min-height: 0; min-width: 0; }
 .document-panel-content > .document-body { flex: 1 1 auto; min-width: 0; }
@@ -89,7 +89,7 @@
 .document-attachments { display:flex; gap:8px; flex-wrap:wrap; color:var(--muted); font-size:12px; border-top:1px solid var(--line); margin-top:18px; padding-top:12px; }
 .document-attachments > span { display:inline-flex; align-items:center; gap:6px; }
 .document-attachments button { border:0; background:transparent; color:var(--muted); }
-@media(max-width:640px) { .document-body { --document-top-padding:16px; --document-left-padding:20px; padding-bottom:48px; } .document-ai-toolbar { gap:4px; } .document-ai-composer { padding:10px; } }
+@media(max-width:640px) { .document-body { --document-top-padding:16px; --document-left-padding:20px; --document-bottom-padding:48px; } .document-ai-toolbar { gap:4px; } .document-ai-composer { padding:10px; } }
 
 /* Size reading margins by the document pane, including narrow pinned panes. */
 .document-panel { container-type: inline-size; container-name: document-pane; --document-block-gutter: clamp(20px, 4cqi, 32px); }

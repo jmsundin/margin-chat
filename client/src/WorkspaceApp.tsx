@@ -1302,6 +1302,11 @@ function WorkspaceAppContent({
   const createSlot = useMobileDockSlot("create");
   const isGraphView = mainViewMode === "graph";
   const visibleDocumentIds = new Set([...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]);
+  // A margin note read beside its page (tapping its passage selects it) leaves the phone header on that page:
+  // its title, mode and ⋯ menu stay the page's, as when the note was opened from the margin.
+  const marginNoteHost = isCompactDocument(activeConversation) && activeConversation.parentId && !visibleDocumentIds.has(activeConversation.id)
+    && visibleDocumentIds.has(activeConversation.parentId) ? state.conversations[activeConversation.parentId] ?? null : null;
+  const headerConversation = marginNoteHost ?? activeConversation;
   // A new document you leave without writing in is removed a few minutes later, unless you come back to it.
   const cleanupStartedAtRef = useRef(Date.now());
   const leftEmptyDocumentsRef = useRef<LeftEmptyDocuments | null>(null);
@@ -1638,6 +1643,8 @@ function WorkspaceAppContent({
           action: "Open in Language", dismiss: "keep it as a page", act: () => {
             rememberLanguagePair({ target: language, base });
             handleLanguageLearningChange(conversation.id, { target: language, base });
+            // They chose Language themselves, so "Opened in Language because…" would only cover the page.
+            dismissFeatureHint("mode-note:language");
           } };
       },
       () => !features.roadmaps && modes && conversation.nodeType !== "roadmap" && pastedLinkOf(blocks)
@@ -7737,12 +7744,12 @@ function WorkspaceAppContent({
                     {isMobileViewport ? <button type="button" className="document-header-title" aria-expanded={mobileHeaderOpen}
                       aria-controls="document-header-details" title={mobileHeaderOpen ? "Hide tabs and path" : "Show tabs, path and views"}
                       onClick={() => setMobileHeaderOpen((open) => !open)}>
-                      <span className={`document-navigator-kind is-${getDocumentKind(activeConversation)}`} aria-hidden="true" />
+                      <span className={`document-navigator-kind is-${getDocumentKind(headerConversation)}`} aria-hidden="true" />
                       <span className="document-header-title-stack">
                         {activeSpace ? <span className="document-header-space">
                           {activeSpace.name}{showSpaceStart ? "" : visitorRootIds.includes(activeRootId) ? " · visiting" : ""}
                         </span> : null}
-                        <span className="document-header-title-label">{showSpaceStart ? "Choose documents" : activeConversation.title || "Untitled document"}</span>
+                        <span className="document-header-title-label">{showSpaceStart ? "Choose documents" : headerConversation.title || "Untitled document"}</span>
                       </span>
                       <svg className="document-header-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 9l6 6 6-6" /></svg>
                     </button> : renderSessionTabs()}
@@ -7755,10 +7762,10 @@ function WorkspaceAppContent({
                       {/* On computers each document's own header holds it. */}
                       {showSpaceStart ? null : <DocumentMapButton open={shownSheet.mode !== "page"} onToggle={handleToggleDocumentMap} />}
                       {/* On a phone a page's Play and page controls sit in this row, beside its title. */}
-                      {isMobileViewport && isPlayPage(activeConversation) ? <span className="html-page-header-slot" ref={setHtmlHeaderSlot} /> : null}
+                      {isMobileViewport && isPlayPage(headerConversation) ? <span className="html-page-header-slot" ref={setHtmlHeaderSlot} /> : null}
                       {isMobileViewport && maximizedDocument ? renderFullScreenButton() : null}
-                      {isMobileViewport && !showSpaceStart ? renderDocumentModeSwitch(activeConversation) : null}
-                      {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
+                      {isMobileViewport && !showSpaceStart ? renderDocumentModeSwitch(headerConversation) : null}
+                      {isMobileViewport ? renderDocumentMenu(headerConversation) : quietHeader ? <>
                         {activeConversation.document || activeConversation.kind === "note" || isPlayPage(activeConversation) ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
                           onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
                           title={isPlayPage(activeConversation) ? "Ask the AI about what's on screen" : "Ask the AI about this whole note"}>Ask</button> : null}
