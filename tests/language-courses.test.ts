@@ -317,3 +317,86 @@ describe("a word's sentence and review schedule travel with it", () => {
     expect(readLanguageTerm({ ...term, srs: { state: "soon" }, updatedAt: "2026-11-17T10:00:00Z" })?.srs).toBeUndefined();
   });
 });
+
+describe("the reader's sentences line up with a lesson's", () => {
+  test("a shipped lesson read in the reader has the same sentences, so each translation line meets its sentence", async () => {
+    const { readerParagraphs } = await import("../client/src/lib/languageReader");
+    for (const lesson of builtInMiniStories("de", germanStories).lessons) {
+      const blocks = lesson.body.split("\n\n").map((content, index) => ({ id: `p${index}`, content }));
+      const sentences = readerParagraphs(blocks, "de").flatMap((paragraph) => paragraph.sentences);
+      const cut = tokenizeLesson(lesson.body, "de");
+      expect({ id: lesson.id, sentences: sentences.length }).toEqual({ id: lesson.id, sentences: cut.sentenceCount });
+      expect(sentences.flatMap((sentence) => sentence.tokens.flatMap((token) => token.key ? [token.key] : []))).toEqual(cut.tokens.filter((token) => token.isWord).map((token) => token.norm));
+    }
+  });
+});
+
+describe("study counted on this device until the account has it", () => {
+  const memory = () => { const data = new Map<string, string>(); return { data, getItem: (key: string) => data.get(key) ?? null, setItem: (key: string, value: string) => { data.set(key, value); } }; };
+
+  test("events of a kind add up within the hour, an undo takes back, and a reload keeps what's waiting", async () => {
+    const { StudyQueue } = await import("../client/src/lib/languageCourses");
+    const storage = memory();
+    const sent: unknown[] = [];
+    let status = 503;
+    const fetcher = (async (_url: unknown, init?: RequestInit) => { sent.push(JSON.parse(String(init?.body))); return new Response("{}", { status }); }) as typeof fetch;
+    const queue = new StudyQueue("u1", storage, fetcher, -1);
+    const at = new Date("2026-11-17T10:05:00Z");
+    queue.add({ lang: "de", type: "words_known", count: 12, lessonId: "de-ms-01-a" }, at);
+    queue.add({ lang: "de", type: "words_known", count: 5, lessonId: "de-ms-01-a" }, new Date("2026-11-17T10:40:00Z"));
+    queue.add({ lang: "de", type: "words_known", count: -5, lessonId: "de-ms-01-a" }, new Date("2026-11-17T10:41:00Z"));
+    queue.add({ lang: "de", type: "words_read", count: 160 }, at);
+    queue.add({ lang: "de", type: "words_read", count: -3 }, new Date("2026-11-17T12:00:00Z"));
+    expect(queue.pending.map((event) => [event.type, event.count])).toEqual([["words_known", 12], ["words_read", 160]]);
+    await queue.flush();
+    // The account was down: nothing is lost, and a new page picks it up.
+    expect(new StudyQueue("u1", storage, fetcher, -1).pending).toHaveLength(2);
+    status = 200;
+    await queue.flush();
+    expect(queue.pending).toEqual([]);
+    expect(new StudyQueue("u1", storage, fetcher, -1).pending).toEqual([]);
+    expect((sent.at(-1) as { events: unknown[] }).events).toHaveLength(2);
+  });
+
+  test("a lesson's place is kept as a token index and read back as its sentence", async () => {
+    const { sentenceOfTokenIndex, tokenIndexOfSentence } = await import("../client/src/lib/languageCourses");
+    const { tokens } = tokenizeLesson("Das ist Lena. Sie wohnt in Berlin.\n\nLena hat eine Katze.", "de");
+    const index = tokenIndexOfSentence(tokens, 2);
+    expect(tokens[index].text).toBe("Lena");
+    expect(sentenceOfTokenIndex(tokens, index)).toBe(2);
+    expect(sentenceOfTokenIndex(tokens, 0)).toBe(0);
+  });
+
+  test("a page's words are rated together: one update and one save", () => {
+    const writes: string[] = [];
+    const store = new LanguageTermStore("u1", { getItem: () => null, setItem: (_key, value) => { writes.push(value); } });
+    let updates = 0;
+    store.subscribe(() => { updates++; });
+    store.set("de", "katze", { status: 2 }, "2026-11-17T10:00:00.000Z");
+    const changed = store.setMany("de", ["das", "ist", "lena", "katze"], { status: 5 }, "2026-11-17T10:00:01.000Z");
+    expect(changed.map((term) => term.key)).toEqual(["das", "ist", "lena", "katze"]);
+    expect([updates, writes.length]).toEqual([2, 2]);
+    expect(store.setMany("de", ["das"], { status: 5 }, "2026-11-17T10:00:02.000Z")).toEqual([]);
+    expect(updates).toBe(2);
+  });
+});
+
+describe("progress through the account", () => {
+  test("saving a place, completing with study events, and refusing ids that aren't lessons", async () => {
+    const { client } = await database();
+    const { createLanguageCourseService } = await import("../server/languageCourses/index.mjs");
+    const bound = (name: keyof typeof courses) => (args: any) => (courses[name] as any)(client, args);
+    const service = createLanguageCourseService({ database: { saveProgress: bound("saveProgress"), addLearningEvents: bound("addLearningEvents"), enroll: bound("enroll"), readProgress: bound("readProgress") } });
+    await service.saveProgress({ userId: "u1", lessonId: "de-ms-01-a", body: { lang: "de", percent: 50, lastTokenIndex: 40, seconds: 45, courseId: "de-mini-stories", events: [{ lang: "de", type: "words_known", count: 9 }] } });
+    const done = await service.saveProgress({ userId: "u1", lessonId: "de-ms-01-a", body: { lang: "de", complete: true, events: [{ lang: "de", type: "words_read", count: 68 }] } });
+    expect(done.progress).toMatchObject({ status: "completed", readCount: 1, seconds: 45 });
+    const stats = await courses.readDailyStats(client, { userId: "u1", lang: "de", since: "2026-01-01T00:00:00Z" });
+    expect(stats[0]).toMatchObject({ words_known: 9, words_read: 68, lesson_completed: 1 });
+    expect(await courses.readEnrollments(client, { userId: "u1", lang: "de" })).toMatchObject([{ courseId: "de-mini-stories", lastLessonId: "de-ms-01-a" }]);
+    expect((await service.readProgress({ userId: "u1", lang: "de" })).progress).toHaveLength(1);
+    await expect(service.saveProgress({ userId: "u1", lessonId: "../etc", body: { lang: "de" } })).rejects.toThrow("isn't here");
+    await expect(service.saveProgress({ userId: "u1", lessonId: "de-ms-01-a", body: { lang: "ja" } })).rejects.toThrow("spaces");
+    await expect(service.recordEvents({ userId: "u1", body: { events: Array.from({ length: 201 }, () => ({ lang: "de", type: "words_read", count: 1 })) } })).rejects.toThrow("at most");
+    expect(await service.recordEvents({ userId: "u1", body: { events: [{ lang: "de", type: "words_read", count: 3, at: "2999-01-01T00:00:00Z" }] } })).toEqual({ saved: 1 });
+  });
+});

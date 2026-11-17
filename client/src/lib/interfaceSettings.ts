@@ -22,6 +22,8 @@ export const SYNCED_SETTINGS = [
   "margin-chat:dictation-hold-space",
   "margin-chat:feature-hints-dismissed",
   "margin-chat:language-reader:look",
+  "margin-chat:language-reader:auto-known",
+  "margin-chat:language-reader:auto-known-explained",
 ] as const;
 export type SyncedSetting = (typeof SYNCED_SETTINGS)[number];
 

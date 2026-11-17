@@ -12,6 +12,9 @@ import { deviceCanSpeak, speak, stopSpeaking } from "../lib/languageSpeech";
 import { formatTimestamp, type MediaEmbed } from "../lib/documentMedia";
 import { lessonAudioOf, sentenceAtTime, sentenceTimes } from "../lib/languageLessons";
 import { useVaultMedia } from "../lib/vaultMedia";
+import { wordsToMarkKnown } from "@margin-chat/workspace-contracts/languageCourses";
+import { AUTO_KNOWN_EXPLAINED_KEY, AUTO_KNOWN_KEY, autoKnownExplained, autoMarkKnown } from "../lib/languageCourses";
+import { writeSyncedSetting } from "../lib/interfaceSettings";
 import "./LanguageReader.css";
 
 /** The word or words a card is open on: a sentence and a run of its words. */
@@ -23,7 +26,29 @@ interface Props {
   learning: DocumentLanguageLearning;
   /** Opens the app's own menu for a passage (note, Ask AI) on the term or its sentence. */
   onAskInMargin?: (request: { blockId: string; term: string; sentence: string; rect: { left: number; top: number; width: number; height: number } }) => void;
+  /** Set when the text is a course lesson: shorter pages, a place kept, a translation per sentence and a Complete lesson button. */
+  lesson?: ReaderLesson;
 }
+
+/** What one sitting with a lesson came to, shown when it's completed. */
+export interface LessonSummary { wordsKnown: number; meaningsSaved: number; seconds: number }
+
+export interface ReaderLesson {
+  id: string;
+  /** One line per sentence, when the lesson has its own translation; Focus view shows it without asking the AI. */
+  translations: ReadonlyArray<string> | null;
+  /** The sentence the learner stopped at last time. */
+  resumeSentence?: number;
+  /** Where the learner is now: the first sentence on screen and how far through the lesson that is. */
+  onPlace: (place: { sentence: number; percent: number; seconds: number }) => void;
+  onComplete: (summary: LessonSummary) => void;
+  next?: { title: string; open: () => void } | null;
+  onReadAgain?: () => void;
+  onClose?: () => void;
+}
+
+/** About 150–200 words to a lesson page, as the spec asks; a document's pages are longer. */
+export const LESSON_PAGE_WORDS = 175;
 
 const STATUS_CLASS: Record<number, string> = { 0: "is-new", 1: "is-l1", 2: "is-l2", 3: "is-l3", 4: "is-familiar" };
 const answers = new Map<string, LookupAnswer>();
@@ -104,15 +129,16 @@ const isPhone = () => typeof matchMedia !== "undefined" && matchMedia("(max-widt
  * reader knows it; a tap opens its card, a drag makes a phrase, and the arrow
  * keys walk the words being learned.
  */
-export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props) {
+export function LanguageReader({ blocks, pair, learning, onAskInMargin, lesson }: Props) {
   const language = pair.target;
   const paragraphs = useMemo(() => readerParagraphs(blocks, language), [blocks, language]);
-  const pages = useMemo(() => paginate(paragraphs), [paragraphs]);
+  const pages = useMemo(() => paginate(paragraphs, lesson ? LESSON_PAGE_WORDS : undefined), [paragraphs, lesson ? 1 : 0]);
   const sentences = useMemo(() => paragraphs.flatMap((paragraph) => paragraph.sentences), [paragraphs]);
   const blockOfSentence = useMemo(() => new Map(paragraphs.flatMap((paragraph) => paragraph.sentences.map((sentence) => [sentence.index, paragraph.blockId] as const))), [paragraphs]);
   const pageOfSentence = useMemo(() => new Map(pages.flatMap((page, index) => page.flatMap((paragraph) => paragraph.sentences.map((sentence) => [sentence.index, index] as const)))), [pages]);
 
-  const [pageIndex, setPageIndex] = useState(0);
+  // A lesson opens where it was left.
+  const [pageIndex, setPageIndex] = useState(() => (lesson?.resumeSentence ? pageOfSentence.get(lesson.resumeSentence) ?? 0 : 0));
   const page = Math.min(pageIndex, pages.length - 1);
   const [view, setView] = useState<"page" | "focus">("page");
   const [focusIndex, setFocusIndex] = useState(0);
@@ -122,6 +148,62 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
   const [lookOpen, setLookOpen] = useState(false);
   const [speaking, setSpeaking] = useState<number | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
+
+  // ----- this sitting: words newly known, meanings saved and time spent reading -----
+  const session = useRef({ known: new Set<string>(), saved: 0, seconds: 0, reported: 0, active: Date.now() });
+  const [summary, setSummary] = useState<LessonSummary | null>(null);
+  const [knownNotice, setKnownNotice] = useState<{ keys: string[]; explain: boolean } | null>(null);
+  useEffect(() => {
+    const touch = () => { session.current.active = Date.now(); };
+    const root = rootRef.current;
+    root?.addEventListener("pointerdown", touch);
+    root?.addEventListener("keydown", touch);
+    // Time counts while the page is on screen and the reader has been used in the last two minutes.
+    const tick = window.setInterval(() => {
+      if (document.visibilityState === "visible" && Date.now() - session.current.active < 120_000) session.current.seconds += 15;
+    }, 15_000);
+    return () => {
+      root?.removeEventListener("pointerdown", touch);
+      root?.removeEventListener("keydown", touch);
+      window.clearInterval(tick);
+      const unreported = session.current.seconds - session.current.reported;
+      if (unreported > 0) learning.recordStudy?.({ type: "reader_seconds", count: unreported, lessonId: lesson?.id });
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => { if (!knownNotice || knownNotice.explain) return undefined; const timer = window.setTimeout(() => setKnownNotice(null), 5000); return () => window.clearTimeout(timer); }, [knownNotice]);
+
+  /** The words of some sentences, each once. */
+  const wordsOf = (list: ReadonlyArray<ReaderSentence>) => list.flatMap((sentence) => sentence.tokens.flatMap((token) => token.key ? [token.key] : []));
+  function rateMany(keys: string[], status: TermStatus) {
+    if (!keys.length) return;
+    if (learning.setTerms) learning.setTerms(language, keys, { status, docId: learning.docId });
+    else for (const key of keys) learning.setTerm(language, key, { status, docId: learning.docId });
+  }
+  /** LingQ's rule: words still new when the page is left are words the reader knew. Off in the reader's settings. */
+  function finishPage(list: ReadonlyArray<ReaderSentence>, quiet = false) {
+    const words = wordsOf(list);
+    learning.recordStudy?.({ type: "words_read", count: words.length, lessonId: lesson?.id });
+    if (!autoMarkKnown()) return [];
+    const keys = wordsToMarkKnown(words, statusOf);
+    // A notice is about the page just turned; an earlier one goes.
+    if (!keys.length) { setKnownNotice(null); return keys; }
+    rateMany(keys, 5);
+    keys.forEach((key) => session.current.known.add(key));
+    learning.recordStudy?.({ type: "words_known", count: keys.length, lessonId: lesson?.id });
+    const explain = !autoKnownExplained();
+    if (explain) writeSyncedSetting(AUTO_KNOWN_EXPLAINED_KEY, "1");
+    if (explain || !quiet) setKnownNotice({ keys, explain });
+    return keys;
+  }
+  function undoKnown() {
+    if (!knownNotice) return;
+    rateMany(knownNotice.keys, 0);
+    knownNotice.keys.forEach((key) => session.current.known.delete(key));
+    learning.recordStudy?.({ type: "words_known", count: -knownNotice.keys.length, lessonId: lesson?.id });
+    setKnownNotice(null);
+  }
+  function stopAutoKnown() { writeSyncedSetting(AUTO_KNOWN_KEY, "off"); undoKnown(); }
 
   // ----- the lookup pane: beside the text when there's room, a sheet from the bottom otherwise -----
   const [tab, setTab] = useState<LookupTab>("meanings");
@@ -315,9 +397,42 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
   function turnPage(direction: number) {
     const next = page + direction;
     if (next < 0 || next >= pages.length) return false;
+    if (direction > 0) finishPage(pages[page].flatMap((paragraph) => paragraph.sentences));
     stopReading(); setOpen(null); setPageIndex(next);
     rootRef.current?.scrollIntoView({ block: "start" });
     return true;
+  }
+
+  // ----- a lesson's place, and finishing it -----
+  const placeSentence = view === "focus" ? sentences[focusIndex]?.index ?? 0 : pages[page][0]?.sentences[0]?.index ?? 0;
+  useEffect(() => {
+    if (!lesson || !sentences.length) return undefined;
+    // Reported a moment after the reader settles, so flicking through pages doesn't send each one.
+    const timer = window.setTimeout(() => {
+      const lastOnScreen = view === "focus" ? placeSentence : pages[page].at(-1)?.sentences.at(-1)?.index ?? placeSentence;
+      const seconds = session.current.seconds - session.current.reported;
+      session.current.reported = session.current.seconds;
+      lesson.onPlace({ sentence: placeSentence, percent: Math.round(((lastOnScreen + 1) / sentences.length) * 100), seconds });
+    }, 800);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [placeSentence, lesson?.id]);
+  const atEnd = view === "focus" ? focusIndex >= sentences.length - 1 : page >= pages.length - 1;
+  function completeLesson() {
+    if (!lesson) return;
+    stopReading(); setOpen(null);
+    // Every word left new in the lesson is known now, the rest of this page with it.
+    finishPage(sentences, true);
+    const seconds = session.current.seconds - session.current.reported;
+    session.current.reported = session.current.seconds;
+    const result = { wordsKnown: session.current.known.size, meaningsSaved: session.current.saved, seconds: session.current.seconds };
+    lesson.onComplete({ ...result, seconds });
+    setSummary(result);
+    setKnownNotice(null);
+  }
+  function onMeaningSaved() {
+    session.current.saved++;
+    learning.recordStudy?.({ type: "meanings_saved", count: 1, lessonId: lesson?.id });
   }
 
   // ----- keyboard -----
@@ -463,6 +578,16 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
     </div>
     <div className="language-reader-progress" role="progressbar" aria-label="Place in the document" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(position * 100)}><i style={{ width: `${position * 100}%` }} /></div>
     {lookOpen ? <LookPanel look={look} onChange={changeLook} /> : null}
+    {knownNotice ? <div className={`language-reader-known${knownNotice.explain ? " is-explain" : ""}`} role="status" lang="en">
+      <span>{knownNotice.explain
+        ? <>Turning the page marked the <b>{knownNotice.keys.length}</b> word{knownNotice.keys.length === 1 ? "" : "s"} you didn't tap as known. Words you read without looking up are words you know, so your known count keeps up with your reading.</>
+        : <><b>{knownNotice.keys.length}</b> new word{knownNotice.keys.length === 1 ? "" : "s"} marked known.</>}</span>
+      <button type="button" onClick={undoKnown}>Undo</button>
+      {knownNotice.explain ? <>
+        <button type="button" onClick={() => setKnownNotice(null)}>Keep doing this</button>
+        <button type="button" onClick={stopAutoKnown}>Don't auto-mark known</button>
+      </> : <button type="button" aria-label="Dismiss" onClick={() => setKnownNotice(null)}>×</button>}
+    </div> : null}
 
     <div className="language-reader-text" lang={language} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerCancel}
       onContextMenu={(event) => { if (event.target instanceof Element && event.target.closest("[data-lr-word]") && isPhone()) event.preventDefault(); }}>
@@ -479,7 +604,13 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
           </Tag>;
         })}
       </> : sentences[focusIndex] ? <FocusSentence key={focusIndex} sentence={sentences[focusIndex]} pair={pair} learning={learning} canBack={focusIndex > 0} canNext={focusIndex < sentences.length - 1}
+        fixedTranslation={lesson?.translations?.[sentences[focusIndex].index] || undefined}
         onStep={step} onListen={(slow) => listenTo(sentences[focusIndex], slow)}>{renderSentence(sentences[focusIndex])}</FocusSentence> : null}
+      {lesson && atEnd && sentences.length && !summary ? <div className="language-reader-finish" lang="en">
+        <button type="button" className="is-primary" onClick={completeLesson}>Complete lesson</button>
+        <p>{autoMarkKnown() ? "Words you haven't tapped become known." : "Your words keep the statuses you gave them."}</p>
+      </div> : null}
+      {summary ? <LessonDone summary={summary} next={lesson?.next ?? null} onReadAgain={() => { setSummary(null); setPageIndex(0); setFocusIndex(0); lesson?.onReadAgain?.(); }} onClose={lesson?.onClose} /> : null}
     </div>
 
     <div className="language-reader-bar">
@@ -522,7 +653,7 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
       status={statusOf(open.key)} exists={learning.terms.has(termId(language, open.key))}
       partOf={open.from === open.to ? phraseAround(openSentence, open.from) : null}
       onPhrase={(match) => openRange(openSentence, match.from, match.from + match.length - 1)}
-      onRate={rate} onClose={() => { setOpen(null); rootRef.current?.focus({ preventScroll: true }); }}
+      onRate={rate} onMeaningSaved={onMeaningSaved} onClose={() => { setOpen(null); rootRef.current?.focus({ preventScroll: true }); }}
       onAsk={onAskInMargin ? () => {
         const element = rootRef.current?.querySelector(`[data-lr-sentence="${open.sentence}"][data-lr-word="${open.from}"]`);
         const box = element?.getBoundingClientRect();
@@ -533,6 +664,35 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin }: Props)
       } : undefined} rootRef={rootRef} paneRef={paneRef} />
     </div>, document.body) : null}
   </div>;
+}
+
+/** The end of a lesson: what this sitting added up to, and the next lesson. */
+function LessonDone({ summary, next, onReadAgain, onClose }: { summary: LessonSummary; next: ReaderLesson["next"]; onReadAgain: () => void; onClose?: () => void }) {
+  const minutes = Math.max(1, Math.round(summary.seconds / 60));
+  const nextRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => { nextRef.current?.focus({ preventScroll: true }); }, []);
+  return <section className="language-reader-done" lang="en" aria-labelledby="language-reader-done-title">
+    <h3 id="language-reader-done-title">Lesson complete</h3>
+    <dl>
+      <div><dt>Words learned</dt><dd>{summary.wordsKnown}</dd></div>
+      <div><dt>Meanings saved</dt><dd>{summary.meaningsSaved}</dd></div>
+      <div><dt>Time</dt><dd>{summary.seconds < 30 ? "under a minute" : `${minutes} min`}</dd></div>
+    </dl>
+    <div className="language-reader-done-actions">
+      {next ? <button ref={nextRef} type="button" className="is-primary" onClick={next.open}>Next lesson → <small>{next.title}</small></button> : <p>That was the last lesson in this course.</p>}
+      <button type="button" onClick={onReadAgain}>Read again</button>
+      {onClose ? <button type="button" onClick={onClose}>Back to the library</button> : null}
+    </div>
+  </section>;
+}
+
+/** Whether turning a page marks the words left new on it as known. */
+function AutoKnownToggle() {
+  const [on, setOn] = useState(autoMarkKnown);
+  return <label className="language-reader-toggle">
+    <input type="checkbox" checked={on} onChange={(event) => { setOn(event.target.checked); writeSyncedSetting(AUTO_KNOWN_KEY, event.target.checked ? "on" : "off"); }} />
+    <span>Mark untapped words known when I turn the page</span>
+  </label>;
 }
 
 function LookPanel({ look, onChange }: { look: ReaderLook; onChange: (look: ReaderLook) => void }) {
@@ -551,13 +711,17 @@ function LookPanel({ look, onChange }: { look: ReaderLook; onChange: (look: Read
       {READER_FONTS.map((font, index) => <button key={font.name} type="button" aria-pressed={look.font === index} onClick={() => onChange({ ...look, font: index })}>
         <b style={{ fontFamily: font.stack }}>Aa</b><small>{font.name}</small></button>)}
     </div>
-    <p className="language-reader-look-note">Saved on this device.</p>
+    <h4>Reading</h4>
+    <AutoKnownToggle />
+    <p className="language-reader-look-note">Saved to your account.</p>
   </div>;
 }
 
 /** Focus view: one sentence at a time, large, with its audio and, on request, what it means. */
-function FocusSentence({ sentence, pair, learning, canBack, canNext, onStep, onListen, children }: {
+function FocusSentence({ sentence, pair, learning, canBack, canNext, fixedTranslation, onStep, onListen, children }: {
   sentence: ReaderSentence; pair: LanguagePair; learning: DocumentLanguageLearning; canBack: boolean; canNext: boolean; onStep: (direction: 1 | -1) => void;
+  /** The lesson's own translation of this sentence: shown at once, with no AI asked. */
+  fixedTranslation?: string;
   onListen: (slow: boolean) => void; children: ReactNode;
 }) {
   const [shown, setShown] = useState(false);
@@ -565,6 +729,7 @@ function FocusSentence({ sentence, pair, learning, canBack, canNext, onStep, onL
   const [translation, setTranslation] = useState<{ state: "idle" | "loading" | "done" | "failed"; text: string }>({ state: "idle", text: "" });
   useEffect(() => {
     if (!shown) return undefined;
+    if (fixedTranslation && attempt === 0) { setTranslation({ state: "done", text: fixedTranslation }); return undefined; }
     const cacheKey = `${pair.target}>${pair.base}|sentence|${sentence.text}`;
     const cached = attempt === 0 ? answers.get(cacheKey) : undefined;
     if (cached) { setTranslation({ state: "done", text: cached.meaning }); return undefined; }
@@ -581,7 +746,7 @@ function FocusSentence({ sentence, pair, learning, canBack, canNext, onStep, onL
       <button type="button" onClick={() => onListen(false)}>Listen</button>
       <button type="button" onClick={() => onListen(true)}>Slowly</button>
       <span />
-      {learning.aiAllowed ? <button type="button" aria-pressed={shown} onClick={() => setShown((value) => !value)}>{shown ? "Hide translation" : "Show translation"}</button> : null}
+      {learning.aiAllowed || fixedTranslation ? <button type="button" aria-pressed={shown} onClick={() => setShown((value) => !value)}>{shown ? "Hide translation" : "Show translation"}</button> : null}
     </div>
     <div className="language-reader-focus-stage">
       <button type="button" className="language-reader-turn" aria-label="Previous sentence" disabled={!canBack} onClick={() => onStep(-1)}>‹</button>
@@ -590,7 +755,7 @@ function FocusSentence({ sentence, pair, learning, canBack, canNext, onStep, onL
     </div>
     {shown ? <p className="language-reader-translation" lang={pair.base}>
       {translation.state === "loading" ? <span role="status">Translating…</span> : translation.state === "failed" ? <span role="alert">{translation.text}</span> : <i>{translation.text}</i>}
-      {translation.state !== "loading" ? <button type="button" aria-label="Translate again" title="Translate again" onClick={() => setAttempt((value) => value + 1)}>↻</button> : null}
+      {translation.state !== "loading" && learning.aiAllowed ? <button type="button" aria-label="Translate again" title="Translate again" onClick={() => setAttempt((value) => value + 1)}>↻</button> : null}
     </p> : null}
   </div>;
 }
@@ -608,11 +773,11 @@ const PROVIDER_NAMES = { google: "Google Translate", deepl: "DeepL" } as const;
  * meaning on top; then meanings to pick from by source (Wiktionary, a machine translation, the AI reading
  * the sentence); the live Wiktionary page and the translator in tabs; and how well the reader knows it.
  */
-function LookupPane({ open, sentence, pair, learning, status, exists, partOf, sheet, tab, onTab, style, onPhrase, onRate, onClose, onAsk, rootRef, paneRef }: {
+function LookupPane({ open, sentence, pair, learning, status, exists, partOf, sheet, tab, onTab, style, onPhrase, onRate, onMeaningSaved, onClose, onAsk, rootRef, paneRef }: {
   open: OpenTerm; sentence: ReaderSentence; pair: LanguagePair; learning: DocumentLanguageLearning; status: TermStatus; exists: boolean;
   partOf: { from: number; length: number; key: string } | null; sheet: boolean; tab: LookupTab; onTab: (tab: LookupTab) => void; style?: CSSProperties;
   onPhrase: (match: { from: number; length: number; key: string }) => void;
-  onRate: (status: TermStatus) => void; onClose: () => void; onAsk?: () => void; rootRef: RefObject<HTMLDivElement | null>; paneRef: RefObject<HTMLElement | null>;
+  onRate: (status: TermStatus) => void; onMeaningSaved?: () => void; onClose: () => void; onAsk?: () => void; rootRef: RefObject<HTMLDivElement | null>; paneRef: RefObject<HTMLElement | null>;
 }) {
   const language = pair.target;
   const term = learning.terms.get(termId(language, open.key));
@@ -640,8 +805,12 @@ function LookupPane({ open, sentence, pair, learning, status, exists, partOf, sh
     const text = state.meaning.trim();
     // A phrase that was only dragged across, with nothing typed, is not saved.
     if (!text && !state.learning.terms.has(termId(language, open.key))) return;
-    state.learning.setTerm(language, open.key, { meaning: text, source: state.source, docId: state.learning.docId });
+    const before = state.learning.terms.get(termId(language, open.key))?.meaning ?? "";
+    // The sentence it was saved from comes with it, so Review can show the word where it was met.
+    state.learning.setTerm(language, open.key, { meaning: text, source: state.source, docId: state.learning.docId, ...(text ? { fragment: sentence.text } : {}) });
+    if (text && !before.trim()) onMeaningSaved?.();
     setSaved("saved");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [language, open.key]);
   useEffect(() => () => {
     commit();

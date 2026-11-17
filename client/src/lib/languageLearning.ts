@@ -161,6 +161,10 @@ export interface DocumentLanguageLearning {
   terms: ReadonlyMap<string, import("./languageReader").LanguageTerm>;
   /** Rates a term, gives it a meaning or tags it; shows at once everywhere the term appears. */
   setTerm: (language: string, text: string, patch: import("./languageTerms").TermPatch) => void;
+  /** Rates many words at once, as when a page is turned. */
+  setTerms?: (language: string, texts: ReadonlyArray<string>, patch: import("./languageTerms").TermPatch) => void;
+  /** Counts what was studied today: words read, words newly known, meanings saved, time reading. */
+  recordStudy?: (event: { type: import("./languageCourses").StudyEventType; count: number; lessonId?: string | null }) => void;
   /** False for a document hidden from AI: no meaning is asked for. */
   aiAllowed: boolean;
   /** Other documents whose text has this word or phrase. */

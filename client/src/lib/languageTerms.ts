@@ -35,14 +35,14 @@ export class LanguageTermStore {
   getSnapshot() { return this.snapshot; }
   get(language: string, key: string) { return this.terms.get(termId(language, key)); }
 
-  private changed() {
+  private changed = () => {
     this.snapshot = new Map(this.terms);
     try {
       this.storage?.setItem(storageKey(this.namespace), JSON.stringify({ terms: [...this.terms.values()], pending: [...this.pending], cursor: this.cursor } satisfies Saved));
       this.saveError = null;
     } catch { this.saveError = "This device is out of room for your word list. Changes are kept in your account when it's online."; }
     for (const listener of this.listeners) listener();
-  }
+  };
 
   /** Rates a term, gives it a meaning or tags it. A term that was never saved starts at Learning 1 unless a status is given. */
   set(language: string, text: string, patch: TermPatch, now = new Date().toISOString()): LanguageTerm | null {
@@ -70,6 +70,17 @@ export class LanguageTermStore {
     this.pending.add(id);
     this.changed();
     return next;
+  }
+
+  /** Rates many words at once, as when a page is turned: one save and one update for all of them. */
+  setMany(language: string, texts: ReadonlyArray<string>, patch: TermPatch, now = new Date().toISOString()): LanguageTerm[] {
+    const changed: LanguageTerm[] = [];
+    const notify = this.changed;
+    this.changed = () => undefined;
+    try { for (const text of texts) { const before = this.get(language, termKey(text)); const term = this.set(language, text, patch, now); if (term && term !== before) changed.push(term); } }
+    finally { this.changed = notify; }
+    if (changed.length) this.changed();
+    return changed;
   }
 
   pendingTerms(limit: number): LanguageTerm[] {
@@ -164,5 +175,12 @@ export function useLanguageTerms({ userId, enabled = true }: { userId: string; e
     return term;
   }, [store, sync]);
 
-  return { terms, setTerm, status, saveError: store.saveError };
+  const setTerms = useCallback((language: string, texts: ReadonlyArray<string>, patch: TermPatch) => {
+    const changed = store.setMany(language, texts, patch);
+    if (timer.current !== null) window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => { timer.current = null; void sync(); }, 1500);
+    return changed;
+  }, [store, sync]);
+
+  return { terms, setTerm, setTerms, status, saveError: store.saveError };
 }

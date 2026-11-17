@@ -245,3 +245,28 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
 .language-term-card.is-sheet .language-term-status { flex: 1; }
 .language-term-card.is-sheet .language-term-status button { width: 40px; height: 40px; }
 .language-term-card.is-sheet .language-term-actions .is-ask { padding: 4px 9px; white-space: nowrap; }
+
+/* Turning a page marks the words still new on it known: said once in full, then quietly with an Undo. */
+.language-reader-known { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 8px 0 0; padding: 8px 12px; border: 1px solid var(--lr-line); border-radius: 10px;
+  background: var(--lr-card); color: var(--lr-ink); font: .85rem/1.45 var(--ui-font, system-ui, sans-serif); }
+.language-reader-known > span { flex: 1 1 260px; }
+.language-reader-known button { border: 1px solid var(--lr-line); border-radius: 8px; background: transparent; color: var(--lr-ink); cursor: pointer; padding: 3px 10px; font: inherit; }
+.language-reader-known button:hover { background: var(--lr-pick-soft); }
+
+/* A lesson's end: Complete lesson, then what the sitting came to and the next lesson. */
+.language-reader-finish { display: flex; flex-direction: column; align-items: center; gap: 6px; margin: 28px 0 8px; font-family: var(--ui-font, system-ui, sans-serif); }
+.language-reader-finish p { margin: 0; color: var(--lr-muted); font-size: .8rem; }
+.language-reader-finish .is-primary, .language-reader-done .is-primary { border: 0; border-radius: 10px; background: var(--lr-pick); color: #fff; cursor: pointer; padding: 10px 20px; font: 600 .95rem var(--ui-font, system-ui, sans-serif); }
+.language-reader-done { margin: 24px auto 8px; max-width: 420px; padding: 18px 20px; border: 1px solid var(--lr-line); border-radius: 14px; background: var(--lr-card); font-family: var(--ui-font, system-ui, sans-serif); text-align: center; }
+.language-reader-done h3 { margin: 0 0 12px; font-size: 1.15rem; }
+.language-reader-done dl { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0 0 16px; }
+.language-reader-done dl div { display: flex; flex-direction: column-reverse; gap: 2px; }
+.language-reader-done dt { color: var(--lr-muted); font-size: .75rem; }
+.language-reader-done dd { margin: 0; font-size: 1.35rem; font-weight: 650; font-variant-numeric: tabular-nums; }
+.language-reader-done-actions { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.language-reader-done-actions .is-primary { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.language-reader-done-actions .is-primary small { font-weight: 400; opacity: .85; font-size: .8rem; }
+.language-reader-done-actions button:not(.is-primary) { border: 1px solid var(--lr-line); border-radius: 10px; background: transparent; color: var(--lr-ink); cursor: pointer; padding: 8px 14px; font: .9rem var(--ui-font, system-ui, sans-serif); }
+.language-reader-done-actions p { margin: 0; color: var(--lr-muted); font-size: .85rem; }
+.language-reader-toggle { display: flex; gap: 8px; align-items: flex-start; font: .85rem/1.4 var(--ui-font, system-ui, sans-serif); color: var(--lr-ink); cursor: pointer; }
+.language-reader-toggle input { margin-top: 2px; accent-color: var(--lr-pick); }

@@ -151,6 +151,7 @@ import { buildMapPath, createMapPath, isPathDocument, pathNameFromGoal } from ".
 import FlashcardReview from "./components/FlashcardReview";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
 import { useLanguageTerms } from "./lib/languageTerms";
+import { studyQueue } from "./lib/languageCourses";
 import { downloadBlob, exportAnkiFile, importAnkiFile } from "./lib/ankiFiles";
 import MakeCardsDialog, { type MakeCardsRequest } from "./components/MakeCardsDialog";
 import ClaimsPanel, { VerdictChip } from "./components/ClaimsPanel";
@@ -7027,7 +7028,8 @@ function WorkspaceAppContent({
         // A document hidden from AI sends only the word itself to the dictionary and the translator, never its sentence.
         dictionary: (request, signal) => requestLanguageLookup({ term: request.term, sentence: isHiddenFromAI(conversation) ? "" : request.sentence, src: request.pair.target, tgt: request.pair.base, expectedUserId: user.id, signal }),
         save: handleSaveMeaning, savedMeaning: savedMeaningFor,
-        docId: conversation.id, terms: languageTerms.terms, setTerm: languageTerms.setTerm, aiAllowed: !isHiddenFromAI(conversation),
+        docId: conversation.id, terms: languageTerms.terms, setTerm: languageTerms.setTerm, setTerms: languageTerms.setTerms,
+        recordStudy: (event) => { if (conversation.languageLearning) studyQueue(user.id).add({ ...event, lang: conversation.languageLearning.target }); }, aiAllowed: !isHiddenFromAI(conversation),
         mentions: documentsMentioning, openDocument: (id) => handleSelectConversation(id),
         newLesson: () => setLessonDialog({ fromId: conversation.id }),
       }}
