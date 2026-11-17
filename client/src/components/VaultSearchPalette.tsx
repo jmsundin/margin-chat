@@ -37,7 +37,8 @@ export function highlight(text: string, query: string): ReactNode {
 }
 
 function dateLabel(value?: string) {
-  if (!value || !Number.isFinite(Date.parse(value))) return "";
+  // Markdown files with no saved time carry 1970-01-01 as "unknown"; "Jan 1, 1970" told the reader nothing.
+  if (!value || !(Date.parse(value) > 0)) return "";
   return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
@@ -373,7 +374,7 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
           aria-expanded="true" autoComplete="off" onChange={(event) => { setPendingEnter(null); setQuery(event.target.value); }}
           placeholder={switcher ? "Find or create a document…" : "Search titles and passages in your whole vault…"}
           role="combobox" type="search" value={query}/>
-        <button aria-label="Close search" className="vault-search-close" onClick={onClose} type="button"><kbd>Esc</kbd></button>
+        <button aria-label="Close search" className="vault-search-close" onClick={onClose} type="button"><kbd>Esc</kbd><span className="vault-search-close-x" aria-hidden="true">×</span></button>
       </label>
       {switcher ? null : <div aria-label="Narrow the search" className="vault-search-scopes" role="group">
         {SCOPES.map((option) => <button aria-pressed={scope === option.id} key={option.id} onClick={() => { setScope(option.id); inputRef.current?.focus(); }}
