@@ -1,6 +1,7 @@
 import { writeSyncedSetting } from "./interfaceSettings";
 import { isPlayable, parseMediaEmbed, parseTimestampLine } from "./documentMedia";
 import { plainReadingText } from "./languageLearning";
+import { splitSentences, termKey as sharedTermKey, tokenizeWords } from "@margin-chat/workspace-contracts/languageCourses";
 
 /**
  * The interactive reader for Language learning mode: a document's text as words
@@ -24,17 +25,22 @@ export interface LanguageTerm {
   tags: string[];
   /** Documents the term was rated or given a meaning in. */
   docIds: string[];
+  /** The sentence the meaning was saved from, shown with the word in Review. */
+  fragment?: string;
+  /** When the word next comes up in Review (an FSRS card), once it has been reviewed. */
+  srs?: TermSchedule | null;
   createdAt: string;
   updatedAt: string;
 }
 
+/** A word's review schedule, the same card state flashcards keep. */
+export interface TermSchedule { state: "new" | "learning" | "review" | "relearning"; due: number; stability: number; difficulty: number; reps: number; lapses: number; lastReview: number | null }
+
 export const MAX_PHRASE_WORDS = 8;
 export const termId = (language: string, key: string) => `${language}\n${key}`;
 
-/** A word as terms are keyed: lowercase, one composed form, no punctuation around it. */
-export function termKey(text: string): string {
-  return text.normalize("NFC").toLocaleLowerCase().replace(/[^\p{L}\p{M}\p{N}'’\s-]+/gu, " ").replace(/’/gu, "'").replace(/\s+/gu, " ").trim();
-}
+/** A word as terms are keyed: lowercase, one composed form, no punctuation around it. Shared with the server's lesson tokenizer. */
+export const termKey: (text: string) => string = sharedTermKey;
 
 export interface ReaderToken { text: string; /** Set on words; punctuation and spaces have none. */ key?: string; word?: number }
 export interface ReaderSentence { index: number; text: string; tokens: ReaderToken[]; words: number }
@@ -46,50 +52,10 @@ export interface ReaderParagraph {
 
 const WORDISH = /[\p{L}\p{M}\p{N}]/u;
 
-/** Text split into words and what lies between them. Languages written without spaces use the browser's word breaker. */
-export function tokenize(text: string, language?: string): ReaderToken[] {
-  const tokens: ReaderToken[] = [];
-  let word = 0;
-  const push = (part: string, isWord: boolean) => {
-    if (!part) return;
-    if (isWord) tokens.push({ text: part, key: termKey(part), word: word++ });
-    else if (tokens.length && tokens[tokens.length - 1].key === undefined) tokens[tokens.length - 1].text += part;
-    else tokens.push({ text: part });
-  };
-  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
-    let pending = "";
-    // Joined by an apostrophe or hyphen (l'eau, grand-mère) is one word to a learner; the browser splits some of these.
-    const parts = [...new Intl.Segmenter(language, { granularity: "word" }).segment(text)];
-    for (let index = 0; index < parts.length; index++) {
-      const part = parts[index];
-      // Not `isWordLike`: some engines (older Safari among them) say no for a word with a digit in it.
-      const wordLike = WORDISH.test(part.segment);
-      if (wordLike) { pending += part.segment; continue; }
-      const next = parts[index + 1];
-      if (pending && /^['’-]$/u.test(part.segment) && next && WORDISH.test(next.segment)) { pending += part.segment; continue; }
-      push(pending, true); pending = "";
-      push(part.segment, false);
-    }
-    push(pending, true);
-    return tokens;
-  }
-  const pattern = /[\p{L}\p{M}\p{N}]+(?:['’-][\p{L}\p{M}\p{N}]+)*/gu;
-  let last = 0;
-  for (const match of text.matchAll(pattern)) {
-    push(text.slice(last, match.index), false);
-    push(match[0], true);
-    last = match.index + match[0].length;
-  }
-  push(text.slice(last), false);
-  return tokens;
-}
+/** Text split into words and what lies between them; the same cut the server makes of a lesson, so a word's key matches. */
+export const tokenize: (text: string, language?: string) => ReaderToken[] = tokenizeWords;
 
-function sentencesOf(text: string, language?: string): string[] {
-  if (typeof Intl !== "undefined" && "Segmenter" in Intl) {
-    return [...new Intl.Segmenter(language, { granularity: "sentence" }).segment(text)].map((part) => part.segment).filter((part) => part.trim());
-  }
-  return text.match(/[^.!?。！？]+[.!?。！？]*["”»')\]]*\s*/gu)?.filter((part) => part.trim()) ?? [text];
-}
+const sentencesOf = (text: string, language?: string): string[] => splitSentences(text, language);
 
 /**
  * A document's Markdown blocks as paragraphs of sentences of tokens. Code,

@@ -59,6 +59,8 @@ export async function buildAccountExport({ database, user, now = () => new Date(
       const result = await database.readLanguageTerms({ userId, since, limit: PAGE });
       return { rows: result.terms, cursor: result.cursor, more: result.more };
     })) : null;
+  const languageCourses = typeof database?.exportLanguageCourses === "function"
+    ? await part("languageCourses", () => database.exportLanguageCourses({ userId })) : null;
 
   return {
     schemaVersion: 1,
@@ -68,6 +70,7 @@ export async function buildAccountExport({ database, user, now = () => new Date(
     interfaceSettings,
     flashcards,
     languageTerms,
+    ...(languageCourses ? { languageCourses } : {}),
     ...(missing.length ? { missing } : {}),
   };
 }

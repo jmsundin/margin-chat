@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { apiFetch, apiStorageNamespace } from "./apiTransport";
-import { termId, termKey, type LanguageTerm, type MeaningSource, type TermStatus } from "./languageReader";
+import { termId, termKey, type LanguageTerm, type MeaningSource, type TermSchedule, type TermStatus } from "./languageReader";
 
 /**
  * The words and phrases a person is learning. Kept on this device first, so a
  * rating shows at once and survives being offline, then copied to the account.
  * The newer copy of a term wins, so two devices merge.
  */
-export type TermPatch = { meaning?: string; /** Where `meaning` came from; typed by the reader unless said. */ source?: MeaningSource; status?: TermStatus; tags?: string[]; docId?: string };
+export type TermPatch = { meaning?: string; /** Where `meaning` came from; typed by the reader unless said. */ source?: MeaningSource; status?: TermStatus; tags?: string[]; docId?: string; /** The sentence the word was saved from; an empty one keeps the sentence already saved. */ fragment?: string; srs?: TermSchedule | null };
 
 interface Saved { terms: LanguageTerm[]; pending: string[]; cursor: number }
 const storageKey = (namespace: string) => `margin-chat:language-terms:${namespace}`;
@@ -59,11 +59,13 @@ export class LanguageTermStore {
       language, key, meaning, source, status,
       tags: patch.tags ? [...new Set(patch.tags.map((tag) => tag.trim().replace(/^#/u, "")).filter(Boolean))].slice(0, 20) : existing?.tags ?? [],
       docIds: patch.docId && !(existing?.docIds ?? []).includes(patch.docId) ? [...(existing?.docIds ?? []), patch.docId].slice(-50) : existing?.docIds ?? [],
+      ...(patch.fragment !== undefined || existing?.fragment ? { fragment: patch.fragment !== undefined && (patch.fragment.trim() || !existing?.fragment) ? patch.fragment.trim().slice(0, 600) : existing?.fragment ?? "" } : {}),
+      ...(patch.srs !== undefined || existing?.srs !== undefined ? { srs: patch.srs !== undefined ? patch.srs : existing?.srs } : {}),
       createdAt: existing?.createdAt ?? now,
       // Always later than the copy it replaces, even when this device's clock is behind the one that wrote it.
       updatedAt: existing && existing.updatedAt >= now ? new Date(Date.parse(existing.updatedAt) + 1).toISOString() : now,
     };
-    if (existing && existing.meaning === next.meaning && (existing.source ?? "") === source && existing.status === next.status && existing.tags.join("\n") === next.tags.join("\n") && existing.docIds.length === next.docIds.length) return existing;
+    if (existing && existing.meaning === next.meaning && (existing.source ?? "") === source && existing.status === next.status && existing.tags.join("\n") === next.tags.join("\n") && existing.docIds.length === next.docIds.length && (existing.fragment ?? "") === (next.fragment ?? "") && JSON.stringify(existing.srs ?? null) === JSON.stringify(next.srs ?? null)) return existing;
     this.terms.set(id, next);
     this.pending.add(id);
     this.changed();
