@@ -42,7 +42,9 @@ export function readTermSrs(value) {
   const state = ["new", "learning", "review", "relearning"].includes(value.state) ? value.state : null;
   const lastReview = value.lastReview === null ? null : number(value.lastReview);
   if (due === null || stability === null || difficulty === null || reps === null || lapses === null || !state || lastReview === undefined) return undefined;
-  return { state, due, stability, difficulty, reps: Math.round(reps), lapses: Math.round(lapses), lastReview };
+  // Where a word is in its learning steps, so a card being learned moves on rather than starting them again.
+  const step = number(value.step);
+  return { state, due, stability, difficulty, reps: Math.round(reps), lapses: Math.round(lapses), lastReview, ...(step === null ? {} : { step: Math.min(20, Math.round(step)) }) };
 }
 
 const cursor = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0);

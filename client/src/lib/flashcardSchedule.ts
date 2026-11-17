@@ -94,6 +94,31 @@ export function previewRatings(reviews: ReadonlyArray<FlashcardReview>, now: num
   };
 }
 
+const STATES: Record<FlashcardSchedule["state"], State> = { new: State.New, learning: State.Learning, review: State.Review, relearning: State.Relearning };
+
+/** A card from a kept schedule, for things that keep where they stand rather than every review (a word's card). */
+function fromSchedule(schedule: (FlashcardSchedule & { step?: number }) | null, now: number): FsrsCard {
+  if (!schedule) return createEmptyCard(new Date(now));
+  const last = schedule.lastReview === null ? undefined : new Date(schedule.lastReview);
+  return {
+    due: new Date(schedule.due), stability: schedule.stability, difficulty: schedule.difficulty,
+    scheduled_days: last ? Math.max(0, Math.round((schedule.due - last.getTime()) / 86_400_000)) : 0,
+    learning_steps: schedule.step ?? 0, reps: schedule.reps, lapses: schedule.lapses, state: STATES[schedule.state] ?? State.New, ...(last ? { last_review: last } : {}),
+  } as FsrsCard;
+}
+
+/** Where a kept schedule stands after one more answer. */
+export function nextFromSchedule(schedule: (FlashcardSchedule & { step?: number }) | null, rating: FlashcardRating, now: number, options?: ScheduleOptions): FlashcardSchedule & { step: number } {
+  const card = scheduler(options).next(fromSchedule(schedule, now), new Date(now), rating as Grade).card;
+  return { ...toSchedule(card), step: card.learning_steps };
+}
+
+/** When a kept schedule would next come due for each answer. */
+export function previewFromSchedule(schedule: (FlashcardSchedule & { step?: number }) | null, now: number, options?: ScheduleOptions): Record<FlashcardRating, number> {
+  const outcomes = scheduler(options).repeat(fromSchedule(schedule, now), new Date(now));
+  return { 1: outcomes[Rating.Again].card.due.getTime(), 2: outcomes[Rating.Hard].card.due.getTime(), 3: outcomes[Rating.Good].card.due.getTime(), 4: outcomes[Rating.Easy].card.due.getTime() };
+}
+
 /** "1m", "10m", "3h", "4d", "2.5mo", "1.2y" */
 export function formatInterval(ms: number): string {
   const minutes = Math.max(1, Math.round(ms / 60_000));
