@@ -29,6 +29,10 @@ export interface DocumentMenuProps {
   /** Turns a margin note into a side document of its own. */
   onMoveToSideDocument?: (id: string) => void;
   onMoveToMargin?: (id: string) => void;
+  /** A note in the margin: open it beside its page. */
+  onOpenBeside?: (id: string) => void;
+  /** A note opened beside its page: put it back in the margin, level with its passage. */
+  onPutBackInMargin?: (id: string) => void;
   /** Keep this document out of every AI request and connected app, or let AI read it again. */
   onToggleHiddenFromAI?: (id: string) => void;
   /**
@@ -97,7 +101,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning, onPickWritingView, onMoreFeatures }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onOpenBeside, onPutBackInMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning, onPickWritingView, onMoreFeatures }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -287,7 +291,11 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <button type="button" role="menuitem" onClick={() => { close(true); spaceActions.onCreateWith(conversation.id); }}>New space with this</button>
         </div> : null}
       </div> : null}
-      {onNewMarginNote || onAskAboutNote || onMoveToSideDocument || onMoveToMargin ? <div role="group" className="document-menu-section">
+      {onNewMarginNote || onAskAboutNote || onMoveToSideDocument || onMoveToMargin || onOpenBeside || onPutBackInMargin ? <div role="group" className="document-menu-section">
+        {onOpenBeside ? <button type="button" role="menuitem" title="Open this note beside its page, wider. It stays the same note."
+          onClick={() => action(onOpenBeside)}>Open beside</button> : null}
+        {onPutBackInMargin ? <button type="button" role="menuitem" title="Put this note back in its page's margin, beside its passage."
+          onClick={() => action(onPutBackInMargin)}>Put back in margin</button> : null}
         {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
         {onAskAboutNote ? <button type="button" role="menuitem" onClick={() => action(onAskAboutNote)}>Ask…</button> : null}
         {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."

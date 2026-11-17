@@ -93,15 +93,16 @@
 @media (pointer: coarse), (max-width: 700px) { .is-quiet-page .margin-document-frame::before { left: 6px; } }
 /* The empty "Write here" line after the AI's words doesn't count as the user's. */
 .is-quiet-page .margin-document-frame:has(.live-document-block[data-authorship="ai"]):not(:has(.live-document-block[data-authorship="user"]:not(.cm-lp-placeholder)))::before { background: var(--quiet-ai-ink); }
-/* When the dot is a button (it opens the note beside the page), the button draws it. */
-.is-quiet-page .margin-document-frame:has(> .margin-document-open)::before { display: none; }
-.is-quiet-page .margin-document-frame:has(.live-document-block[data-authorship="ai"]):not(:has(.live-document-block[data-authorship="user"]:not(.cm-lp-placeholder))) > .margin-document-open::after { background: var(--quiet-ai-ink); }
+.margin-document-frame .note-open-beside-button .open-beside-icon { display: block; }
+/* Open beside sits at the far right, after ⋮ and ×, so it stays clear of the words while the others wait for a hover. */
+.is-quiet-page .margin-document-frame .document-header .document-margin-actions { display: contents; }
+.is-quiet-page .margin-document-frame .document-header .note-open-beside-button { order: 2; }
 /* The header floats over the note's top right, so the words start at the top. */
 .is-quiet-page .margin-document-frame .document-header {
   position: absolute; top: 0; right: 0; left: auto; padding: 4px 4px 0; background: transparent;
 }
 .is-quiet-page .margin-document-frame .document-header .document-origin { display: none; }
-.is-quiet-page .margin-document-frame .document-body { --document-top-padding: 10px; --document-left-padding: 10px; --document-right-padding: 8px; }
+.is-quiet-page .margin-document-frame .document-body { --document-top-padding: 10px; --document-left-padding: 10px; --document-right-padding: 30px; }
 .is-quiet-page .margin-document-frame .live-document-host { font-size: 14.5px; }
 /* Touch screens always show the header's buttons, so the words keep clear of them. */
 @media (hover: none) { .is-quiet-page .margin-document-frame .document-body { --document-right-padding: 36px; } }
@@ -109,11 +110,12 @@
 .is-quiet-page .margin-document-frame .live-document-modes { display: none; }
 
 @media (hover: hover) {
-  .is-quiet-page .margin-document-frame .document-header :is(.document-header-actions, .document-close-button),
+  /* "Open beside" always shows, so you can see a note opens wider; the rest waits until you point at the note. */
+  .is-quiet-page .margin-document-frame .document-header :is(.document-header-actions > :not(.note-open-beside-button), .document-close-button),
   .is-quiet-page .margin-document-frame > .margin-document-resize { opacity: 0; transition: opacity .15s ease; }
-  .is-quiet-page .margin-document-frame:is(:hover, :focus-within) .document-header :is(.document-header-actions, .document-close-button),
+  .is-quiet-page .margin-document-frame:is(:hover, :focus-within) .document-header :is(.document-header-actions > *, .document-close-button),
   .is-quiet-page .margin-document-frame:is(:hover, :focus-within) > .margin-document-resize,
-  .is-quiet-page .margin-document-frame .document-header:has([aria-expanded="true"]) :is(.document-header-actions, .document-close-button) { opacity: 1; }
+  .is-quiet-page .margin-document-frame .document-header:has([aria-expanded="true"]) :is(.document-header-actions > *, .document-close-button) { opacity: 1; }
   .is-quiet-page .margin-document-frame:hover > .chat-panel.document-panel { background: color-mix(in srgb, var(--ink) 3%, transparent); }
 }
 

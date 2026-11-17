@@ -1,3 +1,4 @@
+import OpenBesideIcon from "./OpenBesideIcon";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import "./DocumentMargin.css";
@@ -19,6 +20,8 @@ export interface DocumentMarginItem {
    * to one line, its `label`, level with its passage, and opens when clicked.
    */
   foldable?: boolean;
+  /** Opens the note beside the page; a folded line shows the button when you point at it. */
+  onOpenBeside?: () => void;
 }
 
 interface Props {
@@ -429,6 +432,10 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
             }}>
             <span className="document-margin-fold-text">{item.label || (item.pending ? "Thinking…" : "Margin note")}</span>
           </button> : item.anchored ? null : <span className="document-margin-label">About this document</span>}
+          {folded && item.onOpenBeside ? <button type="button" className="document-margin-fold-beside"
+            aria-label={`Open beside the page: ${item.label || "Margin note"}`} title="Open beside" onClick={item.onOpenBeside}>
+            <OpenBesideIcon size={14} />
+          </button> : null}
           {/* A folded note stays mounted (CSS hides it), so it opens at once with its editor as it was. */}
           {item.node}
         </div>;

@@ -103,12 +103,14 @@
 .note-sheet-body { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
 .note-sheet-body .margin-document-family { width: 100%; }
 .note-sheet-body .margin-document-frame { width: 100% !important; height: auto !important; max-height: none !important; }
-.note-sheet-body .margin-document-frame > :is(.margin-document-resize, .margin-document-open) { display: none; }
+.note-sheet-body .margin-document-frame > .margin-document-resize { display: none; }
+/* The sheet is the phone's way of opening a note, so it has no "open beside". */
+.note-sheet-body .margin-document-frame .note-open-beside-button { display: none; }
 .note-sheet-body .margin-document-frame > .chat-panel.document-panel { border: 0; background: transparent; box-shadow: none; }
 .note-sheet-body .document-body { --document-left-padding: 20px; --document-right-padding: 44px; }
 .note-sheet-body .margin-document-frame .live-document-host, .is-quiet-page .note-sheet-body .margin-document-frame .live-document-host { font-size: 16px; }
 /* The note's menu lives in the page's ⋮ on phones, so its empty header goes. */
-.note-sheet-body .margin-document-frame .document-header:not(:has(button)) { display: none; }
+.note-sheet-body .margin-document-frame .document-header:not(:has(button:not(.note-open-beside-button))) { display: none; }
 
 /* Pointing at a note's passage lights the note itself, beside the text, rather than a card over it. */
 .document-margin-item::before { content: ""; position: absolute; inset: -6px -8px -6px 18px; border-radius: 10px; background: var(--margin-linked-passage); opacity: 0; transition: opacity .15s ease; pointer-events: none; }
@@ -123,7 +125,17 @@
 .document-margin-item.is-folded { gap: 0; --fold-dot-x: 4px; --fold-text-x: 16px; }
 .is-quiet-page .document-margin-item.is-folded { --fold-dot-x: 38px; --fold-text-x: 52px; }
 @media (pointer: coarse), (max-width: 700px) { .is-quiet-page .document-margin-item.is-folded { --fold-dot-x: 6px; --fold-text-x: 20px; } }
-.document-margin-item.is-folded > :not(.document-margin-fold) { display: none; }
+.document-margin-item.is-folded > :not(.document-margin-fold, .document-margin-fold-beside) { display: none; }
+/* The folded line's "open beside" button: shown when you point at the line, so the margin stays quiet. */
+.document-margin-fold-beside {
+  position: absolute; top: 0; right: 0; display: grid; place-items: center; width: 24px; height: 22px; padding: 0;
+  border: 0; border-radius: 6px; background: var(--panel-bg, transparent); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .15s ease;
+}
+.document-margin-item.is-folded:is(:hover, :focus-within) > .document-margin-fold-beside { opacity: 1; }
+.document-margin-fold-beside:hover { color: var(--ink); background: var(--button-active-surface); }
+.document-margin-fold-beside:focus-visible { opacity: 1; outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: 0; }
+.document-margin-item.is-folded:has(> .document-margin-fold-beside) > .document-margin-fold { padding-right: 28px; }
+@media (hover: none) { .document-margin-fold-beside { display: none; } }
 .document-margin-fold {
   position: relative; display: block; width: 100%; height: 22px; margin: 0; padding: 0 4px 0 var(--fold-text-x);
   border: 0; border-radius: 6px; background: transparent; color: var(--ink, inherit); text-align: left; cursor: pointer;

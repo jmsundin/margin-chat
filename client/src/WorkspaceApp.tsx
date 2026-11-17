@@ -56,6 +56,7 @@ import DocumentPanel from "./components/DocumentPanel";
 import VersionHistoryPanel from "./components/VersionHistoryPanel";
 import { resolveWikiLinkDocument, wikiLinkSuggestions, type WikiLinkDocument } from "./lib/wikiLinkSuggestions";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
+import OpenBesideIcon from "./components/OpenBesideIcon";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpacesPanel, type SpaceMenuActions } from "./components/Spaces";
 import DocumentTabs from "./components/DocumentTabs";
@@ -96,7 +97,7 @@ import { RUN_ALL_CELLS_EVENT } from "./lib/codeRunner/codeCellScope";
 import { readDocumentViewMode, subscribeDocumentEditorPreference } from "./lib/documentEditorPreference";
 import DocumentViewsMenu from "./components/DocumentViewsMenu";
 import WorkspaceModeToggle from "./components/WorkspaceModeToggle";
-import { viewForShortcut } from "./lib/workspaceViewShortcuts";
+import { isApplePlatform, viewForShortcut } from "./lib/workspaceViewShortcuts";
 import WorkspaceView from "./components/WorkspaceView";
 import DocumentDock from "./components/DocumentDock";
 import DocumentWorkspaceLayout from "./components/DocumentWorkspaceLayout";
@@ -6791,6 +6792,8 @@ function WorkspaceAppContent({
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
         onAskAboutNote={conversation.document || conversation.kind === "note" ? (id) => setNoteChatFor(id) : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
+        onOpenBeside={isCompactDocument(conversation) ? handleOpenNoteBeside : undefined}
+        onPutBackInMargin={notesBesideSet.has(conversation.id) ? handlePutNoteBack : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI}
         // Board, Language, Read and Review are modes now, switched from the button in the document's header.
         onToggleBoard={hasDocumentModes(conversation) ? undefined : features.boards || conversation.nodeType === "board" ? handleToggleBoard : undefined}
@@ -6927,6 +6930,7 @@ function WorkspaceAppContent({
           ? <div className="document-page-path">{renderDocumentBreadcrumbs()}</div> : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
+        {inMargin && view === "chat" && isCompactDocument(conversation) ? renderOpenBesideButton(conversation) : null}
       </>}
       // A note's own notes are listed at the end of its page and drawn on the map beside it, so document view has no Children menu.
       childNavigation={view === "graph" ? renderChildrenMenu(conversation, view, dock) : undefined}
@@ -7106,7 +7110,6 @@ function WorkspaceAppContent({
     return <div className="margin-document-family">
       <MarginDocumentFrame data-document-id={note.id} size={note.document?.marginNote?.size} fitContent={fitContent}
         onOpen={view === "chat" ? () => handleOpenNoteBeside(note.id) : undefined}
-        openLabel={`Open beside the page: ${note.title || "Untitled note"}`}
         onResize={(size) => handleResizeMarginDocument(note.id, size)}
         onResizePreview={(size) => setMarginResizePreviews((current) => ({ ...current, [note.id]: size ?? undefined }))}
         onPointerDownCapture={() => handleFocusVisibleDocument(note.id)}
@@ -7115,6 +7118,14 @@ function WorkspaceAppContent({
       </MarginDocumentFrame>
       {renderDocumentMarginNotes(note, view)}
     </div>;
+  }
+  /** The note's own "open to the side" button, next to its ⋮ and ×, where people look for window controls. */
+  function renderOpenBesideButton(note: Conversation) {
+    return <button type="button" className="document-window-button note-open-beside-button"
+      aria-label={`Open beside the page: ${note.title || "Untitled note"}`} title={`Open beside (${isApplePlatform() ? "⌘↵" : "Ctrl+Enter"})`}
+      onClick={() => handleOpenNoteBeside(note.id)}>
+      <OpenBesideIcon />
+    </button>;
   }
   /** "Thinks with you ▾": how the AI joins in, on the page's own row. Opens Customise. */
   function renderNotebookStanceButton() {
@@ -7151,6 +7162,7 @@ function WorkspaceAppContent({
     if (!showsMarginInPanel(conversation, view)) return undefined;
     const claims = view === "chat" ? getClaimMarginItems(conversation) : [];
     const items = getMarginDocuments(conversation).map((note): DocumentMarginItem => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true), foldable: true,
+      onOpenBeside: view === "chat" ? () => handleOpenNoteBeside(note.id) : undefined,
       label: getEditableDocumentText(note).trim().split(/\r?\n/)[0]?.slice(0, 80) || note.title,
       ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()),
       pending: Boolean(note.document?.generations.some((generation) => generation.status === "streaming")) }));
