@@ -37,6 +37,11 @@
 .live-document-host .cm-lp-comment { color: var(--muted); font-style: italic; }
 .live-document-host .cm-lp-math-source, .live-document-host .cm-lp-html, .live-document-host .cm-line.cm-lp-table { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .88em; }
 .live-document-host .cm-lp-bullet { color: var(--muted); display: inline-block; text-align: center; width: 1.1em; }
+/* List items hang: the marker sits in a fixed 1.5em slot and wrapped lines line up with the item's text. */
+.live-document-host .cm-content .cm-line.cm-lp-hang { margin-left: var(--lp-hang); text-indent: calc(var(--lp-hang) * -1); }
+.live-document-host .cm-lp-list-marker { display: inline-block; min-width: 1.5em; text-indent: 0; white-space: pre; }
+.live-document-host .cm-lp-bullet.cm-lp-list-marker { width: 1.5em; text-align: left; padding-left: .3em; box-sizing: border-box; }
+.live-document-host .cm-lp-list-lead { display: inline-block; text-indent: 0; white-space: pre; overflow: hidden; vertical-align: top; }
 .live-document-host .cm-lp-task { accent-color: var(--sage); cursor: pointer; margin: 0 .4em 0 .1em; vertical-align: -.1em; }
 .live-document-host .cm-lp-hr { border-top: 1px solid var(--line-strong, var(--line)); display: inline-block; vertical-align: middle; width: 100%; }
 .live-document-host .cm-lp-math { display: inline-block; }

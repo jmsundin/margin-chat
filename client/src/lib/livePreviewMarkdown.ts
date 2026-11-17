@@ -15,10 +15,11 @@ import { OPEN_LINK_HINT, openableHref, openLinkInNewTab, shouldOpenLink } from "
 export type LivePreviewMode = "live" | "source" | "reading";
 
 class BulletWidget extends WidgetType {
-  eq() { return true; }
+  constructor(readonly className = "cm-lp-bullet") { super(); }
+  eq(other: BulletWidget) { return other.className === this.className; }
   toDOM() {
     const bullet = document.createElement("span");
-    bullet.className = "cm-lp-bullet";
+    bullet.className = this.className;
     bullet.textContent = "•";
     bullet.setAttribute("aria-hidden", "true");
     return bullet;
@@ -75,6 +76,7 @@ const hide = Decoration.replace({});
 const mark = (className: string, attributes?: Record<string, string>) => Decoration.mark({ class: className, attributes });
 const syntaxMark = mark("cm-lp-mark");
 const bullet = Decoration.replace({ widget: new BulletWidget() });
+const bulletWithSpace = Decoration.replace({ widget: new BulletWidget("cm-lp-bullet cm-lp-list-marker") });
 const rule = Decoration.replace({ widget: new RuleWidget() });
 
 /** The lines (by start) a selection touches; their syntax shows. */
@@ -203,6 +205,18 @@ function buildDecorations(view: EditorView, mode: LivePreviewMode): DecorationSe
               return;
             }
             const ordered = item?.parent?.name === "OrderedList";
+            // A wrapped item's later lines start under its text, not under the bullet: the marker gets a fixed
+            // width and the line hangs by that width plus its nesting (only for markers that open their line).
+            const line = doc.lineAt(node.from);
+            const lead = doc.sliceString(line.from, node.from);
+            if (/^[ \t]*$/.test(lead) && mode !== "source") {
+              const columns = [...lead].reduce((total, char) => total + (char === "\t" ? 4 : 1), 0);
+              if (columns) ranges.push(Decoration.mark({ class: "cm-lp-list-lead", attributes: { style: `width:${columns * 0.5}em` } }).range(line.from, node.from));
+              ranges.push(Decoration.line({ class: "cm-lp-hang", attributes: { style: `--lp-hang:${columns * 0.5 + 1.5}em` } }).range(line.from));
+              if (ordered || reveal(node.from)) ranges.push(mark(`${ordered ? "cm-lp-ordered" : "cm-lp-mark"} cm-lp-list-marker`).range(node.from, node.to + space));
+              else ranges.push(bulletWithSpace.range(node.from, node.to + space));
+              return;
+            }
             if (ordered || reveal(node.from)) ranges.push(mark(ordered ? "cm-lp-ordered" : "cm-lp-mark").range(node.from, node.to));
             else ranges.push(bullet.range(node.from, node.to));
             return;

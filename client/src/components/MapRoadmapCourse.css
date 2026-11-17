@@ -28,7 +28,8 @@
 /* Stages are tinted from the page's own ink, so they sit quietly in light and dark alike. */
 .map-course-stage { position: absolute; display: flex; align-items: center; gap: 9px; padding: 0 12px; border-radius: 9px; box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--ink) 18%, transparent); background: color-mix(in srgb, var(--ink) 8%, var(--panel-bg)); color: var(--ink); }
-.map-course-stage strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13.5px; font-weight: 650; }
+/* A long stage name takes a second line rather than being cut to "Database I…". */
+.map-course-stage strong { flex: 1; min-width: 0; overflow: hidden; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; line-height: 1.15; font-size: 13.5px; font-weight: 650; }
 .map-course-stage em { font-style: normal; font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
 .map-course-stage-number { display: grid; place-items: center; flex: 0 0 22px; height: 22px; border-radius: 50%; background: var(--ink); color: var(--panel-bg, #fff); font-size: 12px; font-weight: 700; }
 .map-course-lesson { position: absolute; box-sizing: border-box; }
@@ -36,7 +37,7 @@
   background: var(--panel-bg); color: var(--ink); font: inherit; font-size: 13px; font-weight: 500; text-align: left; cursor: pointer; box-sizing: border-box; }
 .map-course-open:hover { border-color: color-mix(in srgb, var(--ink) 40%, var(--line)); }
 .map-course-open:focus-visible, .map-course-dive:focus-visible, .map-course-close:focus-visible, .map-course-trail button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.map-course-title { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.25; overflow-wrap: anywhere; }
+.map-course-title { flex: 1; min-width: 0; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; line-height: 1.25; }
 .map-course-lesson.is-optional .map-course-open { border-style: dashed; }
 .map-course-lesson.is-done .map-course-open { background: color-mix(in srgb, var(--path-done, #3f9a68) 16%, var(--panel-bg)); }
 .map-course-lesson.is-learning .map-course-open { background: color-mix(in srgb, var(--path-learning, #9b8cff) 14%, var(--panel-bg)); }
