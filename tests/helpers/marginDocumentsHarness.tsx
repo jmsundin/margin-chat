@@ -190,8 +190,8 @@ try {
   assert.equal(notePane(noteId).querySelector('.document-margin-source'), null);
   assert.equal(notePane(noteId).querySelector('.document-children-trigger'), null);
   assert.equal(pane('full-side').querySelector('.document-children-trigger'), null);
-  assert.equal(notePane(noteId).querySelector('.document-presentation-toggle'), null, "Notes have no ↗ button: the dot opens them beside the page.");
-  assert(notePane(noteId).querySelector('.margin-document-open'));
+  assert.equal(notePane(noteId).querySelector('.document-presentation-toggle'), null, "Notes have no ↗ button: their Open beside button opens them beside the page.");
+  assert(notePane(noteId).querySelector('.document-margin-actions .note-open-beside-button'), "A note in the margin shows Open beside next to its menu.");
   assert(notePane(noteId).querySelector('.document-margin-actions .document-menu-trigger'));
   checks.push('legacy notes become child documents in the sidebar and parent margin');
 
@@ -229,10 +229,10 @@ try {
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
   checks.push('compact notes resize both dimensions and save their size without changing their content');
 
-  // The note's dot opens it beside the page, and closing it puts it back in the margin: the same note both ways.
+  // Open beside opens the note beside the page, and closing it puts it back in the margin: the same note both ways.
   const noteAnchor = latest.conversations[noteId].branchAnchor;
   const noteSize = latest.conversations[noteId].document!.marginNote!.size;
-  await click(notePane(noteId).querySelector('.margin-document-open'));
+  await click(notePane(noteId).querySelector('.note-open-beside-button'));
   assert(panes().includes(noteId), "The note opens as a pane beside its page.");
   assert.equal(latest.activeConversationId, noteId);
   assert.equal(pane(mainId).querySelector(`.document-margin [data-margin-note-id="${noteId}"]`), null, "An opened note leaves the margin.");
@@ -246,6 +246,12 @@ try {
   assert(pane(mainId).querySelector(`.document-margin [data-margin-note-id="${noteId}"] [data-document-id="${noteId}"]`), "Closing the note puts it back in the margin.");
   assert.deepEqual(latest.conversations[noteId].branchAnchor, noteAnchor);
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
+  // ⌘↵ (Ctrl+Enter) from inside a note opens it beside too.
+  await act(async () => { notePane(noteId).querySelector('.document-panel').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', metaKey: true, bubbles: true, cancelable: true })); });
+  await settle();
+  assert(panes().includes(noteId), "⌘↵ in a note opens it beside the page.");
+  await click(pane(noteId).querySelector('.document-close-button'));
+  assert(!panes().includes(noteId));
   checks.push('opening a note beside the page and putting it back preserves document identity, content, size and passage association');
 
   await focusPane(mainId);
