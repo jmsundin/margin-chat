@@ -7,9 +7,9 @@ import "./DocumentModeSwitch.css";
 export interface HtmlPlayActions {
   /** False when the page is hidden from AI. */
   ai: boolean;
-  askOpen: boolean;
   questionCount: number;
   onNote: () => void;
+  /** Opens Ask about the page; offered in the menu only in full screen, where the app's own Ask is covered. */
   onAsk: () => void;
   onHint: () => void;
   onQuestions: () => void;
@@ -114,6 +114,7 @@ export default function HtmlPageMenu(props: HtmlPageMenuProps) {
       {play ? <>
         {item("Note this moment", play.onNote)}
         {play.ai ? item("Hint", play.onHint) : null}
+        {play.ai && props.full ? item("Ask AI", play.onAsk, "About what's on screen") : null}
         {item(play.questionCount ? `Questions (${play.questionCount})` : "Questions", play.onQuestions)}
         <div className="document-mode-heading" aria-hidden="true">Page</div>
       </> : null}
@@ -144,10 +145,6 @@ export default function HtmlPageMenu(props: HtmlPageMenuProps) {
       </>}
     </div>, document.body) : null}
     </div>
-    {play?.ai ? <button type="button" className="html-page-ask" aria-expanded={play.askOpen} aria-label="Ask AI about what's on screen" title="Ask AI about what's on screen" onClick={play.onAsk}>
-      <svg viewBox="0 0 20 20" aria-hidden="true" fill="currentColor"><path d="M10 2.5l1.6 4.4a2 2 0 0 0 1.2 1.2l4.4 1.6-4.4 1.6a2 2 0 0 0-1.2 1.2L10 16.9l-1.6-4.4a2 2 0 0 0-1.2-1.2L2.8 9.7l4.4-1.6a2 2 0 0 0 1.2-1.2z" /></svg>
-      <span>Ask AI</span>
-    </button> : null}
     <button type="button" className="document-full-screen-button html-page-full-screen" aria-keyshortcuts="Escape"
       aria-label={`${props.full ? "Leave full screen" : "Full screen"}: ${props.title}`} title={props.full ? "Leave full screen (Esc)" : "Full screen (Esc to leave)"} onClick={() => props.onFull(!props.full)}>
       <svg viewBox="0 0 20 20" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
