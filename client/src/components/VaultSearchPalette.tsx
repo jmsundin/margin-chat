@@ -37,7 +37,8 @@ export function highlight(text: string, query: string): ReactNode {
 }
 
 function dateLabel(value?: string) {
-  if (!value || !Number.isFinite(Date.parse(value))) return "";
+  // A plain Markdown file with no dates in its header reads as 1 Jan 1970: show no date rather than that one.
+  if (!value || !Number.isFinite(Date.parse(value)) || Date.parse(value) < 86_400_000) return "";
   return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 

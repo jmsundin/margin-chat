@@ -92,6 +92,8 @@ export function useRatchet({ userId, conversations, searchCloud, ask }: {
   // Re-read every loaded document's claims against the vault as it is now.
   const claimsKey = Object.entries(documents).map(([id, state]) => `${id}:${state.run?.id ?? ""}:${state.claims.length}`).join("|");
   useEffect(() => {
+    // Nothing to re-read: skip building the vault corpus and the update, which otherwise ran on every keystroke.
+    if (!Object.values(documents).some((state) => state.claims.length)) return;
     let cancelled = false;
     const corpus = createRatchetCorpus({ conversations });
     void (async () => {
@@ -107,7 +109,7 @@ export function useRatchet({ userId, conversations, searchCloud, ask }: {
         }
         next[id] = { anchors, evidence };
       }
-      if (cancelled) return;
+      if (cancelled || !Object.keys(next).length) return;
       setDocuments((current) => {
         let changed = false;
         const out = { ...current };

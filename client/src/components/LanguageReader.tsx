@@ -76,14 +76,14 @@ function useLessonAudio(embed: MediaEmbed | null): { url?: string; status: "none
   if (!embed) return { status: "none" };
   return target ? state : { status: "ready", url: embed.target.split("#")[0] };
 }
-const PANE_MIN = 320;
+const PANE_MIN = 280;
 const PANE_GAP = 14;
 const PANE_WIDTH_KEY = "margin-chat:language-lookup:width";
 function loadPaneWidth(): number | null {
   try { const saved = Number(localStorage.getItem(PANE_WIDTH_KEY)); return Number.isFinite(saved) && saved >= PANE_MIN ? saved : null; } catch { return null; }
 }
 
-/** Where the lookup pane goes: a column in the free space beside the document, or a sheet under it when there isn't 320px to spare. */
+/** Where the lookup pane goes: a column in the free space beside the document, or a sheet under it when there isn't 280px to spare. */
 type PanePlace = { mode: "side"; left: number; top: number; width: number; height: number; shift: number; max: number } | { mode: "sheet"; left?: number; width?: number };
 
 /** The nearest ancestor that scrolls, which the pane stands beside. */
@@ -100,7 +100,10 @@ function placePane(root: HTMLElement, wanted: number | null): PanePlace {
   const box = slot.getBoundingClientRect();
   // Where the document stands when it isn't moved aside, even while that move is still animating.
   const moved = new DOMMatrixReadOnly(getComputedStyle(slot).transform).m41;
-  const left = box.left - moved, right = box.right - moved;
+  // Measure from the reading column itself, not the slot around it: the slot's empty padding counts as
+  // free space, or a 1280-1366 px window with the sidebar open just misses room and gets the sheet over the text.
+  const text = root.getBoundingClientRect();
+  const left = Math.max(box.left, text.left) - moved, right = Math.min(box.right, text.right) - moved;
   if (window.innerWidth < 768) return { mode: "sheet" };
   const stageBox = (root.closest(".document-workspace-scrolling, .workspace-view") ?? document.documentElement).getBoundingClientRect();
   // Other documents open beside this one keep their place: the pane only takes space nothing else is using.
@@ -112,9 +115,10 @@ function placePane(root: HTMLElement, wanted: number | null): PanePlace {
     if (rect.left >= right - 2) rightLimit = Math.min(rightLimit, rect.left);
     else if (rect.right <= left + 2) leftLimit = Math.max(leftLimit, rect.right);
   }
-  const freeRight = Math.max(0, rightLimit - right), freeLeft = Math.max(0, left - leftLimit);
+  // Keep a small gutter so the text never slides flush against the sidebar.
+  const freeRight = Math.max(0, rightLimit - right), freeLeft = Math.max(0, left - leftLimit - 12);
   const max = Math.floor(freeRight + freeLeft - PANE_GAP - 8);
-  const sheet: PanePlace = { mode: "sheet", left: Math.round(left), width: Math.round(box.width) };
+  const sheet: PanePlace = { mode: "sheet", left: Math.round(box.left - moved), width: Math.round(box.width) };
   if (max < PANE_MIN) return sheet;
   const width = Math.round(Math.max(PANE_MIN, Math.min(wanted ?? Math.min(480, (rightLimit - leftLimit) * 0.4), max)));
   const shift = Math.round(Math.max(0, Math.min(freeLeft, width + PANE_GAP + 8 - freeRight)));
