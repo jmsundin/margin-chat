@@ -1713,7 +1713,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           onMouseDown={(event) => event.preventDefault()} onClick={() => setLanguageLearning(!languagePair)}>Language</button> : null}
       </>}
     </div>}
-    {languagePair && learning ? <LanguageLearningBar pair={languagePair} onChange={(pair) => { rememberLanguagePair(pair); learning.onChange(pair); }} onNewLesson={learning.newLesson} /> : null}
+    {languagePair && learning ? <LanguageLearningBar pair={languagePair} onChange={(pair) => { rememberLanguagePair(pair); learning.onChange(pair); }} onNewLesson={learning.newLesson} onStudy={learning.studyThis} /> : null}
     {languagePair && learning ? <LanguageReader blocks={props.blocks} pair={languagePair} learning={learning} onAskInMargin={props.onSelectionChange ? askInMargin : undefined} /> : null}
     {/* Its mics are beside Ask AI and in the pane's corner, so voice typing doesn't float one over the text. */}
     <div ref={hostRef} className="live-document-host" data-dictation-button="own" />

@@ -638,7 +638,7 @@ export function LanguageReader({ blocks, pair, learning, onAskInMargin, lesson }
 
 
     {/* On the page itself, outside the document's clipped column, so it can stand in the free space beside it. */}
-    {open && openSentence ? createPortal(<div className="language-reader language-lookup-dock" data-theme={look.theme === "system" ? undefined : look.theme} style={style}>
+    {open && openSentence ? createPortal(<div className="language-reader language-lookup-dock" data-lesson={lesson ? "" : undefined} data-theme={look.theme === "system" ? undefined : look.theme} style={style}>
       {place.mode === "side" ? <div className="language-lookup-divider" role="separator" aria-orientation="vertical" aria-label="Resize the lookup pane" tabIndex={0}
         aria-valuemin={PANE_MIN} aria-valuemax={Math.max(PANE_MIN, place.max)} aria-valuenow={place.width}
         style={{ left: place.left - PANE_GAP, top: place.top, height: place.height }}
