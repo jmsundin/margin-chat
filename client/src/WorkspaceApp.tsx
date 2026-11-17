@@ -4657,11 +4657,10 @@ function WorkspaceAppContent({
     });
   }
 
-  /** Play's actions on a game, shown in its header: note the moment, ask AI about the screen, a hint, its questions. */
+  /** Play's actions on a game, in its Play menu: note the moment, a hint, its questions. Asking about the screen is the app's own Ask. */
   function playActions(conversation: Conversation) {
     return {
       ai: !isHiddenFromAI(conversation),
-      askOpen: noteChatFor === conversation.id,
       questionCount: playCounts[conversation.id] ?? 0,
       onNote: () => void handleNoteThisMoment(conversation.id),
       onAsk: () => setNoteChatFor((current) => current === conversation.id ? null : conversation.id),
@@ -6790,7 +6789,8 @@ function WorkspaceAppContent({
         onMinimize={handleMinimizeDocument}
         onClose={!hasDocumentTab(conversation.id) ? handleCloseDocument : quietTabsHidden() ? handleCloseTab : undefined} onRestore={handleSelectConversation} onRename={handleRenameThread}
         onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
-        onAskAboutNote={conversation.document || conversation.kind === "note" ? (id) => setNoteChatFor(id) : undefined}
+        // On a played page this is the phone's way to ask about what the game shows; the question carries its screen.
+        onAskAboutNote={conversation.document || conversation.kind === "note" || isPlayPage(conversation) && !isHiddenFromAI(conversation) ? (id) => setNoteChatFor(id) : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
         onOpenBeside={isCompactDocument(conversation) ? handleOpenNoteBeside : undefined}
         onPutBackInMargin={notesBesideSet.has(conversation.id) ? handlePutNoteBack : undefined}
@@ -7692,7 +7692,7 @@ function WorkspaceAppContent({
                       {isMobileViewport ? renderDocumentMenu(activeConversation) : quietHeader ? <>
                         {activeConversation.document || activeConversation.kind === "note" || isPlayPage(activeConversation) ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
                           onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
-                          title="Ask the AI about this whole note">Ask</button> : null}
+                          title={isPlayPage(activeConversation) ? "Ask the AI about what's on screen" : "Ask the AI about this whole note"}>Ask</button> : null}
                       </> : <>
                         <button type="button" className="document-header-toggle" aria-expanded={desktopHeaderOpen}
                           aria-label={desktopHeaderOpen ? "Hide path and views" : "Show path and views"}
