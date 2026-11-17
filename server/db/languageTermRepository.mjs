@@ -10,23 +10,39 @@ const termRow = (row) => ({
   status: Number(row.status),
   tags: Array.isArray(row.tags) ? row.tags : [],
   docIds: Array.isArray(row.doc_ids) ? row.doc_ids : [],
+  fragment: row.fragment ?? "",
+  srs: row.srs ?? null,
   createdAt: iso(row.created_at),
   updatedAt: iso(row.updated_at),
 });
 
-/** Save what a device sent. A term replaces the stored one only when it is newer. */
+/**
+ * Save what a device sent. A term replaces the stored one only when it is newer.
+ * A device that doesn't send a review schedule (an older app) leaves the stored one as it is.
+ */
 export async function saveLanguageTerms(client, { userId, terms }) {
   if (!terms.length) return;
+  const withSchedule = terms.filter((term) => term.srs !== undefined);
+  const without = terms.filter((term) => term.srs === undefined);
+  if (withSchedule.length) await saveTerms(client, userId, withSchedule, true);
+  if (without.length) await saveTerms(client, userId, without, false);
+}
+
+async function saveTerms(client, userId, terms, schedule) {
   await client.query(
-    `insert into marginchat_language_terms (user_id, language, term_key, meaning, meaning_source, status, tags, doc_ids, created_at, updated_at)
-     select distinct on (t.language, t.key) $1, t.language, t.key, t.meaning, coalesce(t.source, ''), t.status, coalesce(t.tags, '[]'::jsonb), coalesce(t."docIds", '[]'::jsonb), t."createdAt", t."updatedAt"
-     from jsonb_to_recordset($2::jsonb) as t(language text, key text, meaning text, source text, status smallint, tags jsonb, "docIds" jsonb, "createdAt" timestamptz, "updatedAt" timestamptz)
+    `insert into marginchat_language_terms (user_id, language, term_key, meaning, meaning_source, status, tags, doc_ids, fragment, srs, srs_due_at, created_at, updated_at)
+     select distinct on (t.language, t.key) $1, t.language, t.key, t.meaning, coalesce(t.source, ''), t.status, coalesce(t.tags, '[]'::jsonb), coalesce(t."docIds", '[]'::jsonb),
+       coalesce(t.fragment, ''), t.srs, case when t.srs is not null then to_timestamp((t.srs->>'due')::double precision / 1000) end, t."createdAt", t."updatedAt"
+     from jsonb_to_recordset($2::jsonb) as t(language text, key text, meaning text, source text, status smallint, tags jsonb, "docIds" jsonb, fragment text, srs jsonb, "createdAt" timestamptz, "updatedAt" timestamptz)
      order by t.language, t.key, t."updatedAt" desc
      on conflict (user_id, language, term_key) do update set
-       meaning = excluded.meaning, meaning_source = excluded.meaning_source, status = excluded.status, tags = excluded.tags, doc_ids = excluded.doc_ids, updated_at = excluded.updated_at,
+       meaning = excluded.meaning, meaning_source = excluded.meaning_source, status = excluded.status, tags = excluded.tags, doc_ids = excluded.doc_ids,
+       fragment = case when excluded.fragment <> '' then excluded.fragment else marginchat_language_terms.fragment end,
+       ${schedule ? "srs = excluded.srs, srs_due_at = excluded.srs_due_at," : ""}
+       updated_at = excluded.updated_at,
        seq = nextval(pg_get_serial_sequence('marginchat_language_terms', 'seq'))
      where marginchat_language_terms.updated_at < excluded.updated_at`,
-    [userId, JSON.stringify(terms)],
+    [userId, JSON.stringify(terms.map((term) => ({ ...term, fragment: term.fragment ?? null, srs: term.srs ?? null })))],
   );
 }
 

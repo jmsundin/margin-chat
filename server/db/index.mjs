@@ -60,6 +60,7 @@ import * as topics from "./topicRepository.mjs";
 import * as library from "./libraryRepository.mjs";
 import * as flashcards from "./flashcardRepository.mjs";
 import * as languageTerms from "./languageTermRepository.mjs";
+import * as languageCourses from "./languageCourseRepository.mjs";
 import * as ratchet from "./ratchetRepository.mjs";
 import * as interfaceSettings from "./interfaceSettingsRepository.mjs";
 import * as passages from "./passageRepository.mjs";
@@ -463,6 +464,29 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     readLanguageTerms: (args) => withClient((client) => languageTerms.readLanguageTerms(client, args)),
     readLookupCache: (args) => withClient((client) => languageTerms.readLookupCache(client, args)),
     saveLookupCache: (args) => withClient((client) => languageTerms.saveLookupCache(client, args)),
+    saveLessons: (args) => withClient(async (client) => {
+      // A document's lessons are saved together or not at all.
+      await client.query("begin");
+      try { const saved = await languageCourses.saveLessons(client, args); await client.query("commit"); return saved; }
+      catch (error) { await client.query("rollback").catch(() => undefined); throw error; }
+    }),
+    readLearningProfiles: (args) => withClient((client) => languageCourses.readLearningProfiles(client, args)),
+    saveLearningProfile: (args) => withClient((client) => languageCourses.saveLearningProfile(client, args)),
+    saveCourse: (args) => withClient((client) => languageCourses.saveCourse(client, args)),
+    listCourses: (args) => withClient((client) => languageCourses.listCourses(client, args)),
+    findCourseForDocument: (args) => withClient((client) => languageCourses.findCourseForDocument(client, args)),
+    replaceLessonText: (args) => withClient((client) => languageCourses.replaceLessonText(client, args)),
+    readLesson: (args) => withClient((client) => languageCourses.readLesson(client, args)),
+    listLessons: (args) => withClient((client) => languageCourses.listLessons(client, args)),
+    deleteLesson: (args) => withClient((client) => languageCourses.deleteLesson(client, args)),
+    enroll: (args) => withClient((client) => languageCourses.enroll(client, args)),
+    readEnrollments: (args) => withClient((client) => languageCourses.readEnrollments(client, args)),
+    saveProgress: (args) => withClient((client) => languageCourses.saveProgress(client, args)),
+    readProgress: (args) => withClient((client) => languageCourses.readProgress(client, args)),
+    addLearningEvents: (args) => withClient((client) => languageCourses.addLearningEvents(client, args)),
+    readDailyStats: (args) => withClient((client) => languageCourses.readDailyStats(client, args)),
+    readWordCounts: (args) => withClient((client) => languageCourses.readWordCounts(client, args)),
+    exportLanguageCourses: (args) => withClient((client) => languageCourses.exportLanguageCourses(client, args)),
     saveRatchetCheck: (args) => withClient(async (client) => {
       // A check's claims replace the document's old ones only together with its receipt.
       await client.query("begin");

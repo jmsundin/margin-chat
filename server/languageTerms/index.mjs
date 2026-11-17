@@ -5,6 +5,7 @@ export const LANGUAGE_TERM_SYNC_BATCH = 1000;
 export const LANGUAGE_TERM_SYNC_BODY_LIMIT = 2 * 1024 * 1024;
 const MAX_KEY = 200;
 const MAX_MEANING = 2000;
+const MAX_FRAGMENT = 600;
 
 const time = (value) => {
   if (typeof value !== "string") return null;
@@ -24,9 +25,24 @@ export function readLanguageTerm(input) {
     source: typeof input.source === "string" && /^[a-z]{0,20}$/u.test(input.source) ? input.source : "",
     status: Number.isInteger(input.status) && input.status >= -1 && input.status <= 5 ? input.status : null,
     tags: shortList(input.tags, 20, 60), docIds: shortList(input.docIds, 50, 200),
+    // Left out by older devices: undefined keeps what the account has.
+    fragment: typeof input.fragment === "string" ? input.fragment.slice(0, MAX_FRAGMENT) : undefined,
+    srs: input.srs === undefined ? undefined : readTermSrs(input.srs),
     createdAt: time(input.createdAt), updatedAt: time(input.updatedAt),
   };
   return term.language && term.key && term.meaning !== null && term.status !== null && term.createdAt && term.updatedAt ? term : null;
+}
+
+/** A word's review schedule: an FSRS card's state, or null before its first review. Kept only when well formed. */
+export function readTermSrs(value) {
+  if (value === null) return null;
+  if (!value || typeof value !== "object") return undefined;
+  const number = (item, min = 0) => (typeof item === "number" && Number.isFinite(item) && item >= min ? item : null);
+  const due = number(value.due), stability = number(value.stability), difficulty = number(value.difficulty), reps = number(value.reps), lapses = number(value.lapses);
+  const state = ["new", "learning", "review", "relearning"].includes(value.state) ? value.state : null;
+  const lastReview = value.lastReview === null ? null : number(value.lastReview);
+  if (due === null || stability === null || difficulty === null || reps === null || lapses === null || !state || lastReview === undefined) return undefined;
+  return { state, due, stability, difficulty, reps: Math.round(reps), lapses: Math.round(lapses), lastReview };
 }
 
 const cursor = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0);

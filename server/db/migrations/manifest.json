@@ -170,6 +170,11 @@
       "id": "0034_email_verification",
       "file": "0034_email_verification.sql",
       "transaction": true
+    },
+    {
+      "id": "0035_language_courses",
+      "file": "0035_language_courses.sql",
+      "transaction": true
     }
   ]
 }
