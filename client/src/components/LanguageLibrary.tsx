@@ -381,7 +381,8 @@ function LessonCard({ lesson, course, progress, statusOf, onOpen }: { lesson: Co
     <span className="language-library-cover" data-variant={lesson.variant ?? undefined} aria-hidden="true">
       <b>{lesson.storyNumber ?? lesson.pos + 1}</b><small>{lesson.variant ? variantName(lesson.variant) : lesson.simplifiedFrom ? "Simplified" : lesson.source === "document" ? "Document" : "Lesson"}</small></span>
     <span className="language-library-card-title">{lesson.title}</span>
-    <span className="language-library-card-meta">{course?.title ?? "Your lessons"} · {levelName(lesson.level)}</span>
+    {/* A one-lesson course made from a document shares its title; saying it twice only crowds a small card. */}
+    <span className="language-library-card-meta">{course && course.title !== lesson.title ? `${course.title} · ` : course ? "" : "Your lessons · "}{levelName(lesson.level)}</span>
     <NewWords lesson={lesson} statusOf={statusOf} />
     <span className="language-library-card-meta">{lesson.wordCount} words{progress?.status === "completed" ? " · done" : ""}</span>
     <span className="language-library-bar" role="progressbar" aria-label="Read" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><i style={{ width: `${percent}%` }} /></span>
