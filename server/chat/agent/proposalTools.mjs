@@ -49,7 +49,27 @@ export const PROPOSE_ROADMAP_DEFINITION = {
   }, required: ["roadmap_id", "goal", "stages", "summary"], additionalProperties: false },
 };
 
-export const PROPOSAL_TOOL_DEFINITIONS = [PROPOSE_EDIT_DEFINITION, PROPOSE_DOCUMENT_DEFINITION, PROPOSE_ROADMAP_DEFINITION];
+export const REVISE_ROADMAP_DEFINITION = {
+  name: "revise_roadmap",
+  description: "Change the roadmap in the user's message (its current stages and steps are under `roadmap` in the JSON), as the user asks: add, remove, reorder, move, rename or regroup steps, and change what each needs first. Give the whole roadmap as it should be afterwards. Keep a step by giving its step_id: it keeps its document and the user's progress, and takes the stage and place you put it in. A step you leave out comes off the roadmap; its document is kept. Leave out only steps the user's request means to remove. The change is applied when your run ends, and the user can undo it.",
+  parameters: { type: "object", properties: {
+    stages: { type: "array", description: "Every stage of the changed roadmap, in learning order.", items: { type: "object", properties: {
+      title: { type: "string", description: "The stage's name: keep the current name unless the user asked to change it." },
+      steps: { type: "array", description: "The stage's steps, in order.", items: { type: "object", properties: {
+        step_id: { type: "string", description: "For a step already on the roadmap, its step_id from `roadmap`. For a new step, a new short ID that starts with \"new-\", used in needs." },
+        document_id: { type: "string", description: "Empty for a step already on the roadmap. For a new step, a document that teaches it (an ID your tools returned), or an empty string when notes is given." },
+        title: { type: "string", description: "For a step already on the roadmap: an empty string to keep its name, or a new name when the user asked for one. Required for a new step with notes: it names the new document." },
+        // Strict tool schemas need every property in required, so "none" is null.
+        notes: { type: ["string", "null"], description: "null for a step already on the roadmap or one with a document_id. For a new step the vault has no document for: the new document's starting text in Markdown (key ideas as a short list, then the best sources as Markdown links)." },
+        why: { type: "string", description: "One short line on what the step covers, or an empty string." },
+        needs: { type: "array", items: { type: "string" }, description: "step_ids of the steps that must come first: all of them, so copy a kept step's current needs unless the change is about them. Never a loop." },
+      }, required: ["step_id", "document_id", "title", "notes", "why", "needs"], additionalProperties: false } },
+    }, required: ["title", "steps"], additionalProperties: false } },
+    summary: { type: "string", description: "One short line on what changed, shown to the user, such as \"Added 3 testing steps and moved Deployment last\"." },
+  }, required: ["stages", "summary"], additionalProperties: false },
+};
+
+export const PROPOSAL_TOOL_DEFINITIONS = [PROPOSE_EDIT_DEFINITION, PROPOSE_DOCUMENT_DEFINITION, PROPOSE_ROADMAP_DEFINITION, REVISE_ROADMAP_DEFINITION];
 const NAMES = new Set(PROPOSAL_TOOL_DEFINITIONS.map((tool) => tool.name));
 
 const MAX_PROPOSALS = 8;
@@ -62,6 +82,8 @@ const ROADMAP_STAGES = 12;
 const ROADMAP_STEPS = 60;
 const ROADMAP_NOTES_CHARACTERS = 2_000;
 const STEP_KEY = /^[A-Za-z0-9_.-]{1,60}$/u;
+/** A step already on a roadmap keeps its saved node ID, which may hold a colon. */
+const NODE_ID = /^[A-Za-z0-9_:.-]{1,200}$/u;
 const NOTE = "Shown to the user under your answer for approval; nothing has changed yet.";
 
 const line = (value, maximum) => {
@@ -69,7 +91,19 @@ const line = (value, maximum) => {
   return text.length <= maximum ? text : `${text.slice(0, maximum - 1)}…`;
 };
 
-/** The document a Margin Chat document prompt carries (title and full text), or null for other prompts.
+/** The roadmap a document prompt carries for a roadmap document: its stages, and each step's ID, document and needs. */
+function promptRoadmap(value) {
+  if (!Array.isArray(value?.stages)) return null;
+  const steps = new Map();
+  for (const stage of value.stages) for (const step of Array.isArray(stage?.steps) ? stage.steps : []) {
+    const id = typeof step?.step_id === "string" ? step.step_id : "";
+    if (!NODE_ID.test(id) || steps.has(id)) continue;
+    steps.set(id, { documentId: typeof step.document_id === "string" ? step.document_id : "", title: typeof step.title === "string" ? step.title : "" });
+  }
+  return { steps };
+}
+
+/** The document a Margin Chat document prompt carries (title, full text, and a roadmap's steps), or null for other prompts.
  * Its JSON is one line between blank lines, so it is found without parsing the rest of the prompt. */
 export function documentInPrompt(chatRequest) {
   const prompt = [...(chatRequest.messages ?? [])].reverse().find((message) => message.role === "user")?.content ?? "";
@@ -77,7 +111,7 @@ export function documentInPrompt(chatRequest) {
     if (!part.startsWith("{\"title\":")) continue;
     try {
       const value = JSON.parse(part);
-      if (typeof value?.document === "string") return { title: typeof value.title === "string" ? value.title : "", text: value.document };
+      if (typeof value?.document === "string") return { title: typeof value.title === "string" ? value.title : "", text: value.document, ...(promptRoadmap(value.roadmap) ? { roadmap: promptRoadmap(value.roadmap) } : {}) };
     } catch { /* Not the document. */ }
   }
   return null;
@@ -194,9 +228,73 @@ export function createProposalTools({ chatRequest, snapshots, reachable = () => 
     return added.ok && replaced ? { ...added, note: `${added.note} ${replaced} step${replaced === 1 ? "" : "s"} cited documents you can't reach, so each will be made as a new document instead. Don't call propose_roadmap again for that.` } : added;
   }
 
+  /**
+   * A change to the roadmap in the user's message, given as the whole roadmap afterwards. Steps already
+   * on it are named by their saved node ID, so their documents and the user's progress stay with them.
+   */
+  function revise(args) {
+    const existing = prompted?.roadmap?.steps;
+    if (!existing) return { ok: false, error: "The document in the user's message isn't a roadmap. Use propose_roadmap to make one." };
+    const inputStages = Array.isArray(args.stages) ? args.stages : [];
+    if (!inputStages.length || inputStages.length > ROADMAP_STAGES) return { ok: false, error: `Give between 1 and ${ROADMAP_STAGES} stages: the whole roadmap as it should be.` };
+    const keys = new Set();
+    const stages = [];
+    let size = 0;
+    for (const input of inputStages) {
+      const title = line(input?.title, 200);
+      if (!title) return { ok: false, error: "Every stage needs a title." };
+      const steps = [];
+      for (const step of Array.isArray(input?.steps) ? input.steps : []) {
+        const key = String(step?.step_id ?? "").trim();
+        if (keys.has(key)) return { ok: false, error: `The step_id "${line(key, 60)}" is used twice. A step can be in only one place.` };
+        const kept = existing.get(key);
+        const stepTitle = line(step?.title, 200);
+        const why = line(step?.why, 300);
+        const needs = [...new Set((Array.isArray(step?.needs) ? step.needs : []).map((value) => String(value).trim()).filter(Boolean))];
+        if (kept) {
+          keys.add(key);
+          // Only a real rename is kept; the step's current name sent back changes nothing.
+          const renamed = stepTitle && stepTitle !== kept.title ? stepTitle : "";
+          size += renamed.length + why.length + 80;
+          steps.push({ key, nodeId: key, documentId: kept.documentId, ...(renamed ? { title: renamed } : {}), ...(why ? { why } : {}), needs });
+          continue;
+        }
+        if (!STEP_KEY.test(key)) return { ok: false, error: `"${line(key, 40)}" isn't a step on this roadmap. Use a step_id from \`roadmap\` for a step that's there, or a new short ID like "new-1" for a new step.` };
+        keys.add(key);
+        const cited = String(step?.document_id ?? "").trim();
+        const documentId = cited && allowed(cited) && cited !== currentId ? cited : "";
+        const notes = documentId ? null : (typeof step?.notes === "string" ? step.notes.trim() : "").slice(0, ROADMAP_NOTES_CHARACTERS);
+        if (!documentId && !stepTitle) return { ok: false, error: `New step "${key}" has no document you can reach and no title. Give it a title (and notes) to make a new document, or cite a document ID your tools returned.` };
+        size += stepTitle.length + why.length + (notes?.length ?? 0) + 80;
+        steps.push({ key, ...(notes !== null ? { notes } : { documentId }), ...(stepTitle ? { title: stepTitle } : {}), ...(why ? { why } : {}), needs });
+      }
+      if (steps.length) stages.push({ title, steps });
+    }
+    if (!stages.length) return { ok: false, error: "The changed roadmap has no steps. Keep at least one step." };
+    if (keys.size > ROADMAP_STEPS + existing.size) return { ok: false, error: "That's too many steps for one roadmap." };
+    const all = stages.flatMap((stage) => stage.steps);
+    for (const step of all) step.needs = step.needs.filter((key) => keys.has(key) && key !== step.key);
+    const placed = new Set();
+    for (let progress = true; progress;) {
+      progress = false;
+      for (const step of all) if (!placed.has(step.key) && step.needs.every((key) => placed.has(key))) { placed.add(step.key); progress = true; }
+    }
+    if (placed.size < all.length) {
+      const stuck = all.filter((step) => !placed.has(step.key)).map((step) => step.key).slice(0, 6);
+      return { ok: false, error: `These steps' needs loop back on each other: ${stuck.join(", ")}. A roadmap can't loop; remove one of the needs.` };
+    }
+    const removed = [...existing.keys()].filter((id) => !keys.has(id));
+    const added = add({ kind: "roadmap", revise: true, roadmapId: currentId, roadmapTitle: line(prompted.title, 300), goal: line(prompted.title, 200) || "Roadmap",
+      stages, summary: line(args.summary, 200) }, size);
+    if (!added.ok) return added;
+    const fresh = all.filter((step) => !step.nodeId).length;
+    return { ...added, note: `The roadmap will be changed when your run ends, and the user can undo it: ${fresh} new step${fresh === 1 ? "" : "s"}, ${removed.length} taken off${removed.length ? ` (${removed.slice(0, 8).map((id) => `"${line(existing.get(id).title, 60) || id}"`).join(", ")})` : ""}. Don't call revise_roadmap again unless the user asks for more.` };
+  }
+
   return {
     has: (name) => NAMES.has(name),
-    run: (name, args = {}) => name === PROPOSE_EDIT_DEFINITION.name ? edit(args) : name === PROPOSE_ROADMAP_DEFINITION.name ? roadmap(args) : create(args),
+    run: (name, args = {}) => name === PROPOSE_EDIT_DEFINITION.name ? edit(args) : name === PROPOSE_ROADMAP_DEFINITION.name ? roadmap(args)
+      : name === REVISE_ROADMAP_DEFINITION.name ? revise(args) : create(args),
     list: () => proposals.map((proposal) => ({ ...proposal })),
   };
 }
@@ -206,13 +304,15 @@ const quoted = (value) => `“${line(value, 80) || "Untitled"}”`;
 /** A run-log line for a proposal; never includes the proposed text. */
 export function describeProposalStep(name, args = {}, output = {}) {
   if (output?.ok === false) {
-    const label = name === PROPOSE_EDIT_DEFINITION.name ? "Couldn't propose an edit" : name === PROPOSE_ROADMAP_DEFINITION.name ? "Couldn't propose the roadmap" : "Couldn't propose a new document";
+    const label = name === PROPOSE_EDIT_DEFINITION.name ? "Couldn't propose an edit" : name === PROPOSE_ROADMAP_DEFINITION.name ? "Couldn't propose the roadmap"
+      : name === REVISE_ROADMAP_DEFINITION.name ? "Couldn't change the roadmap" : "Couldn't propose a new document";
     return { label, detail: line(output.error, 160) || null, ok: false };
   }
   if (name === PROPOSE_ROADMAP_DEFINITION.name) {
     const steps = (Array.isArray(args.stages) ? args.stages : []).reduce((sum, stage) => sum + (Array.isArray(stage?.steps) ? stage.steps.length : 0), 0);
     return { label: `Proposed a roadmap for ${quoted(args.goal)}`, detail: `${steps} step${steps === 1 ? "" : "s"} for you to approve`, ok: true };
   }
+  if (name === REVISE_ROADMAP_DEFINITION.name) return { label: "Changed the roadmap", detail: line(args.summary, 160) || null, ok: true };
   return name === PROPOSE_EDIT_DEFINITION.name
     ? { label: "Proposed an edit for you to approve", detail: line(args.summary, 160) || null, ok: true }
     : { label: `Proposed a new document ${quoted(args.title)}`, detail: line(args.summary, 160) || null, ok: true };

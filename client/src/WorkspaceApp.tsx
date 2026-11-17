@@ -142,7 +142,7 @@ import type { PrivateAnswer } from "./lib/publicMapApi";
 import type { PublicTopic } from "./lib/publicKnowledge";
 import { addMapChildNote, createMapNote, getRemovableMapNote, removeMapNote, restoreMapNote, setPersonalMapConnection } from "./lib/graphWorkspaceEdits";
 import { getDocumentRelationType, restoreDocumentConnections, setDocumentRelation } from "./lib/documentRelations";
-import { plainPreview, applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapOutlinePrompt, roadmapOutlineProposal, roadmapExplainPrompt, roadmapLanguageLine, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
+import { plainPreview, applyRoadmapChange, applyRoadmapDraft, roadmapDiveDeeperPrompt, roadmapDraftPrompt, roadmapOutline, roadmapOutlinePrompt, roadmapRevisePrompt, roadmapOutlineProposal, roadmapExplainPrompt, roadmapLanguageLine, makeRoadmapDocument, roadmapDraftIds, unmakeRoadmapDocument, newRoadmapId, type RoadmapChange } from "./lib/roadmap";
 import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/boardDocument";
 import { buildBoardNoteMessage, type BoardNoteRequest } from "./lib/boardAI";
 import RoadmapView from "./components/RoadmapView";
@@ -3378,7 +3378,8 @@ function WorkspaceAppContent({
       instruction: documentAIInstruction(currentStateRef.current.conversations, source),
       // An answer in a side document is a direct explanation in every AI behaviour; it helps the user think the
       // question through only when they ask for that. Text written into the page gets neither.
-      thinkOnRequest: request.destination === "side", beside: await besideNow });
+      thinkOnRequest: request.destination === "side", beside: await besideNow,
+      roadmap: roadmapOutline(source, currentStateRef.current.conversations) });
     // A diagram the AI rewrites stays one Mermaid fence, whatever words come with it.
     const diagramReply = request.destination === "inline" && (request.visualize || request.replaceSelection && isMermaidDiagramPassage(selectedQuote));
     chatExecutions.start({ conversationId: targetId, messageId, createdAt: now,
@@ -3750,7 +3751,9 @@ function WorkspaceAppContent({
       const updatedAt = new Date().toISOString();
       const before = currentStateRef.current;
       const preview = applyRoadmapDraft(before, proposal, ids, { updatedAt, known: (id) => cloudIds.has(id) });
-      if (!preview?.added) return "None of the documents this roadmap cites are in your vault any more.";
+      if (proposal.revise ? !preview : !preview?.added) return proposal.revise ? "The roadmap has changed since AI read it, so this change can't be applied. Try again."
+        : "None of the documents this roadmap cites are in your vault any more.";
+      if (!preview) return null;
       commit((current) => applyRoadmapDraft(current, proposal, ids, { updatedAt, known: (id) => cloudIds.has(id) })?.state ?? null, { status: "approved" });
       // The draft goes straight in; Undo takes the whole draft back out, new notes included.
       const changed = Object.keys(preview.state.conversations).filter((id) => preview.state.conversations[id] !== before.conversations[id]);
@@ -3769,6 +3772,12 @@ function WorkspaceAppContent({
         return { ...next, conversations };
       };
       const steps = proposal.stages.reduce((sum, stage) => sum + stage.steps.length, 0);
+      if (proposal.revise) {
+        const removed = "removed" in preview ? preview.removed : 0;
+        const parts = [preview.added ? `${preview.added} added` : "", removed ? `${removed} taken off` : ""].filter(Boolean);
+        setMapEditMessage(`Changed “${proposal.roadmapTitle || "the roadmap"}”${proposal.summary ? `: ${proposal.summary}` : ""}${parts.length ? ` (${parts.join(", ")})` : ""}.`);
+        return null;
+      }
       setMapEditMessage(`Added “${proposal.roadmapTitle || proposal.goal}”: ${steps} step${steps === 1 ? "" : "s"}${preview.created ? `, ${preview.created} new note${preview.created === 1 ? "" : "s"}` : ""}.`);
       return null;
     }
@@ -6178,6 +6187,22 @@ function WorkspaceAppContent({
     return null;
   }
 
+  /** Ask Agent mode to change this roadmap as the user describes; the change goes in when the run ends, with Undo. */
+  function handleReviseRoadmap(conversationId: string, request: string): string | null {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation || !request.trim()) return null;
+    if (conversation.nodeType !== "roadmap") return "This document isn't a roadmap.";
+    if (isHiddenFromAI(conversation)) return HIDDEN_FROM_AI_MESSAGE;
+    if (chatExecutions.has(conversationId) || plainRoadmapDrafts[conversationId]) return "AI is still writing in this document. Try again when it finishes.";
+    if (!supportsAgentMode(conversation.serviceId)) return "Changing a roadmap needs Agent mode. Open the roadmap, choose a model that supports it in Ask AI, then try again.";
+    const last = getEditableDocument(conversation).blocks.at(-1);
+    if (!last) return "This document can't take an AI reply yet. Type something in it, then try again.";
+    handleDocumentSubmit(conversationId, { blockId: last.id, from: last.content.length, to: last.content.length, destination: "inline", agent: true,
+      // The language the roadmap was drafted in carries over, as it does for Explain.
+      prompt: [roadmapLanguageLine(conversation), roadmapRevisePrompt(request)].filter(Boolean).join("\n\n") });
+    return null;
+  }
+
   /** Draft with AI with Agent mode off: one answer as an outline, read into a draft that waits for approval like an agent's. */
   async function draftRoadmapWithoutAgent(conversationId: string, goal: string, pair: LanguagePair | null = null) {
     const conversation = currentStateRef.current.conversations[conversationId];
@@ -6313,6 +6338,7 @@ function WorkspaceAppContent({
       const reason = handleDraftRoadmap(id, goal);
       return reason ? { error: reason } : { id };
     },
+    onRevisePath: (pathId, request) => handleReviseRoadmap(pathId, request),
     onChange: handleRoadmapChange,
     onStepAI: (pathId, docId, action) => handleRoadmapStepAI(pathId, docId, action),
     // Handled after the lesson has opened, so it runs on the state that opened it.

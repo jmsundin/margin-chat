@@ -111,6 +111,26 @@ async function syntheticRoadmapRun(body) {
 }
 
 /**
+ * A synthetic "Change this roadmap" run: the real revise_roadmap tool, fed the roadmap in the prompt with
+ * its first step taken off, the last stage moved first, and a new stage named after the request. No model.
+ */
+function syntheticRoadmapRevise(body) {
+  const prompt = String(body.messages?.at(-1)?.content ?? "");
+  const request = /Change this roadmap: (.+)/u.exec(prompt)?.[1]?.trim();
+  if (!request) return null;
+  let roadmap = null;
+  for (const part of prompt.split("\n\n")) if (part.startsWith("{\"title\":")) { try { roadmap = JSON.parse(part).roadmap; } catch { /* not it */ } }
+  const stages = (roadmap?.stages ?? []).map((stage) => ({ title: stage.title, steps: stage.steps.map((step) => ({ step_id: step.step_id, document_id: "", title: "", notes: null, why: "", needs: step.needs })) }));
+  if (stages[0]?.steps.length > 1) stages[0].steps.shift();
+  if (stages.length > 1) stages.unshift(stages.pop());
+  stages.push({ title: request.slice(0, 60), steps: [{ step_id: "new-1", document_id: "", title: request.slice(0, 80), notes: "- Key ideas\n- [A source](https://example.com)", why: "", needs: [] }] });
+  const tools = createProposalTools({ chatRequest: { ...body, conversation: body.conversation ?? { id: body.sourceDocumentId } }, snapshots: new Map() });
+  const args = { stages, summary: `Added “${request.slice(0, 60)}”, moved the last stage first, took off the first step` };
+  const output = tools.run("revise_roadmap", args);
+  return { steps: [describeProposalStep("revise_roadmap", args, output)], proposals: tools.list(), reply: output.ok ? "I changed the roadmap as you asked." : `I couldn't change the roadmap: ${output.error}` };
+}
+
+/**
  * Synthetic Ratchet replies: claims are the document's lines with a number or
  * "lifespan" in them; each claim with passages is judged in turn supported,
  * contradicted, unsupported, citing its first passage's longest line word for word.
@@ -420,7 +440,7 @@ const server = createServer(async (request, response) => {
                 ? "```mermaid\nflowchart LR\n%% stage: The drug\n  R[Rapamycin] --> M[mTOR blocked]\n%% stage: What it changes\n  M --> G[Less cell growth]\n  M --> A[More autophagy]\n%% stage: The claim\n  A --> L[Longer life in mice]\n%% stage: The open question\n  L -.-> H{Same in humans?}\n```"
               : `## A clearer next step ${syntheticReplyCount}\n\nUse a short weekly reflection to connect a saved passage with an action.\n\n### Try this\n\nWrite one sentence about what changed after reading it.`;
             // A roadmap request gets a synthetic agent run: the real propose_roadmap tool, fed an outline.
-            const roadmapRun = asked.includes("propose_roadmap") ? await syntheticRoadmapRun(body) : null;
+            const roadmapRun = asked.includes("propose_roadmap") ? await syntheticRoadmapRun(body) : asked.includes("revise_roadmap") ? syntheticRoadmapRevise(body) : null;
             if (roadmapRun) {
               response.writeHead(200, { "Content-Type": "application/x-ndjson; charset=utf-8", "Cache-Control": "no-store" });
               response.write(`${JSON.stringify({ type: "metadata", metadata })}\n`);

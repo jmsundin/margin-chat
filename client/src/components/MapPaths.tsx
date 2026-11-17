@@ -14,6 +14,8 @@ export interface MapPathActions {
   onCreatePath(title: string, docIds: string[]): { id: string } | { error: string };
   /** A new path note that AI drafts from a goal or a link; returns its id, or an error. */
   onDraftPath(goal: string): { id: string } | { error: string };
+  /** Ask AI to change a path as the user describes (add, remove, reorder, rename steps); returns why it couldn't start, or null. */
+  onRevisePath?(pathId: string, request: string): string | null;
   /** One edit to a path; returns why it was refused, or null. */
   onChange(pathId: string, change: RoadmapChange): string | null;
   /** Explain a step with AI, or Dive deeper (the step becomes a path of its own); returns why it couldn't start, or null. */
@@ -33,7 +35,7 @@ export interface MapPathActions {
 const PathIcon = () => <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="18.5" r="2.4" /><circle cx="19" cy="5.5" r="2.4" /><path d="M7.2 17.2C14 15 9 9.5 16.8 6.8" /></svg>;
 
 /** The toolbar's Paths menu: turn a path on, start one by hand, or have AI draft one. */
-export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPick, onNew, onDraft }: {
+export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPick, onNew, onDraft, onRevise }: {
   paths: MapPathSummary[];
   activeId: string | null;
   /** The roadmap's name is already on screen (Learn's header), so the button just says Roadmaps. */
@@ -41,8 +43,10 @@ export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPi
   onPick(id: string | null): void;
   onNew(): void;
   onDraft(goal: string): string | null;
+  /** Change the roadmap that's on with AI; absent when none is on or AI can't change it. */
+  onRevise?(request: string): string | null;
 }) {
-  const [drafting, setDrafting] = useState(false);
+  const [drafting, setDrafting] = useState<false | "new" | "change">(false);
   const [goal, setGoal] = useState("");
   const [error, setError] = useState<string | null>(null);
   const active = paths.find((path) => path.id === activeId);
@@ -53,7 +57,18 @@ export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPi
       <PathIcon /><span>{active && !nameShownElsewhere ? active.name : "Roadmaps"}</span>
     </summary>
     <div role="menu">
-      {drafting ? <form className="map-paths-draft" onSubmit={(event) => {
+      {drafting === "change" && active && onRevise ? <form className="map-paths-draft" onSubmit={(event) => {
+        event.preventDefault();
+        const reason = onRevise(goal);
+        if (reason) { setError(reason); return; }
+        setGoal(""); close(event.currentTarget);
+      }}>
+        <label htmlFor="map-paths-change">How should “{active.name}” change?</label>
+        <input id="map-paths-change" autoFocus value={goal} onChange={(event) => setGoal(event.target.value)} placeholder="Add a stage on testing, drop the basics I know…" />
+        <small>AI reads the roadmap and changes it. Your progress stays, and you can undo it.</small>
+        {error ? <p role="alert">{error}</p> : null}
+        <div><button type="submit" disabled={!goal.trim()}>Change roadmap</button><button type="button" onClick={() => { setDrafting(false); setError(null); }}>Back</button></div>
+      </form> : drafting ? <form className="map-paths-draft" onSubmit={(event) => {
         event.preventDefault();
         const reason = onDraft(goal);
         if (reason) { setError(reason); return; }
@@ -71,7 +86,8 @@ export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPi
         </button>) : <p className="map-paths-empty">A roadmap is a path through your notes: steps in order, with what each needs first.</p>}
         <hr />
         <button type="button" role="menuitem" onClick={(event) => { close(event.currentTarget); onNew(); }}>+ New roadmap: click notes in order</button>
-        <button type="button" role="menuitem" onClick={() => setDrafting(true)}>✦ Draft a roadmap with AI…</button>
+        {active && onRevise ? <button type="button" role="menuitem" onClick={() => { setGoal(""); setDrafting("change"); }}>✦ Change this roadmap with AI…</button> : null}
+        <button type="button" role="menuitem" onClick={() => { setGoal(""); setDrafting("new"); }}>✦ Draft a roadmap with AI…</button>
       </>}
     </div>
   </DismissibleDetails>;
@@ -209,7 +225,7 @@ export function MapPathBar({ path, trail, conversations, currentDocId, actions, 
     {!inCourse && (drafting || draft) ? <div className="map-path-draft" role="status" aria-live="polite">
       {draft && !drafting ? <>
         <span className="map-path-spinner" aria-hidden="true" />
-        <span>Adding {draftSize(draft.proposal)} to “{path.name}”…</span>
+        <span>{draft.proposal.revise ? `Changing “${path.name}”…` : <>Adding {draftSize(draft.proposal)} to “{path.name}”…</>}</span>
       </> : <>
         <span className="map-path-spinner" aria-hidden="true" />
         <span>{progress?.label || (progress?.roadmapDraft ? `Drafting: ${progress.roadmapDraft.stages.reduce((sum, stage) => sum + stage.steps.length, 0)} steps so far…` : "AI is drafting this path…")}</span>

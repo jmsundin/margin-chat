@@ -334,6 +334,22 @@ export function unmakeRoadmapDocument(conversation: Conversation, updatedAt: str
   return { ...rest, updatedAt };
 }
 
+/** A roadmap's current stages and steps as the AI reads them: each step by its node ID, with its document, progress and needs. */
+export interface RoadmapOutline {
+  stages: { title: string; steps: { step_id: string; title: string; document_id: string; status: RoadmapStatus; optional?: true; needs: string[] }[] }[];
+}
+
+export function roadmapOutline(conversation: Conversation, conversations: Record<string, Conversation>): RoadmapOutline | null {
+  if (conversation.nodeType !== ROADMAP_NODE_TYPE) return null;
+  const graph = buildRoadmapGraph(getRoadmap(conversation), conversations);
+  return { stages: graph.stages.filter((stage) => stage.total).map((stage) => ({ title: stage.title,
+    steps: stage.rows.flatMap((row) => row.nodeIds).map((id) => {
+      const node = graph.nodesById.get(id)!;
+      return { step_id: id, title: roadmapNodeTitle(node, conversations), document_id: node.target.docId, status: roadmapStatus(node),
+        ...(node.optional ? { optional: true as const } : {}), needs: graph.needs.get(id) ?? [] };
+    }) })) };
+}
+
 export interface RoadmapDraftIds {
   stages: string[];
   nodes: Record<string, string>;
@@ -358,6 +374,7 @@ export function roadmapDraftIds(proposal: AgentRoadmapProposal, createId?: (pref
  */
 export function applyRoadmapDraft(state: AppState, proposal: AgentRoadmapProposal, ids: RoadmapDraftIds,
   options: { updatedAt: string; known?: (id: string) => boolean }): { state: AppState; added: number; skipped: number; created: number } | null {
+  if (proposal.revise) return applyRoadmapRevision(state, proposal, ids, options);
   const conversation = state.conversations[proposal.roadmapId];
   if (!conversation) return null;
   const { updatedAt } = options;
@@ -476,6 +493,16 @@ export function roadmapDiveDeeperPrompt(topic: string, roadmapTitle: string, lan
   return `${language ? `${language}\n\n` : ""}Dive deeper into “${topic}”, a step in my roadmap “${roadmapTitle || "Untitled roadmap"}”: build a roadmap of its subtopics in this document.\n\nUse propose_roadmap with this document as the roadmap: 2 to 5 stages and 6 to 16 steps, from what to learn first to the most advanced, drawing on what this document already lists and on your own knowledge of the topic. Search my vault first: where one of my documents already teaches a subtopic, point the step at it; for every other subtopic, make a step with a new document whose notes list what to cover. Don't repeat the other steps of the parent roadmap.`;
 }
 
+/** What Change with AI asks Agent mode: the roadmap open in this document, changed as the user asks. */
+export function roadmapRevisePrompt(request: string): string {
+  return `Change this roadmap: ${request.trim()}\n\nRead its current stages and steps under \`roadmap\` in the JSON, then use revise_roadmap to give the whole roadmap as it should be afterwards. Keep every step my request doesn't mean to remove, with its step_id. For new steps, search my vault first and point a step at a document that already teaches it; for every other new topic, make a step with a new document whose notes list the key ideas and the best sources (title and link).`;
+}
+
+/** A Change with AI request, as roadmapRevisePrompt writes it. */
+export function isRoadmapReviseRequest(content: string): boolean {
+  return content.includes("revise_roadmap") && /(^|\n)Change this roadmap: /u.test(content);
+}
+
 /** A Draft with AI request, as roadmapDraftPrompt writes it. */
 export function isRoadmapDraftRequest(content: string): boolean {
   return content.includes("propose_roadmap") && content.includes("Add the stages to this roadmap document.");
@@ -553,4 +580,86 @@ export function roadmapOutlineProposal(reply: string, roadmapId: string, roadmap
   if (!kept.length) return null;
   return { id: "proposal-1", kind: "roadmap", roadmapId, roadmapTitle, goal: (goal || fallbackGoal.trim() || "Roadmap").slice(0, 200),
     summary: "Drafted without Agent mode, from the model's own knowledge.", stages: kept };
+}
+
+/**
+ * Apply an AI change to a roadmap: `proposal.stages` is the whole roadmap afterwards. Steps already on it
+ * (by `nodeId`) keep their document, status and proof and move to their new stage and place; new steps
+ * are added as in a draft; steps left out come off the roadmap, but their documents are kept. Stages
+ * keep their IDs when their names match. Prerequisites are set to the ones the change lists, through the
+ * same edits as by hand, so `depends-on` relations stay in step and loops are refused.
+ */
+export function applyRoadmapRevision(state: AppState, proposal: AgentRoadmapProposal, ids: RoadmapDraftIds,
+  options: { updatedAt: string; known?: (id: string) => boolean }): { state: AppState; added: number; skipped: number; created: number; removed: number; kept: number } | null {
+  const conversation = state.conversations[proposal.roadmapId];
+  if (!conversation || conversation.nodeType !== ROADMAP_NODE_TYPE) return null;
+  const { updatedAt } = options;
+  const known = (id: string) => Boolean(state.conversations[id]) || (options.known?.(id) ?? false);
+  const current = getRoadmap(conversation);
+  const nodesById = new Map(current.nodes.map((node) => [node.id, node]));
+  const stageByTitle = new Map<string, string>();
+  for (const stage of current.stages) if (!stageByTitle.has(stage.title.trim().toLowerCase())) stageByTitle.set(stage.title.trim().toLowerCase(), stage.id);
+  let next = state;
+  const keyed = new Map<string, string>();
+  const stages: Roadmap["stages"] = [];
+  const nodes: RoadmapNode[] = [];
+  const renames: { nodeId: string; title: string }[] = [];
+  let added = 0;
+  let skipped = 0;
+  let created = 0;
+  proposal.stages.forEach((stage, index) => {
+    const reused = stageByTitle.get(stage.title.trim().toLowerCase());
+    const stageId = reused && !stages.some((item) => item.id === reused) ? reused : ids.stages[index] ?? newRoadmapId("stage");
+    const members: RoadmapNode[] = [];
+    for (const step of stage.steps) {
+      const existing = step.nodeId ? nodesById.get(step.nodeId) : undefined;
+      if (existing) {
+        if (keyed.has(step.key)) continue;
+        members.push({ ...existing, stage: stageId, order: members.length });
+        if (step.title?.trim()) renames.push({ nodeId: existing.id, title: step.title });
+        keyed.set(step.key, existing.id);
+        continue;
+      }
+      let docId = "";
+      let title = step.title;
+      if (step.documentId) {
+        if (known(step.documentId) && step.documentId !== conversation.id) docId = step.documentId;
+      } else if (step.title?.trim() && ids.documents?.[step.key]) {
+        const made = ids.documents[step.key];
+        const result = addAIChildNodes(next, conversation.id, [{ id: step.key, title: step.title, content: step.notes ?? "", blockId: "", from: 0, to: 0 }],
+          { now: updatedAt, createId: (prefix) => prefix === "conversation" ? made.conversation : made.block });
+        if (result.createdIds.length) { next = result.state; created += 1; docId = made.conversation; title = undefined; }
+      }
+      const nodeId = ids.nodes[step.key];
+      if (!docId || !nodeId) { skipped += 1; continue; }
+      members.push({ id: nodeId, target: { docId }, stage: stageId, order: members.length, ...(title?.trim() ? { title } : {}) });
+      keyed.set(step.key, nodeId);
+      added += 1;
+    }
+    if (!members.length) return;
+    stages.push({ id: stageId, title: stage.title.trim() || (current.stages.find((item) => item.id === stageId)?.title ?? `Stage ${stages.length + 1}`) });
+    nodes.push(...members);
+  });
+  if (!nodes.length) return null;
+  const keptIds = new Set(nodes.map((node) => node.id));
+  const removed = current.nodes.filter((node) => !keptIds.has(node.id)).length;
+  // Local prerequisites on removed steps go with them; the rest are set below.
+  next = withRoadmap(next, conversation.id, () => ({ version: current.version, stages,
+    nodes: nodes.map((node) => node.dependsOn ? { ...node, dependsOn: node.dependsOn.filter((id) => keptIds.has(id)) } : node) }), updatedAt);
+  for (const { nodeId, title } of renames) next = applyRoadmapChange(next, conversation.id, { kind: "rename-node", nodeId, title }, updatedAt).state;
+  const wanted = new Map<string, Set<string>>();
+  for (const step of proposal.stages.flatMap((stage) => stage.steps)) {
+    const nodeId = keyed.get(step.key);
+    if (nodeId && !wanted.has(nodeId)) wanted.set(nodeId, new Set(step.needs.flatMap((need) => keyed.get(need) ?? [])));
+  }
+  // Drop the needs the change no longer lists first, so adding the new ones can't loop through an old one.
+  for (const edge of roadmapEdges(getRoadmap(next.conversations[conversation.id]), next.conversations)) {
+    if (wanted.has(edge.from) && !wanted.get(edge.from)!.has(edge.to)) {
+      next = applyRoadmapChange(next, conversation.id, { kind: "remove-prerequisite", nodeId: edge.from, prerequisiteId: edge.to }, updatedAt).state;
+    }
+  }
+  for (const [nodeId, needs] of wanted) for (const prerequisiteId of needs) {
+    if (prerequisiteId !== nodeId) next = applyRoadmapChange(next, conversation.id, { kind: "add-prerequisite", nodeId, prerequisiteId }, updatedAt).state;
+  }
+  return { state: next, added, skipped, created, removed, kept: nodes.length - added };
 }
