@@ -49,6 +49,11 @@ function titleOf(document: Conversation) {
   return document.title || "Untitled document";
 }
 
+/** A level's menu is worth opening only when it lists a document besides the one already in the path. */
+function hasOtherOptions(level: { document: Conversation; options: Conversation[] }) {
+  return level.options.some((option) => option.id !== level.document.id);
+}
+
 /** One breadcrumb follows the focused document; each level lists its peers to expand here or open beside. */
 export default function DocumentBreadcrumbs({ conversations, focusedId, onScreenIds, minimizedIds, streamingIds, backTitle, onBack, onExpand, onOpenBeside, trailing, plain = false, openedAt }: Props) {
   const { levels, trail, childrenByParent } = useMemo(() => getDocumentBreadcrumbs(conversations, focusedId, openedAt), [conversations, focusedId, openedAt]);
@@ -67,7 +72,7 @@ export default function DocumentBreadcrumbs({ conversations, focusedId, onScreen
   const hoverOpenedAt = useRef(0);
   const panelId = useId();
   const detailId = useId();
-  const open = openIndex === null ? null : crumbs[openIndex] ?? null;
+  const open = openIndex === null || !crumbs[openIndex] || !hasOtherOptions(crumbs[openIndex]) ? null : crumbs[openIndex];
 
   function cancelTimer() { if (timer.current !== null) clearTimeout(timer.current); timer.current = null; }
   function close(returnFocus = false) {
@@ -220,6 +225,18 @@ export default function DocumentBreadcrumbs({ conversations, focusedId, onScreen
         {crumbs.map((crumb, index) => {
           const label = titleOf(crumb.document);
           const current = crumb.document.id === focusedId;
+          const streaming = streamingIds.has(crumb.document.id) ? <span className="document-breadcrumb-streaming" title="AI writing">
+            <span className="thread-streaming-dot" aria-hidden="true" /></span> : null;
+          // A level with no other documents has nothing to pick, so it shows no menu: just the title.
+          if (!hasOtherOptions(crumb)) return <li key={crumb.key} className={`document-breadcrumb is-alone${crumb.ahead ? " is-ahead" : ""}`}>
+            {index ? <span className="document-breadcrumb-separator" aria-hidden="true">›</span> : null}
+            <button type="button" className="document-breadcrumb-trigger" data-breadcrumb-document-id={crumb.document.id}
+              ref={(element) => { if (element) triggers.current.set(index, element); else triggers.current.delete(index); }}
+              aria-current={current ? "page" : undefined} disabled={current} onClick={() => choose(crumb.document.id, onExpand)}>
+              <span className="document-breadcrumb-label">{label}</span>
+              {streaming}
+            </button>
+          </li>;
           return <li key={crumb.key} className={`document-breadcrumb${crumb.ahead ? " is-ahead" : ""}`}
             onPointerEnter={(event) => enter(index, event.pointerType, event.buttons)} onPointerLeave={leave}>
             {index ? <span className="document-breadcrumb-separator" aria-hidden="true">›</span> : null}
@@ -235,8 +252,7 @@ export default function DocumentBreadcrumbs({ conversations, focusedId, onScreen
                 else if (event.key === "Escape" && openIndex !== null) { event.preventDefault(); event.stopPropagation(); close(true); }
               }}>
               <span className="document-breadcrumb-label">{label}</span>
-              {streamingIds.has(crumb.document.id) ? <span className="document-breadcrumb-streaming" title="AI writing">
-                <span className="thread-streaming-dot" aria-hidden="true" /></span> : null}
+              {streaming}
               <Icon name="chevron" className="document-breadcrumb-chevron" />
             </button>
           </li>;
