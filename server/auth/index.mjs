@@ -54,7 +54,12 @@ export function createAuthService({
    * email changes go through even when email can't be sent, and the reason is logged.
    */
   async function sendVerificationLink(user) {
-    if (!getPasswordResetEmailConfiguration(env).configured || typeof database.createEmailVerificationToken !== "function") return { sent: false };
+    const emailConfiguration = getPasswordResetEmailConfiguration(env);
+    if (!emailConfiguration.configured) {
+      console.error(`Email confirmation link not sent. ${emailConfiguration.reason}`);
+      return { sent: false };
+    }
+    if (typeof database.createEmailVerificationToken !== "function") return { sent: false };
     const token = randomBytes(32).toString("base64url");
     const tokenHash = hashResetToken(token);
     try {
@@ -71,7 +76,9 @@ export function createAuthService({
   /** Settings' "Send again": a fresh link to the account's current address. */
   async function requestEmailVerification(user) {
     if (user.emailVerified) return { ok: true, alreadyVerified: true };
-    if (!getPasswordResetEmailConfiguration(env).configured) {
+    const emailConfiguration = getPasswordResetEmailConfiguration(env);
+    if (!emailConfiguration.configured) {
+      console.error(`Email confirmation unavailable. ${emailConfiguration.reason}`);
       throw createStatusError(503, "Email confirmation is temporarily unavailable. Please try again later.");
     }
     const result = await sendVerificationLink(user);

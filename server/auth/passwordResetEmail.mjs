@@ -13,7 +13,7 @@ export function getPasswordResetEmailConfiguration(env) {
   if (!from) missing.push("PASSWORD_RESET_FROM_EMAIL (or EMAIL_FROM)");
   if (!url) missing.push("APP_URL (or a Vercel deployment URL)");
   if (missing.length) {
-    return { configured: false, reason: `Password reset email delivery is not configured: ${missing.join(", ")}.` };
+    return { configured: false, reason: `Email delivery (password reset and email confirmation) is not configured. Missing in this environment: ${missing.join(", ")}.` };
   }
 
   let appUrl;
