@@ -203,15 +203,14 @@ try {
   const edited = structuredClone(latest.conversations[noteId].document!.blocks);
   assert(edited.some((block) => block.content.includes('Edited mini document')));
   assert(latest.conversations[noteId].branchAnchor?.sourceBlockId);
-  await click(element('[aria-label="Hide margin notes for Main research"]'));
-  assert.equal(container.querySelector(`[data-document-id="${noteId}"]`), null);
+  assert.equal(container.querySelector('.document-margin-notes-toggle'), null, "No Notes button: the breadcrumb bar lists the notes.");
   await openFromBreadcrumbs(noteId);
   assert.equal(latest.activeConversationId, noteId);
   assert(notePane(noteId), "Going to the note reopens its margin column.");
   assert.deepEqual(latest.conversations[noteId].document!.blocks, edited);
   assert.equal(container.querySelector(`[data-document-tab-id="${noteId}"]`), null, "Margin notes are not tabs.");
   assert.equal(element(`[data-document-tab-id="${mainId}"] [role="tab"]`).getAttribute("aria-selected"), "true", "A margin note's document keeps its tab selected.");
-  checks.push('full rich editing persists and direct document navigation reopens a closed note column');
+  checks.push('full rich editing persists and breadcrumb navigation opens a note in its margin');
 
   const resize = notePane(noteId).querySelector('.margin-document-resize');
   await act(async () => {
@@ -345,7 +344,6 @@ try {
   assert.equal(latest.activeConversationId, mainId);
   await documentAction(mainId, 'Pin document');
   assert(element(`[data-dock-document-id="${mainId}"]`).querySelector(`[data-document-id="${noteId}"]`));
-  await click(element('[aria-label="Hide margin notes for Main research"]'));
   await click(sidebar(latest.conversations[nestedId].title));
   assert.equal(latest.activeConversationId, nestedId);
   assert(notePane(nestedId));
