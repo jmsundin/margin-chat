@@ -142,3 +142,5 @@
 }
 .language-library-sheet textarea { font-family: var(--reading-font, Georgia, serif); resize: vertical; }
 .language-library-sheet .language-library-actions { margin-top: 4px; }
+.language-library-shelf-actions { display: inline-flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.language-library-sheet select { background: var(--panel-strong); border: 1px solid var(--line); border-radius: 8px; color: var(--ink); font: inherit; font-size: 15px; padding: 8px 10px; }

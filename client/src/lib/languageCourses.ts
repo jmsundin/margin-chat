@@ -200,8 +200,10 @@ export function documentSections(contents: ReadonlyArray<string>): Array<{ headi
 }
 
 export interface NewLessons {
-  lang: string; title: string; level?: string; lessons: Array<{ title: string; body: string }>;
+  lang: string; title: string; level?: string; lessons: Array<{ title: string; body: string; translation?: string; variant?: "a" | "b" | "qa" }>;
   documentId?: string; sourceHash?: string; simplifiedFrom?: string; replace?: boolean;
+  /** A mini story: its story, retelling and questions, in that order. */
+  story?: boolean;
 }
 export interface MadeLessons { course: Course | null; lessons: CourseLesson[]; created: boolean; stale?: boolean; refreshed?: boolean }
 

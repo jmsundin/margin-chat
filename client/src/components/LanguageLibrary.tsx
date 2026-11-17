@@ -119,6 +119,7 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
   // ----- lessons from the learner's documents and texts -----
   const [making, setMaking] = useState<string | null>(null);
   const [adding2, setAddingLesson] = useState(false);
+  const [writing, setWriting] = useState(false);
   async function studyDocument(document: StudyDocument, replace = false) {
     if (making) return;
     const { lessons, sourceHash } = documentLessons(document);
@@ -173,11 +174,14 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
   else if (view.kind === "lesson" && open) {
     const course = allCourses.find((item) => item.id === open.courseId) ?? null;
     const siblings = course ? lessonsOf(course.id) : [open];
-    const next = nextLessonIn(siblings, open.id);
+    const following = nextLessonIn(siblings, open.id);
+    // Done with the last story there is: the next one can be written.
+    const next = following ? { title: `${following.title}${following.variant ? ` · ${variantName(following.variant)}` : ""}`, open: () => openLesson(following.id) }
+      : open.variant && writeWithAI ? { title: "Write a new story", open: () => { setView({ kind: "shelves" }); setWriting(true); } } : null;
     body = <LessonView key={open.id} userId={userId} lesson={open} course={course} progress={progressOf.get(open.id) ?? null} pair={{ target: lang, base: profile.nativeLang }}
       learning={learningFor({ target: lang, base: profile.nativeLang }, open.id)} level={profile.level} writeWithAI={writeWithAI}
       onSimplified={(lessonId) => { refresh(); setView({ kind: "lesson", lessonId, from: view.from }); }}
-      next={next ? { title: `${next.title}${next.variant ? ` · ${variantName(next.variant)}` : ""}`, open: () => openLesson(next.id) } : null}
+      next={next}
       onSaved={refresh} onClose={() => setView({ kind: "shelves" })} />;
   } else if (view.kind === "course") {
     const course = allCourses.find((item) => item.id === view.courseId);
@@ -193,7 +197,10 @@ export function LanguageLibrary({ userId, terms, learningFor, documents, onOpenD
       documentAction={(document) => <DocumentStudy document={document} course={data?.courses.find((course) => course.documentId === document.id) ?? null}
         lessons={data?.lessons ?? []} busy={making === document.id} onStudy={(replace) => void studyDocument(document, replace)}
         onOpenCourse={(courseId) => setView({ kind: "course", courseId })} extra={slots?.documentAction?.(document, lang, refresh)} />}
-      extra={<>{<button type="button" className="language-library-add" onClick={() => setAddingLesson(true)}>Add a lesson…</button>}{slots?.header?.(lang, refresh)}</>} />;
+      extra={<>{<button type="button" className="language-library-add" onClick={() => setAddingLesson(true)}>Add a lesson…</button>}{slots?.header?.(lang, refresh)}</>}
+      onWriteStory={writeWithAI ? () => setWriting(true) : undefined} />;
+    if (writing && writeWithAI) body = <>{body}<WriteStory lang={lang} base={profile.nativeLang} level={profile.level} userId={userId} write={writeWithAI} terms={terms}
+      onDone={(made) => { setWriting(false); refresh(); const first = made?.lessons.find((lesson) => lesson.variant === "a"); if (first) setView({ kind: "lesson", lessonId: first.id, from: "shelves" }); }} /></>;
     if (adding2) body = <>{body}<AddLesson lang={lang} level={profile.level} userId={userId} readPage={readPage}
       onDone={(made) => { setAddingLesson(false); refresh(); if (made?.course) setView({ kind: "course", courseId: made.course.id }); }} /></>;
   }
@@ -256,11 +263,12 @@ function Onboarding({ taken, error, onChoose, onCancel }: { taken: string[]; err
 
 type StatusOf = (norm: string) => number | undefined;
 
-function Shelves({ lang, profile, data, shipped, allLessons, allCourses, levels, inRange, statusOf, progressOf, lessonsOf, documents, error, onLevels, onLevel, onOpenLesson, onOpenCourse, onOpenDocument, documentAction, extra }: {
+function Shelves({ lang, profile, data, shipped, allLessons, allCourses, levels, inRange, statusOf, progressOf, lessonsOf, documents, error, onLevels, onLevel, onOpenLesson, onOpenCourse, onOpenDocument, documentAction, extra, onWriteStory }: {
   lang: string; profile: LearningProfile; data: LibraryData | null; shipped: { course: Course; lessons: CourseLesson[] } | null; allLessons: CourseLesson[]; allCourses: Course[];
   levels: [number, number] | null; inRange: (level: string) => boolean; statusOf: StatusOf; progressOf: Map<string, LessonProgress>; lessonsOf: (courseId: string) => CourseLesson[];
   documents: ReadonlyArray<StudyDocument>; error: string | null; onLevels: (levels: [number, number]) => void; onLevel: (level: string) => void;
   onOpenLesson: (id: string) => void; onOpenCourse: (id: string) => void; onOpenDocument: (id: string) => void; documentAction?: (document: StudyDocument) => ReactNode; extra?: ReactNode;
+  onWriteStory?: () => void;
 }) {
   const byId = useMemo(() => new Map(allLessons.map((lesson) => [lesson.id, lesson] as const)), [allLessons]);
   const completed = useCallback((id: string) => progressOf.get(id)?.status === "completed", [progressOf]);
@@ -276,10 +284,14 @@ function Shelves({ lang, profile, data, shipped, allLessons, allCourses, levels,
   });
   const continuing = [...started, ...nextOfCourses].slice(0, 12);
 
+  // The learner's own stories first, newest first, then the ones that come with the app.
+  const ownStoryCourse = allCourses.find((course) => course.kind === "user" && course.tags.includes("mini-stories")) ?? null;
+  const ownStories = ownStoryCourse ? lessonsOf(ownStoryCourse.id).filter((lesson) => !completed(lesson.id)).reverse() : [];
   const stories = shipped ? shipped.lessons.filter((lesson) => inRange(lesson.level)) : [];
   const suggestion = shipped ? suggestedStory(stories, { completed, statusOf }) : null;
   const storyStart = suggestion ? Math.max(0, stories.findIndex((lesson) => lesson.storyGroup === suggestion.group)) : 0;
-  const storyShelf = [...stories.slice(storyStart), ...stories.slice(0, storyStart)].slice(0, 15);
+  const storyShelf = [...ownStories.filter((lesson) => lesson.variant === "a" || progressOf.has(lesson.id)).slice(0, 6),
+    ...[...stories.slice(storyStart), ...stories.slice(0, storyStart)]].slice(0, 15);
 
   const courses = allCourses.filter((course) => course.kind !== "mini_stories" ? inRange(course.level) || course.kind === "user" : true);
   const forYou = allLessons.filter((lesson) => inRange(lesson.level) && !completed(lesson.id) && !continuing.includes(lesson)).filter((lesson) => {
@@ -298,8 +310,10 @@ function Shelves({ lang, profile, data, shipped, allLessons, allCourses, levels,
     {!data && !error ? <p className="language-library-quiet" role="status">Loading your lessons…</p> : null}
 
     {continuing.length ? <Shelf title="Continue studying">{continuing.map(card)}</Shelf> : null}
-    {shipped ? <Shelf title="Mini stories" action={<button type="button" className="language-library-link" onClick={() => onOpenCourse(shipped.course.id)}>View all</button>}
-      empty="No mini stories at these levels yet. Widen the level range.">{storyShelf.map(card)}</Shelf> : null}
+    {shipped || ownStoryCourse || onWriteStory ? <Shelf title="Mini stories" action={<span className="language-library-shelf-actions">
+      {onWriteStory ? <button type="button" className="language-library-link" onClick={onWriteStory}>Write a new story…</button> : null}
+      {shipped ?? ownStoryCourse ? <button type="button" className="language-library-link" onClick={() => onOpenCourse((shipped?.course ?? ownStoryCourse)!.id)}>View all</button> : null}
+    </span>} empty={shipped ? "No mini stories at these levels yet. Widen the level range." : "Short stories the AI writes at your level, each told three ways. Write your first one."}>{storyShelf.map(card)}</Shelf> : null}
     <Shelf title="Courses" empty="No courses at these levels yet.">{courses.map((course) => <CourseCard key={course.id} course={course} lessons={lessonsOf(course.id)} statusOf={statusOf}
       enrolled={Boolean(data?.enrollments.some((item) => item.courseId === course.id))} onOpen={() => onOpenCourse(course.id)} />)}</Shelf>
     <Shelf title="From your documents" empty={`Documents you read in ${languageName(lang)} show up here. Open one and pick Language in its mode button.`}>
@@ -417,7 +431,7 @@ function LessonView({ userId, lesson, course, progress, pair, learning, level, w
   const [simplifyError, setSimplifyError] = useState<string | null>(null);
   useEffect(() => () => simplifying?.abort(), [simplifying]);
   // Lessons that come with the app are already written for their level; the learner's own may not be.
-  const canSimplify = Boolean(writeWithAI) && lesson.source !== "builtin" && levelRank(level) < levelRank("C2");
+  const canSimplify = Boolean(writeWithAI) && lesson.source !== "builtin" && !lesson.variant && levelRank(level) < levelRank("C2");
   async function simplify() {
     if (!writeWithAI || simplifying) return;
     const controller = new AbortController();
@@ -540,6 +554,51 @@ function AddLesson({ lang, level, userId, readPage, onDone }: {
       <div className="language-library-actions">
         <button type="submit" className="is-primary" disabled={Boolean(busy)}>{busy ?? "Make lesson"}</button>
         <button type="button" onClick={() => { controller.current?.abort(); onDone(null); }}>Cancel</button>
+      </div>
+    </form>
+  </div>;
+}
+
+/** "Write a new story": the AI plans it, writes it, retells it and asks questions about it, checking each part. */
+function WriteStory({ lang, base, level, userId, write, terms, onDone }: {
+  lang: string; base: string; level: string; userId: string; write: (prompt: string, signal: AbortSignal) => Promise<string>;
+  terms: ReadonlyMap<string, LanguageTerm>; onDone: (made: import("../lib/languageCourses").MadeLessons | null) => void;
+}) {
+  const [topic, setTopic] = useState("");
+  const [storyLevel, setStoryLevel] = useState(level);
+  const [step, setStep] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const controller = useRef<AbortController | null>(null);
+  useEffect(() => () => controller.current?.abort(), []);
+  async function submit() {
+    setError(null);
+    const running = new AbortController();
+    controller.current = running;
+    try {
+      const known = [...terms.values()].filter((term) => term.language === lang && term.status >= 4 && !term.key.includes(" "))
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).map((term) => term.key);
+      const { writeMiniStory } = await import("../lib/miniStoryWriter");
+      const story = await writeMiniStory({ lang, base, level: storyLevel, topic, known, ask: write, signal: running.signal, onProgress: setStep });
+      setStep("Saving…");
+      onDone(await createLessons(userId, { lang, title: story.title, level: storyLevel, story: true, lessons: (["a", "b", "qa"] as const).map((variant) => ({
+        variant, title: variant === "qa" ? `${story.title}: ${variantName("qa")}` : story.title, body: story.parts[variant].body, translation: story.parts[variant].translation,
+      })) }));
+    } catch (failure) {
+      if (!running.signal.aborted) setError(failure instanceof Error ? failure.message : "The story couldn't be written.");
+    } finally { setStep(null); }
+  }
+  return <div className="language-library-sheet" role="dialog" aria-label="Write a new story" onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); controller.current?.abort(); onDone(null); } }}>
+    <form onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+      <h2>Write a new {languageName(lang)} story</h2>
+      <p className="language-library-quiet">The AI writes a short original story at your level with 8 to 15 new words, the same story retold, and questions about it. Each part has its translation.</p>
+      <label>About <input value={topic} onChange={(event) => setTopic(event.target.value)} placeholder="Anything, or leave empty for an everyday story" maxLength={300} autoFocus /></label>
+      <label>Level <select value={storyLevel} onChange={(event) => setStoryLevel(event.target.value)}>
+        {LEARNING_LEVELS.map((value) => <option key={value} value={value}>{levelName(value)} ({value})</option>)}</select></label>
+      {step ? <p className="language-library-quiet" role="status">{step}</p> : null}
+      {error ? <p className="language-library-error" role="alert">{error}</p> : null}
+      <div className="language-library-actions">
+        <button type="submit" className="is-primary" disabled={Boolean(step)}>{step ? "Writing…" : "Write story"}</button>
+        <button type="button" onClick={() => { controller.current?.abort(); onDone(null); }}>{step ? "Stop" : "Cancel"}</button>
       </div>
     </form>
   </div>;

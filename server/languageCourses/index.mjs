@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { isBuiltInLessonId, isCourseLanguage, isLearningLevel, tokenizeLesson } from "@margin-chat/workspace-contracts/languageCourses";
+import { MINI_STORY_VARIANTS, isBuiltInLessonId, isCourseLanguage, isLearningLevel, sentenceTranslations, tokenizeLesson } from "@margin-chat/workspace-contracts/languageCourses";
 import { HttpError } from "../lib/errors.mjs";
 
 /** Language courses: where a learner is in each lesson, and what they studied each day. */
@@ -135,15 +135,40 @@ export function createLanguageCourseService({ database }) {
       if (item.body.length > MAX_LESSON_CHARS) throw new HttpError(413, "One part of that text is too long for a lesson. Add headings to split it.");
       const cut = tokenizeLesson(item.body, lang);
       if (!cut.wordCount) return [];
-      return [{ title: text(item.title, 200) || `Part ${index + 1}`, body: item.body.trim(), cut }];
+      // A translation is kept only when it has a line for every sentence, as the reader shows them side by side.
+      const translation = typeof item.translation === "string" && item.translation.length <= MAX_LESSON_CHARS && sentenceTranslations(item.translation.trim(), cut.sentenceCount)
+        ? item.translation.trim() : null;
+      const variant = MINI_STORY_VARIANTS.includes(item.variant) ? item.variant : null;
+      return [{ title: text(item.title, 200) || `Part ${index + 1}`, body: item.body.trim(), cut, translation, variant }];
     });
     if (!items.length) throw new HttpError(400, "There's no text to make lessons from.");
     const title = text(body.title, 200) || items[0].title;
-    const source = simplifiedFrom ? "generated" : documentId ? "document" : "import";
+    // A mini story the AI wrote: its story, retelling and questions, told apart by their variant and kept together.
+    const story = body.story === true;
+    const source = simplifiedFrom || story ? "generated" : documentId ? "document" : "import";
+    const storyGroup = story ? newId("grp") : null;
     const row = (item, courseId, pos, id = newId("lsn")) => ({
       id, courseId, lang, pos, title: item.title, level, source, documentId, sourceHash, body: item.body, tokens: item.cut.tokens, norms: item.cut.norms,
-      wordCount: item.cut.wordCount, uniqueWordCount: item.cut.uniqueWordCount, variant: null, storyGroup: null, simplifiedFrom, translation: null, audioUrl: null,
+      wordCount: item.cut.wordCount, uniqueWordCount: item.cut.uniqueWordCount, variant: story ? item.variant : null, storyGroup, simplifiedFrom,
+      translation: item.translation, audioUrl: null,
     });
+
+    if (story) {
+      if (items.length !== 3 || items.some((item, index) => item.variant !== MINI_STORY_VARIANTS[index])) throw new HttpError(400, "A mini story comes as its story, retelling and questions.");
+      // The learner's stories in a language go in one course of their own, made the first time.
+      const courses = await database.listCourses({ userId, lang });
+      let course = courses.find((item) => item.kind === "user" && item.tags.includes("mini-stories")) ?? null;
+      if (!course) {
+        course = await database.saveCourse({ userId, course: { id: newId("crs"), lang, title: "My mini stories", level, kind: "user", tags: ["mini-stories"],
+          description: "Stories the AI wrote for you, each told three ways: the story, the same story retold, and questions." } });
+        if (!course) throw new HttpError(409, "That course couldn't be made. Try again.");
+        await database.enroll({ userId, courseId: course.id, lang });
+      }
+      const siblings = await database.listLessons({ userId, lang, courseId: course.id });
+      const start = siblings.reduce((most, lesson) => Math.max(most, lesson.pos), -1) + 1;
+      const lessons = await database.saveLessons({ userId, lessons: items.map((item, index) => row(item, course.id, start + index)) });
+      return { course, lessons, created: true };
+    }
 
     // A lesson made simpler goes beside the one it came from, in the same course.
     if (simplifiedFrom) {
