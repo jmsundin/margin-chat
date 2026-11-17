@@ -2,7 +2,7 @@ import { createEmptyRoadmap, normalizeRoadmap, ROADMAP_NODE_TYPE } from "@margin
 import { addAIChildNodes } from "./aiChildNodes";
 import type { AgentRoadmapProposal, AppState, Conversation, Roadmap, RoadmapNode, RoadmapStatus } from "../types";
 import { setDocumentRelation } from "./documentRelations";
-import { languageName, type LanguagePair } from "./languageLearning";
+import { LEARNING_LANGUAGES, languageName, type LanguagePair } from "./languageLearning";
 
 /** A prerequisite: `from` needs `to` first. `source` says where the edge is stored. */
 export interface RoadmapEdge { from: string; to: string; source: "relation" | "local" }
@@ -448,17 +448,45 @@ const LANGUAGE_LINE = "Language: my goal for this roadmap is";
 /**
  * What a roadmap ask says about language, on a line of its own: write in the language the
  * goal asks for, else the one it is written in (never English by default), with a mix the
- * goal asks for kept exactly. When the user is learning a language (Language mode), every
- * step also gets words, example sentences with translations, and practice in it.
- * The line quotes the goal, so later asks in the roadmap (Explain, lessons, Dive deeper)
- * can carry it as it is: see roadmapLanguageLine.
+ * goal asks for kept exactly. In Language mode (a pair), everything is written in the
+ * language being learned, whatever language the goal is in or asks for: no native-language
+ * text at all, since the reader looks words up as they read.
+ * The line quotes the goal, so later asks in the roadmap (Explain, lessons, Dive deeper,
+ * Change with AI) can carry it: see roadmapLanguageLine and roadmapLanguageOf.
  */
 export function roadmapLanguageNote(goal: string, pair?: LanguagePair | null): string {
-  const quoted = goal.replace(/\s+/gu, " ").trim().slice(0, 600);
-  const learning = pair && pair.target !== pair.base
-    ? ` I'm learning ${languageName(pair.target)} and my own language is ${languageName(pair.base)}: unless the goal says otherwise, explain in ${languageName(pair.base)}, and give every step ${languageName(pair.target)} words and phrases to learn, example sentences in ${languageName(pair.target)} with ${languageName(pair.base)} translations, and a short practice exercise.`
-    : " If the goal is to learn a language, give every step words and phrases in that language, example sentences with translations, and a short practice exercise.";
-  return `${LANGUAGE_LINE} \u201c${quoted}\u201d. Write everything (goal, stage and step titles, notes, lessons) in the language that goal asks for, or, if it names none, in the language it is written in, not in English by default. When it asks for a mix, such as explanations in one language with examples and translations in another, follow it exactly.${learning}`;
+  const quoted = goal.replace(/\s+/gu, " ").replace(/[\u201c\u201d]/gu, "\"").trim().slice(0, 600);
+  if (pair && pair.target !== pair.base) {
+    const target = languageName(pair.target);
+    const base = languageName(pair.base);
+    return `${LANGUAGE_LINE} \u201c${quoted}\u201d. Language mode (learning ${pair.target}, own language ${pair.base}): I'm learning ${target}, so write everything (goal, stage and step titles, notes, lessons, explanations, examples and exercises) entirely in ${target}, even where my goal is written in ${base} or asks for ${base}. No ${base} text and no ${base} translations: I look words up as I read. Match the level my goal names, with simple ${target} for beginners.`;
+  }
+  return `${LANGUAGE_LINE} \u201c${quoted}\u201d. Write everything (goal, stage and step titles, notes, lessons) in the language that goal asks for, or, if it names none, in the language it is written in, not in English by default. When it asks for a mix, such as explanations in one language with examples and translations in another, follow it exactly. If the goal is to learn a language, give every step words and phrases in that language, example sentences with translations, and a short practice exercise.`;
+}
+
+const LANGUAGE_CODE = (name: string) => LEARNING_LANGUAGES.find((language) => language.name === name)?.code ?? null;
+
+/** The goal a language line quotes, and the Language mode pair it names (lines written before Language mode wording changed name the languages instead). */
+export function roadmapLanguageOf(line: string): { goal: string; pair: LanguagePair | null } {
+  const goal = /\u201c([^\u201c\u201d]*)\u201d/u.exec(line)?.[1] ?? "";
+  const coded = /Language mode \(learning ([A-Za-z-]+), own language ([A-Za-z-]+)\)/u.exec(line);
+  if (coded) return { goal, pair: { target: coded[1], base: coded[2] } };
+  const named = /I'm learning ([A-Z][a-z]+) and my own language is ([A-Z][a-z]+)/u.exec(line);
+  const target = named ? LANGUAGE_CODE(named[1]) : null;
+  const base = named ? LANGUAGE_CODE(named[2]) : null;
+  return { goal, pair: target && base ? { target, base } : null };
+}
+
+/**
+ * The language line for a new ask in a roadmap: the one its draft carried, rewritten for
+ * Language mode when the roadmap was drafted in it or `pair` (the mode now) says it is.
+ */
+export function roadmapLanguageFor(conversation: Pick<Conversation, "messages" | "title"> | null | undefined, pair?: LanguagePair | null): string {
+  const line = roadmapLanguageLine(conversation);
+  const known = roadmapLanguageOf(line);
+  const learning = pair ?? known.pair;
+  if (!learning) return line;
+  return roadmapLanguageNote(known.goal || conversation?.title || "", learning);
 }
 
 /** The language line of the newest roadmap ask in this document (see roadmapLanguageNote), for the asks that follow it. */
@@ -494,8 +522,10 @@ export function roadmapDiveDeeperPrompt(topic: string, roadmapTitle: string, lan
 }
 
 /** What Change with AI asks Agent mode: the roadmap open in this document, changed as the user asks. */
-export function roadmapRevisePrompt(request: string): string {
-  return `Change this roadmap: ${request.trim()}\n\nRead its current stages and steps under \`roadmap\` in the JSON, then use revise_roadmap to give the whole roadmap as it should be afterwards. Keep every step my request doesn't mean to remove, with its step_id. For new steps, search my vault first and point a step at a document that already teaches it; for every other new topic, make a step with a new document whose notes list the key ideas and the best sources (title and link).`;
+export function roadmapRevisePrompt(request: string, options: { pair?: LanguagePair | null } = {}): string {
+  const pair = options.pair && options.pair.target !== options.pair.base ? options.pair : null;
+  const learning = pair ? `\n\nThis roadmap is for learning ${languageName(pair.target)}: when you're done, nothing on it may be in ${languageName(pair.base)}. Name every stage in ${languageName(pair.target)}. A kept step whose name is in ${languageName(pair.base)} gets a ${languageName(pair.target)} title. A step whose document is in ${languageName(pair.base)} (read it if you can't tell) comes off: put a new step with a ${languageName(pair.target)} title and ${languageName(pair.target)} notes in its place, with the same needs, and point steps that needed it at the new one. New steps point only at documents written in ${languageName(pair.target)}.` : "";
+  return `Change this roadmap: ${request.trim()}\n\nRead its current stages and steps under \`roadmap\` in the JSON, then use revise_roadmap to give the whole roadmap as it should be afterwards. Keep every step my request doesn't mean to remove, with its step_id. For new steps, search my vault first and point a step at a document that already teaches it; for every other new topic, make a step with a new document whose notes list the key ideas and the best sources (title and link).${learning}`;
 }
 
 /** A Change with AI request, as roadmapRevisePrompt writes it. */
