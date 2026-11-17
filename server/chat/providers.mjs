@@ -9,6 +9,11 @@ function assertKey(apiKey, provider) {
   if (!apiKey) throw new HttpError(503, `${provider} API is not configured. Add a provider API key first.`);
 }
 
+/** Statuses that mean the provider is busy or briefly down, not that the request was wrong. */
+const BUSY_STATUSES = new Set([503, 504, 529]);
+/** Whether an error is a provider saying it's busy: worth trying again in a moment. */
+export const isProviderBusy = (error) => Boolean(error?.providerBusy);
+
 export async function requestProviderJson({ apiKey, body, provider, url, signal, usageMeter, kind = "generation", fallbackError = `${provider} request failed.`, headers = {} }) {
   return runMeteredProviderOperation(usageMeter, {
     provider, model: body.model, body, kind, signal,
@@ -271,7 +276,9 @@ export function providerHttpError(status, message, provider = "The AI provider")
   if (status === 401 || status === 407) {
     return new HttpError(502, `${provider} refused its API key (HTTP ${status}): ${message}`);
   }
-  return new HttpError(status, message);
+  const error = new HttpError(status, message);
+  if (BUSY_STATUSES.has(status)) Object.assign(error, { providerBusy: true, provider });
+  return error;
 }
 
 function anthropicError(error, fallbackError) {

@@ -86,3 +86,28 @@ describe("automatic provider routing", () => {
     expect(requestedUrls[0]).toContain("api.openai.com");
   });
 });
+
+// "The backend is temporarily overloaded. Please retry." reached the person straight from the provider.
+describe("a busy provider for a model the person picked", () => {
+  const overloaded = () => Response.json({ error: { message: "The backend is temporarily overloaded. Please retry." } }, { status: 503 });
+
+  test("is asked again before anything is written, and its later answer is the reply", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls++;
+      return calls < 2 ? overloaded() : Response.json({ output: [{ type: "message", content: [{ type: "output_text", text: "OK" }] }] });
+    }) as typeof fetch;
+    const reply = await createService().requestReply(createChatPayload("openai-api"));
+    expect([reply.reply, calls]).toEqual(["OK", 2]);
+  }, 15000);
+
+  test("still busy after the tries says whose service it is", async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => { calls++; return overloaded(); }) as typeof fetch;
+    const failure = await createService().requestReply(createChatPayload("openai-api")).catch((error) => error);
+    expect(calls).toBe(3);
+    expect(failure.statusCode).toBe(503);
+    expect(failure.message).toContain("OpenAI is busy right now");
+    expect(failure.message).toContain("temporarily overloaded");
+  }, 15000);
+});
