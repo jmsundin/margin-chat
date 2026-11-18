@@ -195,6 +195,18 @@ async function until(predicate: () => boolean | Promise<boolean>, reason: string
   }
   throw new Error(reason);
 }
+/** Waits until nothing still running from an unmounted vault writes to this device's copy. */
+async function untilLocalCopySettles(timeout = 2500) {
+  const expires = Date.now() + timeout;
+  let last = JSON.stringify(await local.read());
+  while (Date.now() < expires) {
+    await act(async () => { await new Promise((done) => setTimeout(done, 100)); });
+    const now = JSON.stringify(await local.read());
+    if (now === last) return;
+    last = now;
+  }
+  throw new Error("The vault kept writing to this device's copy after it was closed.");
+}
 function type(content: string) {
   current.setState((state: any) => ({ ...state, conversations: {
     ...state.conversations,
@@ -247,7 +259,11 @@ async function checkTypingBatch() {
   await until(async () => (await savedText()).includes("Typed as the tab was reloaded"), "Words typed just before a reload were lost.");
   assert(JSON.stringify(current.state).includes("Typed as the tab was reloaded"), "The recovered words are not shown.");
   assert(!Object.keys(browser.localStorage).some((key) => key.startsWith("margin-chat:unsaved-edits:")), "The rescue copy was kept after it was merged.");
+  // The merged rescue copy is still being saved and synced. Let that finish, or its late write to this copy lands
+  // after the stranded edit below is planted and erases it (seen on a loaded CI runner).
+  await until(() => !current.vault.saving, "The recovered words were never finished saving.");
   await act(async () => { root.unmount(); });
+  await untilLocalCopySettles();
   root = createRoot(container as unknown as Element);
 
   // Chrome refused this copy once, so a fresh copy started; an edit the old copy never uploaded is merged back.
