@@ -11,12 +11,14 @@ import "./ExploreLibrary.css";
  * the sections inside as you zoom. Both share one path, shown as breadcrumbs, so switching layout
  * keeps your place.
  */
-export default function ExploreLibrary({ root, layout, conversations, links, selectedId, sourceMenu, onOpenNote }: {
+export default function ExploreLibrary({ root, layout, conversations, links, selectedId, leading, sourceMenu, onOpenNote }: {
   root: LibrarySection;
   layout: Exclude<ExploreLayout, "canvas">;
   conversations: Record<string, Conversation>;
   links: Array<{ sourceId: string; targetId: string }>;
   selectedId?: string | null;
+  /** Controls before the breadcrumbs, such as the Layout menu. */
+  leading?: ReactNode;
   /** Where Explore starts, as a menu that stands in for the first crumb. */
   sourceMenu?: (onTop: () => void) => ReactNode;
   onOpenNote: (id: string) => void;
@@ -32,6 +34,7 @@ export default function ExploreLibrary({ root, layout, conversations, links, sel
 
   return <div className={`explore-library is-${layout}`} data-graph-ui="true">
     <nav className="explore-library-crumbs" aria-label="Where you are in Explore">
+      {leading}
       {sourceMenu ? <span>{sourceMenu(() => goTo([]))}{path.length > 1 ? <span aria-hidden="true">›</span> : <small>{noteCount(root.allIds.length)}</small>}</span> : null}
       {(sourceMenu ? path.slice(1) : path).map((section, index) => { const at = sourceMenu ? index + 1 : index; return at < path.length - 1
         ? <span key={section.id}><button type="button" onClick={() => goTo(pathIds.slice(0, at))}>{section.label}</button><span aria-hidden="true">›</span></span>

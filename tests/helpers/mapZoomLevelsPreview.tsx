@@ -1,7 +1,8 @@
 import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import type { ExploreLayout } from "../../client/src/lib/exploreLibrary";
-import { parseExploreSource, type ExploreSource } from "../../client/src/lib/exploreSources";
+import { parseExploreSource, type BrowseNode, type ExploreSource } from "../../client/src/lib/exploreSources";
+import TopicDetailsPane from "../../client/src/components/TopicDetailsPane";
 import ExploreSourceMenu from "../../client/src/components/ExploreSourceMenu";
 import ExplorePublic from "../../client/src/components/ExplorePublic";
 import ConversationGraphView from "../../client/src/components/ConversationGraphView";
@@ -103,13 +104,17 @@ const fakeTopics = (label: string) => ["Causes", "Treatments", "Measuring it", "
 function Preview() {
   const [layout, setLayout] = useState<ExploreLayout | undefined>(startLayout);
   const [source, setSource] = useState<ExploreSource>(() => parseExploreSource(params.get("source")));
+  const [details, setDetails] = useState<BrowseNode | null>(null);
   const menu = (onTop: () => void) => <ExploreSourceMenu value={source} canAsk onChange={setSource} onTop={onTop} />;
   return <main style={{ height: "100dvh", display: "flex", background: "var(--bg)" }}>
   <ConversationGraphView exploreLayout={layout} onExploreLayoutChange={layout ? setLayout : undefined} exploreSourceMenu={menu}
-    renderPublicExplore={source.kind === "notes" ? undefined : (shown) => <ExplorePublic source={source} layout={shown} sourceMenu={menu}
+    renderPublicExplore={source.kind === "notes" ? undefined : (shown, leading) => <ExplorePublic source={source} layout={shown} leading={leading} sourceMenu={menu}
       actions={{ ask: async (label) => { await new Promise((done) => setTimeout(done, 300)); return fakeTopics(label); },
         noteFor: (label) => /^(health|senolytic|longevity)$/i.test(label) ? "d0" : null, onOpenNote: () => {}, onRead: () => {},
-        onKeep: async () => ({ id: "d0" }), onRoadmap: () => null }} />}
+        onDetails: setDetails, onNewNote: () => null,
+        onKeep: async () => ({ id: "d0" }), onRoadmap: () => null }}
+      reader={details ? <TopicDetailsPane node={details} onClose={() => setDetails(null)} onSave={() => null}
+        ask={async (label) => { await new Promise((done) => setTimeout(done, 300)); return `${label} is a made-up write-up for this preview.\n\nA second paragraph about its main ideas.`; }} /> : undefined} />}
     workspaceKey={`map-zoom-levels-${copies}-${ai ? "ai" : "plain"}`} activeConversationId="d0" conversations={conversations}
     groups={{}} isVisible jev={{ userId: `zoom-preview-${copies}-${ai ? "ai" : "plain"}`, enabled: true, ready: true }}
     onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => "d0"} onOpenConversation={() => {}}

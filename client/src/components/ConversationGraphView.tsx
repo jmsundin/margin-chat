@@ -414,7 +414,7 @@ export interface ConversationGraphViewProps {
   /** Where Explore starts, drawn as the first breadcrumb of Tiles and Clusters. */
   exploreSourceMenu?: (onTop: () => void) => ReactNode;
   /** Tiles or Clusters of a public source (Wikipedia, an AI topic), drawn instead of your notes. */
-  renderPublicExplore?: (layout: Exclude<ExploreLayout, "canvas">) => ReactNode;
+  renderPublicExplore?: (layout: Exclude<ExploreLayout, "canvas">, leading: ReactNode) => ReactNode;
 }
 
 /** Where things are on screen, for drawing over the map. */
@@ -1921,6 +1921,8 @@ export default function ConversationGraphView({
     return names.size ? names : EMPTY_NAMES;
   }, [canvasGroupBoxes, levelLabels.labels, conversations]);
   // Explore's library: the same themes, topics and blocks, as sections inside sections.
+  const layoutMenu = exploreLayout && onExploreLayoutChange && !scopeHidden
+    ? <ExploreLayoutMenu value={exploreLayout} onChange={onExploreLayoutChange} publicSource={Boolean(renderPublicExplore)} /> : null;
   const libraryRoot = useMemo(() => libraryActive ? buildLibrary({ themes: canvasThemeBoxes, boxes: canvasGroupBoxes, blockNames, summaries: levelSummaries,
     titleOf: (id) => conversations[id]?.title?.trim() || "Untitled" }) : null,
   [libraryActive, canvasThemeBoxes, canvasGroupBoxes, blockNames, levelSummaries, conversations]);
@@ -4465,7 +4467,6 @@ export default function ConversationGraphView({
     <section ref={sectionRef} className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
       <div className={`graph-map-navigation${toolbarLeading ? " has-workspace-controls" : ""}`} role="toolbar" aria-label="Map exploration">
         {toolbarLeading}
-        {exploreLayout && onExploreLayoutChange && !scopeHidden ? <ExploreLayoutMenu value={exploreLayout} onChange={onExploreLayoutChange} publicSource={Boolean(renderPublicExplore)} /> : null}
         <div className={`graph-map-search${searchOpen || query ? " is-open" : ""}`} ref={searchRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
           <input type="search" ref={searchInputRef} aria-label="Search this map" placeholder={searchPlaceholder} value={query}
             onFocus={() => setSearchOpen(true)} onChange={(event) => { navigation.update({ query: event.target.value }); setSearchOpen(true); }}
@@ -4625,9 +4626,11 @@ export default function ConversationGraphView({
           ref={viewportRef}
         >
           <div ref={gridRef} className="conversation-graph-grid" style={gridLayerStyle} aria-hidden="true" />
-          {exploreLayout && exploreLayout !== "canvas" && !scopeHidden && renderPublicExplore ? renderPublicExplore(exploreLayout)
+          {exploreLayout && exploreLayout !== "canvas" && !scopeHidden && renderPublicExplore ? renderPublicExplore(exploreLayout, layoutMenu)
             : libraryRoot && exploreLayout && exploreLayout !== "canvas" ? <ExploreLibrary root={libraryRoot} layout={exploreLayout} conversations={conversations}
-              links={documentConnections} selectedId={selectedConversationId} sourceMenu={exploreSourceMenu} onOpenNote={selectConversation} /> : null}
+              links={documentConnections} selectedId={selectedConversationId} leading={layoutMenu} sourceMenu={exploreSourceMenu} onOpenNote={selectConversation} />
+            // On the Canvas the Layout menu floats in the top left corner rather than taking a row.
+            : layoutMenu ? <div className="explore-layout-float" data-graph-ui="true">{layoutMenu}</div> : null}
           {panelView ? <div className="graph-mode-panel" data-graph-ui="true">
             {viewMode === "evidence" || navigation.state.contentLens === "concepts" ? <>
               <GraphEvidenceView concepts={concepts} conversations={conversations}
