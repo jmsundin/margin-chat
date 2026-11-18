@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { fitCircle, useCirclesCamera, useSize } from "./exploreCamera";
 import { getDocumentPreview } from "../lib/documentSources";
 import { groupLinks, libraryPath, packLibrary, squarify, type ExploreLayout, type LibrarySection, type PackedCircle } from "../lib/exploreLibrary";
 import type { Conversation } from "../types";
@@ -10,12 +11,14 @@ import "./ExploreLibrary.css";
  * the sections inside as you zoom. Both share one path, shown as breadcrumbs, so switching layout
  * keeps your place.
  */
-export default function ExploreLibrary({ root, layout, conversations, links, selectedId, onOpenNote }: {
+export default function ExploreLibrary({ root, layout, conversations, links, selectedId, sourceMenu, onOpenNote }: {
   root: LibrarySection;
   layout: Exclude<ExploreLayout, "canvas">;
   conversations: Record<string, Conversation>;
   links: Array<{ sourceId: string; targetId: string }>;
   selectedId?: string | null;
+  /** Where Explore starts, as a menu that stands in for the first crumb. */
+  sourceMenu?: (onTop: () => void) => ReactNode;
   onOpenNote: (id: string) => void;
 }) {
   const [pathIds, setPathIds] = useState<string[]>([]);
@@ -29,9 +32,10 @@ export default function ExploreLibrary({ root, layout, conversations, links, sel
 
   return <div className={`explore-library is-${layout}`} data-graph-ui="true">
     <nav className="explore-library-crumbs" aria-label="Where you are in Explore">
-      {path.map((section, at) => at < path.length - 1
+      {sourceMenu ? <span>{sourceMenu(() => goTo([]))}{path.length > 1 ? <span aria-hidden="true">›</span> : <small>{noteCount(root.allIds.length)}</small>}</span> : null}
+      {(sourceMenu ? path.slice(1) : path).map((section, index) => { const at = sourceMenu ? index + 1 : index; return at < path.length - 1
         ? <span key={section.id}><button type="button" onClick={() => goTo(pathIds.slice(0, at))}>{section.label}</button><span aria-hidden="true">›</span></span>
-        : <span key={section.id} className="is-here" aria-current="location">{section.label} <small>{noteCount(section.allIds.length)}</small></span>)}
+        : <span key={section.id} className="is-here" aria-current="location">{section.label} <small>{noteCount(section.allIds.length)}</small></span>; })}
     </nav>
     {!root.allIds.length ? <p className="explore-library-empty">Notes you write show up here, sorted into sections you can walk through.</p>
       : layout === "tiles" ? <ExploreTiles section={here} siblings={path.length > 1 ? path[path.length - 2].sections : []}
@@ -47,22 +51,6 @@ export default function ExploreLibrary({ root, layout, conversations, links, sel
 
 const noteCount = (count: number) => `${count} note${count === 1 ? "" : "s"}`;
 const sameIds = (a: string[], b: string[]) => a.length === b.length && a.every((id, at) => id === b[at]);
-
-/** A callback ref and the element's size, kept up to date; works when the element comes and goes. */
-function useSize<T extends HTMLElement>() {
-  const [element, setElement] = useState<T | null>(null);
-  const [size, setSize] = useState({ width: 0, height: 0 });
-  useLayoutEffect(() => {
-    if (!element) return;
-    const measure = () => setSize((current) => current.width === element.clientWidth && current.height === element.clientHeight ? current
-      : { width: element.clientWidth, height: element.clientHeight });
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [element]);
-  return [setElement, size, element] as const;
-}
 
 /* ---------- Tiles ---------- */
 
@@ -114,7 +102,6 @@ function ExploreTiles({ section, siblings, titleOf, conversations, selectedId, o
 
 /* ---------- Clusters ---------- */
 
-interface Camera { x: number; y: number; k: number }
 /** A section opens into what it holds once it is this many pixels across on screen (a shelf of notes, a little sooner). */
 const OPEN_RADIUS = 110, OPEN_SHELF_RADIUS = 76;
 /** Note titles show once their shelf is this big on screen. */
@@ -138,31 +125,16 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
     }
     return out;
   }, [circles, byId]);
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, k: 1 });
-  const cameraRef = useRef(camera);
-  cameraRef.current = camera;
-  const animation = useRef(0);
-
-  const fitTo = useCallback((circle: PackedCircle | undefined, width: number, height: number): Camera => {
+  const fitTo = useCallback((circle: PackedCircle | undefined, width: number, height: number) => {
     const subject = circle ?? byId.get(root.id)!;
-    const k = (Math.min(width, height) * (subject.depth === 0 ? 0.47 : 0.44)) / subject.r;
-    return { x: width / 2 - subject.x * k, y: height / 2 - subject.y * k, k };
+    return fitCircle(subject, width, height, subject.depth === 0 ? 0.47 : 0.44);
   }, [byId, root.id]);
-  const fly = useCallback((to: Camera, animate = true) => {
-    cancelAnimationFrame(animation.current);
-    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    if (!animate || reduce) { setCamera(to); return; }
-    const from = cameraRef.current, start = performance.now(), duration = 520;
-    // Zoom moves in log space so it feels even; the point being flown to stays on its line.
-    const step = (now: number) => {
-      const t = Math.min(1, (now - start) / duration), ease = t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
-      const k = Math.exp(Math.log(from.k) + (Math.log(to.k) - Math.log(from.k)) * ease);
-      setCamera({ k, x: from.x + (to.x - from.x) * ease, y: from.y + (to.y - from.y) * ease });
-      if (t < 1) animation.current = requestAnimationFrame(step);
-    };
-    animation.current = requestAnimationFrame(step);
-  }, []);
-  useEffect(() => () => cancelAnimationFrame(animation.current), []);
+  // Zoom stops where it stops helping: out to a little smaller than everything, in to where one
+  // note's dot is about a sixth of the screen.
+  const bounds = size.width && size.height
+    ? { min: fitTo(undefined, size.width, size.height).k * 0.5, max: Math.min(size.width, size.height) / 60 }
+    : { min: 0.05, max: 400 };
+  const { camera, fly, zoomAround, handlers, dragged } = useCirclesCamera(element, bounds);
   // On first draw, and whenever a crumb or a room is picked, fly to that section.
   const flown = useRef<number | null>(null);
   useEffect(() => {
@@ -218,62 +190,6 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
     return groupLinks(links, standIn);
   }, [links, chains, isOpen]);
 
-  // Pan by dragging, zoom with the wheel or two fingers, around the pointer.
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
-  const dragged = useRef(false);
-  // Zoom stops where it stops helping: out to a little smaller than everything, in to where one
-  // note's dot is about a sixth of the screen.
-  const bounds = useRef({ min: 0.05, max: 400 });
-  bounds.current = size.width && size.height
-    ? { min: fitTo(undefined, size.width, size.height).k * 0.5, max: Math.min(size.width, size.height) / 60 }
-    : { min: 0.05, max: 400 };
-  const zoomAround = (factor: number, px: number, py: number) => {
-    cancelAnimationFrame(animation.current);
-    setCamera((current) => {
-      const { min, max } = bounds.current;
-      const nextK = Math.max(Math.min(min, current.k), Math.min(Math.max(max, current.k), current.k * factor));
-      const f = nextK / current.k;
-      return { k: nextK, x: px - (px - current.x) * f, y: py - (py - current.y) * f };
-    });
-  };
-  useEffect(() => {
-    if (!element) return;
-    const wheel = (event: WheelEvent) => {
-      // The map under this layout has its own wheel zoom; this one is the only one that should move.
-      event.preventDefault(); event.stopPropagation();
-      const box = element.getBoundingClientRect();
-      const delta = event.deltaMode === 1 ? event.deltaY * 16 : event.deltaY;
-      if (event.ctrlKey || event.metaKey || Math.abs(delta) > 0) zoomAround(Math.exp(-delta * (event.ctrlKey ? 0.01 : 0.0022)), event.clientX - box.left, event.clientY - box.top);
-    };
-    element.addEventListener("wheel", wheel, { passive: false });
-    return () => element.removeEventListener("wheel", wheel);
-  }, [element]);
-  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (event.button !== 0 && event.pointerType === "mouse") return;
-    cancelAnimationFrame(animation.current);
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pointers.current.size === 1) dragged.current = false;
-  };
-  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    const last = pointers.current.get(event.pointerId);
-    if (!last) return;
-    const box = event.currentTarget.getBoundingClientRect();
-    if (pointers.current.size === 2) {
-      const [a, b] = [...pointers.current.entries()];
-      const other = a[0] === event.pointerId ? b[1] : a[1];
-      const before = Math.hypot(last.x - other.x, last.y - other.y), after = Math.hypot(event.clientX - other.x, event.clientY - other.y);
-      if (before > 0) zoomAround(after / before, (event.clientX + other.x) / 2 - box.left, (event.clientY + other.y) / 2 - box.top);
-      dragged.current = true;
-    } else {
-      const dx = event.clientX - last.x, dy = event.clientY - last.y;
-      if (!dragged.current && Math.hypot(dx, dy) < 4) return;
-      if (!dragged.current) event.currentTarget.setPointerCapture?.(event.pointerId);
-      dragged.current = true;
-      setCamera((current) => ({ ...current, x: current.x + dx, y: current.y + dy }));
-    }
-    pointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-  };
-  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => { pointers.current.delete(event.pointerId); };
   const pick = (circle: PackedCircle) => {
     if (dragged.current) return;
     if (circle.kind === "note" && circle.noteId) { onOpenNote(circle.noteId); return; }
@@ -283,7 +199,7 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
   const screen = (circle: PackedCircle) => ({ x: circle.x * k + camera.x, y: circle.y * k + camera.y, r: circle.r * k });
   const sections = visible.filter((circle) => circle.kind === "section");
   const notes = visible.filter((circle) => circle.kind === "note");
-  return <div className="explore-clusters" ref={ref} onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
+  return <div className="explore-clusters" ref={ref} {...handlers}>
     <svg width={size.width} height={size.height} role="group" aria-label="Clusters of notes">
       <g className="explore-cluster-lines" aria-hidden="true">
         {lines.map((line) => {

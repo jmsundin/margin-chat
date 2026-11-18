@@ -9,7 +9,11 @@ const ICONS: Record<ExploreLayout, ReactElement> = {
 };
 
 /** Explore's Layout menu: the same notes drawn as Tiles, Clusters or the free Canvas. */
-export default function ExploreLayoutMenu({ value, onChange }: { value: ExploreLayout; onChange: (layout: ExploreLayout) => void }) {
+export default function ExploreLayoutMenu({ value, onChange, publicSource = false }: {
+  value: ExploreLayout; onChange: (layout: ExploreLayout) => void;
+  /** On Wikipedia or an AI topic, Canvas grows a graph from the topic you are on. */
+  publicSource?: boolean;
+}) {
   return <DismissibleDetails className="explore-layout-menu" onKeyDown={(event) => {
     if (event.key !== "Escape") return;
     event.stopPropagation(); event.currentTarget.open = false; event.currentTarget.querySelector("summary")?.focus();
@@ -20,7 +24,7 @@ export default function ExploreLayoutMenu({ value, onChange }: { value: ExploreL
     <div role="menu" aria-label="Layout">
       {EXPLORE_LAYOUTS.map((layout) => <button type="button" role="menuitemradio" key={layout} aria-checked={layout === value}
         onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onChange(layout); }}>
-        {ICONS[layout]}<span>{EXPLORE_LAYOUT_LABELS[layout].name}<small>{EXPLORE_LAYOUT_LABELS[layout].description}</small></span>
+        {ICONS[layout]}<span>{EXPLORE_LAYOUT_LABELS[layout].name}<small>{publicSource && layout === "canvas" ? "A graph you grow from the topic you are on" : EXPLORE_LAYOUT_LABELS[layout].description}</small></span>
       </button>)}
     </div>
   </DismissibleDetails>;

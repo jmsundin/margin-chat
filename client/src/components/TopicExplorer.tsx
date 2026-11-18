@@ -35,7 +35,7 @@ const isPositions = (value: unknown): value is Positions => value !== null && ty
  * node, and grow a subgraph from Wikipedia or AI. Nothing reaches the
  * person's own map until they save a node.
  */
-export default function TopicExplorer({ workspaceKey, account, savedTopics, mapTitles, documents, renderDocument, onCreateDocument, onKeep, onOpenDocument, onClose }: {
+export default function TopicExplorer({ workspaceKey, account, savedTopics, mapTitles, documents, renderDocument, onCreateDocument, onKeep, onOpenDocument, onClose, startTitle }: {
   workspaceKey: string;
   account?: PublicMapAccount;
   /** Wikidata ids already in the vault, to the document each became. */
@@ -52,6 +52,8 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
   renderDocument?: (id: string, dock: GraphDockControls) => ReactNode;
   /** Makes a document in the vault, under `parentId` when given; returns its id. */
   onCreateDocument?: (args: { title: string; content: string; parentId?: string }) => string | null;
+  /** A Wikipedia article to start from, such as the topic Explore was on when Canvas was picked. */
+  startTitle?: string;
 }) {
   /** A GitHub repository being explored instead of topics. */
   const [repoUrl, setRepoUrl] = useState<string | null>(null);
@@ -230,6 +232,14 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
       startFrom(topic);
     });
   }
+
+  const started = useRef(false);
+  useEffect(() => {
+    if (started.current || !startTitle) return;
+    started.current = true;
+    startFromTitle(startTitle);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startTitle]);
 
   function expand(id: string, source: ExplorerSource, focus = "") {
     const item = latest.current.state.items[id];

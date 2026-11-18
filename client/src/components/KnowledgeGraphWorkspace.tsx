@@ -25,6 +25,14 @@ import { draftingLabel, lessonContext, MapPathBar, MapPathLayer, MapPathStepStri
 import { buildMapPath, isPathDocument, withDraftPreview, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
 import type { MapSpotlight } from "../lib/mapSpotlight";
 import { readExploreLayout, writeExploreLayout, type ExploreLayout } from "../lib/exploreLibrary";
+import { readExploreSource, writeExploreSource, type BrowseNode, type ExploreSource } from "../lib/exploreSources";
+import ExploreSourceMenu from "./ExploreSourceMenu";
+import ExplorePublic from "./ExplorePublic";
+import WikipediaPane from "./WikipediaPane";
+import { isPassageNote, type PassageNote } from "../lib/wikipediaReader";
+import { explorerStorageKey, addRoot, aiSubtopicQuestion } from "../lib/topicExplorer";
+import { emptyExploration, topicItemId } from "../lib/mapExploration";
+import { resolveWikipediaTitles, wikipediaArticleUrl } from "../lib/wikipedia";
 import "./KnowledgeGraphWorkspace.css";
 
 interface Props extends ConversationGraphViewProps {
@@ -87,6 +95,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   const [historyOpen, setHistoryOpen] = useState(false);
   /** Explore mode: a scratch map of any topic in place of the person's own map. */
   const [exploring, setExploring] = useState(false);
+  /** The Wikipedia article the topic graph starts from, when Canvas was picked on a public source. */
+  const [exploringFrom, setExploringFrom] = useState<string | undefined>(undefined);
   const [busy, setBusy] = useState<{ label: string; progress: string; controller: AbortController } | null>(null);
   const [exploreMessage, setExploreMessage] = useState<{ text: string; error: boolean } | null>(null);
   const [revealRequest, setRevealRequest] = useState<{ ids: string[]; requestId: number } | null>(null);
@@ -229,7 +239,79 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     window.addEventListener("storage", changed);
     return () => window.removeEventListener("storage", changed);
   }, []);
-  function chooseExploreLayout(layout: ExploreLayout) { setExploreLayoutState(layout); writeExploreLayout(layout); }
+  // Where Explore starts: your notes, Wikipedia, or a topic AI splits up. Follows the account too.
+  const [exploreSource, setExploreSourceState] = useState<ExploreSource>(readExploreSource);
+  useEffect(() => {
+    const changed = (event: StorageEvent) => { if (event.key === null || event.key === "margin-chat:explore-source") setExploreSourceState(readExploreSource()); };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, []);
+  function chooseExploreSource(source: ExploreSource) {
+    setExploreSourceState(source); writeExploreSource(source); setReaderTitle(null);
+    // Public sources open in Tiles or Clusters; the free Canvas is your own map.
+    if (source.kind !== "notes" && exploreLayout === "canvas") chooseExploreLayout("tiles");
+  }
+  /** The article or topic Explore is on, so Canvas can grow a graph from it. */
+  const publicPlace = useRef<string | undefined>(undefined);
+  function chooseExploreLayout(layout: ExploreLayout) {
+    // On Wikipedia or an AI topic, Canvas is the topic graph, grown from where you are.
+    if (layout === "canvas" && exploreSource.kind !== "notes") {
+      setExploringFrom(publicPlace.current ?? (exploreSource.kind === "ai" ? exploreSource.topic : undefined));
+      setExploring(true); setSelectedPreview(null); setHistoryOpen(false); setSourcesFor(null); setConnectingId(null);
+      return;
+    }
+    setExploreLayoutState(layout); writeExploreLayout(layout);
+  }
+  // Reading a Wikipedia article beside Tiles or Clusters.
+  const [readerTitle, setReaderTitle] = useState<string | null>(null);
+  const passagesKey = `${explorerStorageKey(personalProps.workspaceKey ?? "workspace")}:passages`;
+  const [passageNotes, setPassageNotesState] = useState<PassageNote[]>(() => {
+    try { const value = JSON.parse(window.localStorage.getItem(passagesKey) ?? "[]"); return Array.isArray(value) ? value.filter(isPassageNote) : []; }
+    catch { return []; }
+  });
+  const setPassageNotes = (change: (notes: PassageNote[]) => PassageNote[]) => setPassageNotesState((current) => {
+    const next = change(current);
+    try { window.localStorage.setItem(passagesKey, JSON.stringify(next.slice(-300))); } catch { /* Passage notes stay for this visit. */ }
+    return next;
+  });
+  // Notes in the vault by title, so a public topic you already have a note on says so.
+  const notesByTitle = useMemo(() => {
+    const index = new Map<string, string>();
+    for (const conversation of Object.values(conversations)) {
+      const title = conversation.title.trim().toLocaleLowerCase();
+      if (title && !index.has(title)) index.set(title, conversation.id);
+    }
+    return index;
+  }, [conversations]);
+  const noteFor = useCallback((label: string, topic?: PublicTopic) => (topic ? savedTopics[topic.id] : undefined) ?? notesByTitle.get(label.trim().toLocaleLowerCase()) ?? null,
+    [savedTopics, notesByTitle]);
+  const askSubtopics = useMemo(() => publicMapAccount?.canAsk ? async (label: string, existing: string[], signal: AbortSignal) => {
+    const answer = await askAboutNote({ userId: publicMapAccount.userId, topic: { label: label.slice(0, 200), description: "" }, noteContent: "",
+      question: aiSubtopicQuestion(label, existing), options: publicMapAccount.aiOptions, signal });
+    const exploredAt = new Date().toISOString();
+    return answer.related.map((topic) => publicTopicFromAnswer(topic, exploredAt));
+  } : undefined, [publicMapAccount]);
+  async function keepPublic(node: BrowseNode): Promise<{ id: string } | { error: string }> {
+    try {
+      const topic = node.topic ?? (node.article ? (await resolveWikipediaTitles([node.article])).get(node.article) : undefined);
+      if (!topic) return { error: "Wikipedia has no topic page for this, so it can't be kept as a note yet." };
+      const createdAt = new Date().toISOString();
+      const state = addRoot(emptyExploration(), topic, { id: `explore-${createdAt}`, title: topic.label, createdAt });
+      const id = onKeepExplored?.(state, [topicItemId(topic)])?.[topicItemId(topic)];
+      return id ? { id } : { error: "That note could not be made. Try again." };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : "That note could not be made. Try again." };
+    }
+  }
+  function roadmapFor(node: BrowseNode): string | null {
+    if (!pathActions) return "Roadmaps are off. Turn them on in Settings → Features.";
+    const goal = node.article ? `Learn ${node.label}: ${wikipediaArticleUrl(node.article)}` : `Learn ${node.label}`;
+    const made = pathActions.onDraftPath(goal);
+    if ("error" in made) return made.error;
+    setActivePath(made.id);
+    return null;
+  }
+  const renderSourceMenu = (onTop: () => void) => <ExploreSourceMenu value={exploreSource} canAsk={Boolean(publicMapAccount?.canAsk)} onChange={chooseExploreSource} onTop={onTop} />;
   const mapMode: "learn" | "explore" = (activePath && pathLayout === "list") || (learnEmpty && !activePath) ? "learn" : "explore";
   // A lesson opened from the course stays a lesson, even when it has its own roadmap (↘ goes into that).
   const openedFromCourse = useRef<string | null>(null);
@@ -460,7 +542,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   </div> : null;
   const addActions = <>
     <button type="button" className="knowledge-map-explore-button" title="Explore any topic in a scratch map that stays out of your workspace"
-      onClick={() => { setExploring(true); setSelectedPreview(null); setHistoryOpen(false); setSourcesFor(null); setConnectingId(null); }}>
+      onClick={() => { setExploringFrom(undefined); setExploring(true); setSelectedPreview(null); setHistoryOpen(false); setSourcesFor(null); setConnectingId(null); }}>
       <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9" /><path d="m15.5 8.5-2 5-5 2 2-5 5-2Z" /></svg>
       <span>Explore</span>
     </button>
@@ -499,7 +581,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     {onAddTopicConnections && publicMapAccount ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); openSources("add"); }}>Add from Wikipedia</button> : null}
     <button type="button" onClick={(event) => { closeMenu(event.currentTarget); setSourceFormOpen(true); }}>Add a web source</button>
     <button type="button" title="Explore any topic in a scratch map that stays out of your workspace"
-      onClick={(event) => { closeMenu(event.currentTarget); setExploring(true); setSelectedPreview(null); setHistoryOpen(false); setSourcesFor(null); setConnectingId(null); }}>Explore a topic</button>
+      onClick={(event) => { closeMenu(event.currentTarget); setExploringFrom(undefined); setExploring(true); setSelectedPreview(null); setHistoryOpen(false); setSourcesFor(null); setConnectingId(null); }}>Explore a topic</button>
     <button type="button" title="Explored history: previews you have not kept" aria-label={`Explored history${historyCount ? `, ${historyCount} items` : ""}`}
       onClick={(event) => { closeMenu(event.currentTarget); setHistoryOpen(true); setSelectedPreview(null); setSourcesFor(null); }}>
       Explored history{historyCount ? <span className="graph-map-lens-badge">{historyCount > 99 ? "99+" : historyCount}</span> : null}</button>
@@ -529,11 +611,12 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     {topicExpansionError ? <div className="map-workspace-notice is-error" role="alert"><span>{topicExpansionError.message}</span>{conversations[topicExpansionError.conversationId] ? <button type="button" disabled={Boolean(expandingTopicId)} onClick={() => onExpandTopicWithAI?.(topicExpansionError.conversationId)}>Retry AI expansion</button> : null}<button type="button" onClick={onDismissTopicExpansionError}>Dismiss</button></div> : null}
     <div className={`knowledge-map-panel${exploring ? " is-exploring" : ""}`} ref={panelRef}>
       {exploring ? <TopicExplorer workspaceKey={personalProps.workspaceKey ?? "workspace"} account={publicMapAccount} savedTopics={savedTopics} mapTitles={mapTitles}
+        startTitle={exploringFrom}
         onKeep={(state, ids) => onKeepExplored?.(state, ids) ?? {}}
         documents={documentList} onCreateDocument={onCreateExploreDocument}
         renderDocument={personalProps.renderDockedConversation ? (id, dock) => personalProps.renderDockedConversation!(id, undefined, dock) : undefined}
         onOpenDocument={(id) => { setExploring(false); focusDocument(id); }}
-        onClose={() => setExploring(false)} /> : null}
+        onClose={() => { setExploring(false); setExploringFrom(undefined); }} /> : null}
       {!exploring && (busy || exploreMessage) ? <div className="map-explore-status" aria-live="polite">
         {busy ? <div className="map-workspace-notice" role="status"><span className="map-explore-spinner" aria-hidden="true" /><span>{busy.progress || busy.label}</span><button type="button" onClick={() => busy.controller.abort()}>Cancel</button></div> : null}
         {exploreMessage ? <div className={`map-workspace-notice${exploreMessage.error ? " is-error" : ""}`} role={exploreMessage.error ? "alert" : "status"}><span>{exploreMessage.text}</span><button type="button" onClick={() => setExploreMessage(null)}>Dismiss</button></div> : null}
@@ -561,6 +644,16 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         scopeHidden={mapMode === "learn"}
         // Picking notes for a roadmap, or a roadmap lit on the map, needs the map itself.
         exploreLayout={picking || activePath ? "canvas" : exploreLayout} onExploreLayoutChange={picking || activePath ? undefined : chooseExploreLayout}
+        exploreSourceMenu={renderSourceMenu}
+        renderPublicExplore={exploreSource.kind === "notes" ? undefined : (layout) => <ExplorePublic source={exploreSource} layout={layout} sourceMenu={renderSourceMenu}
+          onPlace={(place) => { publicPlace.current = place; }}
+          actions={{ ask: askSubtopics, noteFor, onOpenNote: (id) => personalProps.onOpenConversation(id), onRead: setReaderTitle, onKeep: keepPublic,
+            ...(pathActions ? { onRoadmap: roadmapFor } : {}) }}
+          reader={readerTitle ? <WikipediaPane title={readerTitle} account={publicMapAccount} notes={passageNotes} onNotesChange={setPassageNotes}
+            onNavigate={setReaderTitle} onClose={() => setReaderTitle(null)}
+            onCreateDocument={(title, content) => Boolean(onCreateExploreDocument?.({ title, content }))}
+            onExplore={(text) => { if (publicMapAccount?.canAsk) chooseExploreSource({ kind: "ai", topic: text.replace(/\s+/gu, " ").trim().slice(0, 200) }); }}
+            onAddTopics={(_answer, article) => { setExploringFrom(article); setExploring(true); }} /> : undefined} />}
         // Roadmaps are reached from Tile view's Roadmaps tab and Learn; Learn's header names the roadmap on screen, as a menu.
         menuItems={menuActions} menuFooter={moreFeatures} scopeRequest={scopeRequest}
         focusRequest={personalProps.focusRequest ?? personalFocus}

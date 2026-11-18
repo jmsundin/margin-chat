@@ -35,9 +35,38 @@ export interface WikipediaLinkCandidate {
 }
 
 const summaryCache = new Map<string, WikipediaSummary | null>();
-const articleCache = new Map<string, { candidates: WikipediaLinkCandidate[]; expiresAt: number }>();
+const articleCache = new Map<string, { candidates: WikipediaLinkCandidate[]; title: string; description?: string; expiresAt: number }>();
+
+// Wikipedia asks API clients to keep requests few and mostly one after another; walking Explore
+// can open several places at once, so requests wait for a free slot and back off when told to.
+const MAX_PARALLEL = 3;
+let running = 0;
+const waiting: Array<() => void> = [];
+async function slot<T>(work: () => Promise<T>): Promise<T> {
+  if (running >= MAX_PARALLEL) await new Promise<void>((resolve) => waiting.push(resolve));
+  running++;
+  try { return await work(); }
+  finally { running--; waiting.shift()?.(); }
+}
+const pause = (ms: number, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
+  const timer = setTimeout(resolve, ms);
+  signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason); }, { once: true });
+});
 
 async function requestJson(url: string, signal?: AbortSignal): Promise<unknown> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await slot(() => requestOnce(url, signal)); }
+    catch (error) {
+      if (!(error instanceof RateLimited) || attempt >= 2) throw error instanceof RateLimited ? new Error(error.message) : error;
+      await pause(error.retryAfter ?? 1500 * (attempt + 1), signal);
+    }
+  }
+}
+class RateLimited extends Error {
+  constructor(readonly retryAfter: number | undefined) { super("Wikipedia is receiving too many requests. Please try again shortly."); }
+}
+
+async function requestOnce(url: string, signal?: AbortSignal): Promise<unknown> {
   const combined = AbortSignal.any([AbortSignal.timeout(REQUEST_TIMEOUT), ...(signal ? [signal] : [])]);
   let response: Response;
   try {
@@ -48,7 +77,11 @@ async function requestJson(url: string, signal?: AbortSignal): Promise<unknown> 
     throw new Error("Could not reach Wikipedia. Check your connection and try again.");
   }
   if (response.status === 404) return null;
-  if (!response.ok) throw new Error(response.status === 429 ? "Wikipedia is receiving too many requests. Please try again shortly." : `Wikipedia is temporarily unavailable (${response.status}).`);
+  if (response.status === 429) {
+    const seconds = Number(response.headers.get("Retry-After"));
+    throw new RateLimited(Number.isFinite(seconds) && seconds > 0 ? Math.min(seconds, 10) * 1000 : undefined);
+  }
+  if (!response.ok) throw new Error(`Wikipedia is temporarily unavailable (${response.status}).`);
   try { return await response.json(); }
   catch { throw new Error("Wikipedia returned an unreadable response. Please try again."); }
 }
@@ -286,7 +319,7 @@ export async function wikipediaTitleForTopic(topic: Pick<PublicTopic, "id" | "wi
 
 async function articleCandidates(title: string, signal?: AbortSignal): Promise<{ candidates: WikipediaLinkCandidate[]; title: string; description?: string }> {
   const cached = articleCache.get(title);
-  if (cached && cached.expiresAt > Date.now()) return { candidates: cached.candidates, title };
+  if (cached && cached.expiresAt > Date.now()) return { candidates: cached.candidates, title: cached.title, ...(cached.description ? { description: cached.description } : {}) };
   const body = await requestJson(apiUrl({ action: "parse", page: title, prop: "wikitext|categories|properties", redirects: "1" }), signal);
   const parse = record(body) && record(body.parse) ? body.parse : null;
   if (!parse || typeof parse.wikitext !== "string") throw new Error("This Wikipedia article could not be read. Please try again.");
@@ -295,10 +328,10 @@ async function articleCandidates(title: string, signal?: AbortSignal): Promise<{
   const properties = record(parse.properties) ? parse.properties : {};
   const resolvedTitle = typeof parse.title === "string" ? parse.title : title;
   const candidates = rankWikipediaLinks(resolvedTitle, parse.wikitext, categories);
-  for (const key of new Set([title, resolvedTitle])) articleCache.set(key, { candidates, expiresAt: Date.now() + ARTICLE_CACHE_TTL });
+  const description = typeof properties["wikibase-shortdesc"] === "string" ? properties["wikibase-shortdesc"] : undefined;
+  for (const key of new Set([title, resolvedTitle])) articleCache.set(key, { candidates, title: resolvedTitle, ...(description ? { description } : {}), expiresAt: Date.now() + ARTICLE_CACHE_TTL });
   while (articleCache.size > 64) articleCache.delete(articleCache.keys().next().value!);
-  return { candidates, title: resolvedTitle,
-    description: typeof properties["wikibase-shortdesc"] === "string" ? properties["wikibase-shortdesc"] : undefined };
+  return { candidates, title: resolvedTitle, description };
 }
 
 /**
@@ -335,4 +368,60 @@ export async function findWikipediaTopic(name: string, signal?: AbortSignal): Pr
   const exact = (await resolveWikipediaTitles([name], signal)).get(name.trim());
   if (exact) return exact;
   return (await searchWikipediaTopics(name, signal))[0] ?? null;
+}
+
+/* ---------- Browsing Wikipedia like a library: categories, then articles, then an article's outline ---------- */
+
+/** One entry of a category: a sub-category or an article, with its short description and size. */
+export interface WikipediaCategoryMember {
+  title: string;
+  kind: "category" | "article";
+  description?: string;
+  /** For a category: how many articles and sub-categories it holds, weighted for sizing. */
+  size?: number;
+  pages?: number;
+  subcats?: number;
+}
+
+/** Category names that sort the encyclopedia by something other than subject. */
+const ADMIN_CATEGORY = /\b(by \w+|lists?|stubs?|templates?|images?|portals?|wikipedia|wikiprojects?|articles|redirects|navigational boxes|categories|works about|in fiction|in popular culture|organizations based in|people by|glossaries|outlines|indexes|terminology|history of .* by)\b/iu;
+const categoryCache = new Map<string, { members: WikipediaCategoryMember[]; expiresAt: number }>();
+
+const categoryTitle = (name: string) => name.startsWith("Category:") ? name : `Category:${name}`;
+const sizeOf = (info: unknown) => record(info) ? (Number(info.pages) || 0) + (Number(info.subcats) || 0) * 4 : 0;
+
+/**
+ * The sub-categories and articles filed under a category, in Wikipedia's own order. Categories
+ * that sort by place, date or kind of page (lists, stubs, templates) are left out, so what is
+ * left reads like the signs in a library.
+ */
+export async function wikipediaCategoryMembers(name: string, signal?: AbortSignal): Promise<WikipediaCategoryMember[]> {
+  const cached = categoryCache.get(name);
+  if (cached && cached.expiresAt > Date.now()) return cached.members;
+  const body = await requestJson(apiUrl({ action: "query", generator: "categorymembers", gcmtitle: categoryTitle(name), gcmtype: "subcat|page", gcmlimit: "200",
+    prop: "categoryinfo|pageprops", ppprop: "wikibase-shortdesc|disambiguation" }), signal);
+  const pages = record(body) && record(body.query) && Array.isArray(body.query.pages) ? body.query.pages : [];
+  const members: WikipediaCategoryMember[] = [];
+  for (const page of pages) {
+    if (!record(page) || typeof page.title !== "string") continue;
+    const props = record(page.pageprops) ? page.pageprops : {};
+    if ("disambiguation" in props) continue;
+    if (page.ns === 14) {
+      const title = page.title.replace(/^Category:/u, "");
+      if (ADMIN_CATEGORY.test(title)) continue;
+      const info = record(page.categoryinfo) ? page.categoryinfo : {};
+      members.push({ title, kind: "category", size: sizeOf(info), pages: Number(info.pages) || 0, subcats: Number(info.subcats) || 0 });
+    } else if (page.ns === 0 && !/^(List|Lists|Index|Outline|Glossary) of /u.test(page.title)) {
+      const description = typeof props["wikibase-shortdesc"] === "string" ? props["wikibase-shortdesc"] : undefined;
+      members.push({ title: page.title, kind: "article", ...(description ? { description } : {}) });
+    }
+  }
+  categoryCache.set(name, { members, expiresAt: Date.now() + ARTICLE_CACHE_TTL });
+  while (categoryCache.size > 64) categoryCache.delete(categoryCache.keys().next().value!);
+  return members;
+}
+
+/** An article's own outline: its short description and its links grouped the way the article groups them. */
+export async function wikipediaArticleOutline(title: string, signal?: AbortSignal): Promise<{ title: string; description?: string; candidates: WikipediaLinkCandidate[] }> {
+  return articleCandidates(title, signal);
 }
