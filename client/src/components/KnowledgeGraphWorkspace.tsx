@@ -24,6 +24,7 @@ import { MapCourseEmpty, MapModeSwitch, MapRoadmapCourse } from "./MapRoadmapCou
 import { draftingLabel, lessonContext, MapPathBar, MapPathLayer, MapPathStepStrip, MapPathPickBanner, MapPathPicker, MapPathsMenu, MapRoadmapFlags, type MapPathActions } from "./MapPaths";
 import { buildMapPath, isPathDocument, withDraftPreview, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
 import type { MapSpotlight } from "../lib/mapSpotlight";
+import { readExploreLayout, writeExploreLayout, type ExploreLayout } from "../lib/exploreLibrary";
 import "./KnowledgeGraphWorkspace.css";
 
 interface Props extends ConversationGraphViewProps {
@@ -221,6 +222,14 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     const first = pathSummaries[0];
     if (first) { setPicking(null); setActivePath(first.id); } else setLearnEmpty(true);
   }
+  // Explore draws the same notes as Tiles, Clusters or the free Canvas; the choice follows the account.
+  const [exploreLayout, setExploreLayoutState] = useState<ExploreLayout>(readExploreLayout);
+  useEffect(() => {
+    const changed = (event: StorageEvent) => { if (event.key === null || event.key === "margin-chat:explore-layout") setExploreLayoutState(readExploreLayout()); };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, []);
+  function chooseExploreLayout(layout: ExploreLayout) { setExploreLayoutState(layout); writeExploreLayout(layout); }
   const mapMode: "learn" | "explore" = (activePath && pathLayout === "list") || (learnEmpty && !activePath) ? "learn" : "explore";
   // A lesson opened from the course stays a lesson, even when it has its own roadmap (↘ goes into that).
   const openedFromCourse = useRef<string | null>(null);
@@ -550,6 +559,8 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
         toolbarLeading={<>{sidebarToggle}{sidebarToggle ? viewToggle : null}{pathActions ? <MapModeSwitch mode={mapMode} onChange={chooseMapMode} /> : null}</>}
         scopeHidden={mapMode === "learn"}
+        // Picking notes for a roadmap, or a roadmap lit on the map, needs the map itself.
+        exploreLayout={picking || activePath ? "canvas" : exploreLayout} onExploreLayoutChange={picking || activePath ? undefined : chooseExploreLayout}
         // Roadmaps are reached from Tile view's Roadmaps tab and Learn; Learn's header names the roadmap on screen, as a menu.
         menuItems={menuActions} menuFooter={moreFeatures} scopeRequest={scopeRequest}
         focusRequest={personalProps.focusRequest ?? personalFocus}

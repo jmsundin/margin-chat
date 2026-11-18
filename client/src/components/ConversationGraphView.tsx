@@ -76,6 +76,9 @@ import { documentSimilarity } from "../lib/similarityBlocks";
 import { canvasBoxAt, canvasGroupDropChanges, canvasTopicDropMoves, layoutCanvasGroupBoxes, topicCanvasGroups, type CanvasBlock, type CanvasGroupBox, type CanvasThemeBox, type CanvasTopic } from "../lib/canvasGroupBoxes";
 import { blockFallbackName, groupTopicsIntoThemes, mapZoomLevel, mapZoomLevelScale, mapZoomScales, reachableMapZoomLevels, type MapZoomLevel } from "../lib/mapZoomLevels";
 import { useMapLevelLabels, type MapLevelTarget } from "../lib/useMapLevelLabels";
+import { buildLibrary, type ExploreLayout } from "../lib/exploreLibrary";
+import ExploreLibrary from "./ExploreLibrary";
+import ExploreLayoutMenu from "./ExploreLayoutMenu";
 import { MapZoomLadder, MapZoomTrail, type MapZoomCrumb } from "./MapZoomLevels";
 import { describeSpotlight, spotlightHeat, spotlightNeighbours, type MapSpotlight, type SpotlightHeat } from "../lib/mapSpotlight";
 import { countConnections, EMPTY_MAP_LENS, matchMapLens, newLensFilter, readMapLens, type MapLens, type SavedMapLens } from "../lib/mapLens";
@@ -402,6 +405,12 @@ export interface ConversationGraphViewProps {
   dockControlsInHeader?: boolean;
   /** The document selected on the map changed (null when nothing is). */
   onSelectionChange?: (conversationId: string | null) => void;
+  /**
+   * Explore's layout: Tiles and Clusters draw the map's sections (themes, topics, blocks) as a
+   * library to browse; Canvas is the map itself. Leave it out and the map has no Layout menu.
+   */
+  exploreLayout?: ExploreLayout;
+  onExploreLayoutChange?: (layout: ExploreLayout) => void;
 }
 
 /** Where things are on screen, for drawing over the map. */
@@ -1236,6 +1245,8 @@ export default function ConversationGraphView({
   menuFooter,
   scopeRequest,
   scopeHidden,
+  exploreLayout,
+  onExploreLayoutChange,
   renderSearchFallback,
   onSearchSubmit,
   searchRequest,
@@ -1304,7 +1315,10 @@ export default function ConversationGraphView({
   const [canvasGrouping, setCanvasGroupingState] = useState<CanvasGrouping>(() => readCanvasGrouping(workspaceKey));
   const setCanvasGrouping = useCallback((next: CanvasGrouping) => { setCanvasGroupingState(next); writeStoredJson(workspaceKey && `${CANVAS_GROUPING_KEY}:${workspaceKey}`, next); }, [workspaceKey]);
   // Topics on the Map are the clusters found from links and meaning, drawn as boxes.
-  const canvasTopics = isCanvasMode && navigation.state.contentLens !== "concepts" && canvasGrouping === "topics";
+  // Tiles and Clusters show the map's topics as a library, whatever the Map groups its boxes by.
+  const libraryActive = !!exploreLayout && exploreLayout !== "canvas" && !scopeHidden && navigation.state.contentLens !== "concepts";
+  const topicsGrouping = canvasGrouping === "topics" || libraryActive;
+  const canvasTopics = isCanvasMode && navigation.state.contentLens !== "concepts" && topicsGrouping;
   const findsTopics = isClustersMode || canvasTopics;
   // Muse categories: Muse Wonder files each document under a category, drawn as boxes.
   const canvasMuse = isCanvasMode && navigation.state.contentLens !== "concepts" && canvasGrouping === "muse";
@@ -1840,9 +1854,9 @@ export default function ConversationGraphView({
   const museCategories = useMuseCategories({ userId: jev?.userId ?? "", enabled: !!jev?.enabled,
     active: !!jev?.ready && isVisible && canvasMuse, ids: mapDocumentIds, conversations });
   // The Map puts each topic, each Muse category, or each group you made, in a box that owns its space.
-  const boxGroups = useMemo(() => canvasGrouping === "topics" ? topicCanvasGroups(canvasTopicList)
+  const boxGroups = useMemo(() => topicsGrouping ? topicCanvasGroups(canvasTopicList)
     : canvasGrouping === "muse" ? museCategories.groups : canvasGrouping === "groups" ? groups : EMPTY_BOX_GROUPS,
-    [canvasGrouping, canvasTopicList, museCategories.groups, groups]);
+    [topicsGrouping, canvasGrouping, canvasTopicList, museCategories.groups, groups]);
   const showCanvasGroupBoxes = isCanvasMode && !panelView && !documentsOnly && Object.keys(boxGroups).length > 0;
   // Boxes take the screen's shape: tall on a phone held upright, wide on a desktop, so Fit leaves room for titles.
   // The space Fit fills (see fitGraph), rounded so small resizes don't rearrange the boxes.
@@ -1853,15 +1867,15 @@ export default function ConversationGraphView({
   // eslint-disable-next-line react-hooks/exhaustive-deps -- revision says when vectors or neighbours changed in place
   [showCanvasGroupBoxes, conversations, documentConnections, topicEmbeddings.vectors, topicEmbeddings.neighbours, topicEmbeddings.revision]);
   // With many topics, those alike in meaning are gathered into a few broad themes: one more level to zoom out to.
-  const mapThemes = useMemo(() => showCanvasGroupBoxes && canvasGrouping === "topics" && boxSimilarity
+  const mapThemes = useMemo(() => showCanvasGroupBoxes && topicsGrouping && boxSimilarity
     ? groupTopicsIntoThemes(canvasTopicList.filter((topic) => topic.hubId !== null && topic.memberIds.length)
       .map((topic) => ({ id: topic.id, label: topic.label, memberIds: topic.memberIds })), boxSimilarity)
       .map((theme) => ({ id: theme.id, label: theme.label, groupIds: theme.topicIds })) : undefined,
-  [showCanvasGroupBoxes, canvasGrouping, canvasTopicList, boxSimilarity]);
+  [showCanvasGroupBoxes, topicsGrouping, canvasTopicList, boxSimilarity]);
   const canvasGroupLayout = useMemo(() => showCanvasGroupBoxes ? layoutCanvasGroupBoxes({ nodes: unfocusedScene.nodes, conversations, groups: boxGroups,
-    noGroupLabel: canvasGrouping === "topics" ? groupBySubject ? "Unfiled" : "Unlinked" : canvasGrouping === "muse" ? "Not sorted" : "No group",
+    noGroupLabel: topicsGrouping ? groupBySubject ? "Unfiled" : "Unlinked" : canvasGrouping === "muse" ? "Not sorted" : "No group",
     similarity: boxSimilarity, screenAspect: boxScreenAspect, themes: mapThemes }) : null,
-    [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, boxGroups, canvasGrouping, groupBySubject, boxSimilarity, boxScreenAspect, mapThemes]);
+    [showCanvasGroupBoxes, unfocusedScene.nodes, conversations, boxGroups, topicsGrouping, canvasGrouping, groupBySubject, boxSimilarity, boxScreenAspect, mapThemes]);
   const canvasGroupBoxes = canvasGroupLayout?.boxes ?? EMPTY_GROUP_BOXES;
   const layoutThemeBoxes = canvasGroupLayout?.themes.length ? canvasGroupLayout.themes : EMPTY_THEME_BOXES;
   // Topics, their names and their themes arrive a little after the map opens, and each moves the boxes.
@@ -1900,6 +1914,10 @@ export default function ConversationGraphView({
     }
     return names.size ? names : EMPTY_NAMES;
   }, [canvasGroupBoxes, levelLabels.labels, conversations]);
+  // Explore's library: the same themes, topics and blocks, as sections inside sections.
+  const libraryRoot = useMemo(() => libraryActive ? buildLibrary({ themes: canvasThemeBoxes, boxes: canvasGroupBoxes, blockNames, summaries: levelSummaries,
+    titleOf: (id) => conversations[id]?.title?.trim() || "Untitled" }) : null,
+  [libraryActive, canvasThemeBoxes, canvasGroupBoxes, blockNames, levelSummaries, conversations]);
   const displayScene = useMemo(() => documentLayout
     ? replaceConversationGraphNodes(unfocusedScene, documentLayout.nodes)
     : canvasGroupLayout ? replaceConversationGraphNodes(unfocusedScene, canvasGroupLayout.nodes)
@@ -3267,6 +3285,12 @@ export default function ConversationGraphView({
     // Reading and editing owns ordinary scrolling, including at either end of
     // the document. Pinch/Ctrl-wheel still belongs to the camera.
     if (readerRoot && !event.ctrlKey && !event.metaKey) return;
+    // Tiles and Clusters cover the canvas: the hidden map must not zoom under them, and a pinch
+    // there must not zoom the whole page either.
+    if (event.target instanceof Element && event.target.closest(".explore-library")) {
+      if (event.ctrlKey || event.metaKey) event.preventDefault();
+      return;
+    }
 
     // Group headings, Canvas group names and clickable SVG edges belong to the pannable canvas;
     // only overlays and controls should keep ordinary wheel events for themselves.
@@ -3861,6 +3885,8 @@ export default function ConversationGraphView({
     else setFitAfterArrange(true);
   }
   useEffect(() => { if (scopeRequest) chooseScope(scopeRequest.choice); }, [scopeRequest?.requestId]);
+  // The library is the whole vault, so opening Tiles or Clusters widens a narrower scope to All.
+  useEffect(() => { if (libraryActive && (scopeChoice !== "all" || !isCanvasMode)) chooseScope("all"); }, [libraryActive]);
   // Topic: the map at a distance where this note's topic box and its neighbours read together.
   useEffect(() => {
     if (!topicReveal || scope.kind === "focus") return;
@@ -4433,6 +4459,7 @@ export default function ConversationGraphView({
     <section ref={sectionRef} className="conversation-graph graph-map-exploration semantic-map" aria-label="Conversation graph" data-view-mode={viewMode} data-content-lens={navigation.state.contentLens} data-map-scale={mapScale} data-map-presentation={documentsOnly ? "documents" : navigation.state.overviewPresentation} data-focused-node-id={focusedNodeId ?? undefined} data-has-selection={Boolean(selectedConversation)}>
       <div className={`graph-map-navigation${toolbarLeading ? " has-workspace-controls" : ""}`} role="toolbar" aria-label="Map exploration">
         {toolbarLeading}
+        {exploreLayout && onExploreLayoutChange && !scopeHidden ? <ExploreLayoutMenu value={exploreLayout} onChange={onExploreLayoutChange} /> : null}
         <div className={`graph-map-search${searchOpen || query ? " is-open" : ""}`} ref={searchRef} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget)) setSearchOpen(false); }}>
           <input type="search" ref={searchInputRef} aria-label="Search this map" placeholder={searchPlaceholder} value={query}
             onFocus={() => setSearchOpen(true)} onChange={(event) => { navigation.update({ query: event.target.value }); setSearchOpen(true); }}
@@ -4453,7 +4480,7 @@ export default function ConversationGraphView({
             <button type="button" onClick={openExplorer}>View all results · {sourceItems.length}</button>
           </div> : null}
         </div>
-        {scopeHidden ? null : <><MapScopeSwitch value={scopeChoice} onChange={chooseScope} />
+        {scopeHidden || libraryActive ? null : <><MapScopeSwitch value={scopeChoice} onChange={chooseScope} />
         <span className="graph-map-scope-count" title={scopeLabel}>{scopedIds.size} note{scopedIds.size === 1 ? "" : "s"}</span></>}
         {/* Read out where the map is; the switch and the count show it on screen. */}
         <span className="graph-map-scope public-map-visually-hidden" aria-live="polite">{focusedTerritory ? `${focusedTerritory.label} · ${focusedTerritory.nodes.length} sources` : `${scopeLabel} · ${scopedIds.size} of ${Object.keys(conversations).length} sources`}</span>
@@ -4592,6 +4619,8 @@ export default function ConversationGraphView({
           ref={viewportRef}
         >
           <div ref={gridRef} className="conversation-graph-grid" style={gridLayerStyle} aria-hidden="true" />
+          {libraryRoot && exploreLayout && exploreLayout !== "canvas" ? <ExploreLibrary root={libraryRoot} layout={exploreLayout} conversations={conversations}
+            links={documentConnections} selectedId={selectedConversationId} onOpenNote={selectConversation} /> : null}
           {panelView ? <div className="graph-mode-panel" data-graph-ui="true">
             {viewMode === "evidence" || navigation.state.contentLens === "concepts" ? <>
               <GraphEvidenceView concepts={concepts} conversations={conversations}
