@@ -11,12 +11,17 @@ const { act, createElement, useState } = await import("react");
 const { createRoot } = await import("react-dom/client");
 const { default: WorkspaceModeToggle } = await import("../../client/src/components/WorkspaceModeToggle");
 let changeMode: (mode: MainViewMode) => void;
+let mapOpen = false;
+let showTiles = true;
 const selected: MainViewMode[] = [];
 function Host() {
   const [mode, setMode] = useState<MainViewMode>("chat");
-  changeMode = setMode;
+  const [, setTick] = useState(0);
+  changeMode = (next) => { setMode(next); setTick((tick) => tick + 1); };
   return createElement(WorkspaceModeToggle, {
     mainViewMode: mode,
+    mapOpen,
+    showTiles,
     onSetMainViewMode(next) { selected.push(next); setMode(next); },
   });
 }
@@ -34,40 +39,44 @@ async function key(target: any, key: string) {
 try {
   await act(async () => root.render(createElement(Host)));
   assert.equal(group().getAttribute("aria-label"), "Workspace view");
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-label")), ["Document View", "Tile View"], "The map is not a view of its own.");
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["true", "false"]);
-  assert.deepEqual(options().map((option) => option.tabIndex), [0, -1], "Only the active view is in the tab order.");
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-label")), ["Document View", "Tile View", "Map"], "Map is back in the toggle.");
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["true", "false", "false"]);
+  assert.deepEqual(options().map((option) => option.tabIndex), [0, -1, -1], "Only the active view is in the tab order.");
   assert.equal(container.querySelectorAll('[role="menu"], [aria-haspopup]').length, 0, "No dropdown remains.");
-  checks.push("two icon radios show Document and Tile with the active one checked");
+  checks.push("three icon radios show Document, Tile and Map with the active one checked");
 
-  assert.deepEqual(options().map((option) => option.getAttribute("title")), ["Document View (Ctrl+Shift+D)", "Tile View (Ctrl+Shift+L)"]);
+  assert.deepEqual(options().map((option) => option.getAttribute("title")), ["Document View (Ctrl+Shift+D)", "Tile View (Ctrl+Shift+L)", "Map (Ctrl+G)"]);
   assert.equal(options()[1].getAttribute("aria-keyshortcuts"), "Meta+Shift+L Control+Shift+L");
   checks.push("tooltips and aria-keyshortcuts name each view's shortcut");
 
   await click(options()[1]);
   assert.deepEqual(selected, ["tiles"]);
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "true"]);
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "true", "false"]);
+  await click(options()[2]);
+  assert.deepEqual(selected, ["tiles", "graph"]);
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "false", "true"], "A map request reads as Map.");
   await click(options()[0]);
-  assert.deepEqual(selected, ["tiles", "chat"]);
+  assert.deepEqual(selected, ["tiles", "graph", "chat"]);
   checks.push("one click switches to any view");
 
   await act(async () => options()[0].focus());
   await key(options()[0], "ArrowRight");
   assert.equal(selected.at(-1), "tiles");
   assert.equal(browser.document.activeElement, options()[1]);
-  await key(options()[1], "ArrowRight");
+  await key(options()[1], "End");
+  assert.equal(selected.at(-1), "graph");
+  await key(options()[2], "ArrowRight");
   assert.equal(selected.at(-1), "chat", "Arrow navigation wraps.");
-  assert.equal(browser.document.activeElement, options()[0]);
-  await key(options()[0], "End");
-  assert.equal(selected.at(-1), "tiles");
-  await key(options()[1], "Home");
+  await key(options()[0], "Home");
   assert.equal(selected.at(-1), "chat");
   checks.push("arrow, Home and End keys move between views like a radio group");
 
-  await act(async () => changeMode("tiles"));
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "true"]);
-  await act(async () => changeMode("graph"));
-  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["true", "false"], "A map request still reads as the document.");
+  await act(async () => { mapOpen = true; changeMode("chat"); });
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-checked")), ["false", "false", "true"], "The map open beside the document checks Map.");
+  await act(async () => { mapOpen = false; showTiles = false; changeMode("tiles"); });
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-label")), ["Document View", "Tile View", "Map"], "Tile view stays while it is the view, even with Tiles off.");
+  await act(async () => changeMode("chat"));
+  assert.deepEqual(options().map((option) => option.getAttribute("aria-label")), ["Document View", "Map"], "Without Tiles the toggle is Document and Map.");
   checks.push("outside view changes update the checked icon");
   console.log(JSON.stringify({ checks }));
 } finally {

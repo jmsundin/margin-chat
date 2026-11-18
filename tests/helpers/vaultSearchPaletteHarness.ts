@@ -30,6 +30,7 @@ let explored = 0;
 let queryChanges = 0;
 const kept: string[] = [];
 let setOpen!: (value: boolean) => void;
+let extra: Record<string, unknown> = {};
 
 function Host() {
   const [open, updateOpen] = useState(false), [query, setQuery] = useState("");
@@ -41,6 +42,7 @@ function Host() {
     onOpenPassage(hit, mode) { opened.push(`${mode}:passage:${hit.conversationId}`); updateOpen(false); },
     onExplore() { explored++; },
     onKeepOpen(query, scope) { kept.push(`${scope}:${query}`); updateOpen(false); },
+    ...extra,
   });
 }
 const container = browser.document.createElement("div"); browser.document.body.append(container);
@@ -163,6 +165,44 @@ assert.equal(selectedTitle(), "Trees vs. shade sailsRelated by meaning");
 await key("Enter");
 assert.equal(opened.at(-1), "here:passage:trees");
 checks.push("best matches by meaning are listed first and open");
+
+// The vault changing under an open search hands it a new provider, which searches again. What is shown
+// stays put until the new search is whole, instead of dropping back to this device's results first.
+let finishAgain!: () => void;
+const relatedOnly = (wait: boolean) => createVaultSearchProvider(() => ({ conversations, cloudDocuments }), async (_query, _options, onEvent) => {
+  onEvent({ type: "related", results: [{ id: "trees", sourceKind: "conversation", kind: "chat", title: "Trees vs. shade sails", heading: null,
+    snippet: "Fabric shade only blocks light.", blockId: null, pageNumber: null, passageIndex: 1, updatedAt: "2026-10-07T10:00:00Z", matched: "meaning" }] });
+  if (wait) await new Promise<void>((resolve) => { finishAgain = resolve; });
+  onEvent({ type: "done", revision: 4 });
+});
+const sectionNames = () => [...dialog()!.querySelectorAll(".vault-search-section")].map((section) => section.firstElementChild?.textContent);
+provider = relatedOnly(false);
+await act(async () => { root.render(createElement(Host)); setOpen(true); });
+await act(async () => { await new Promise((resolve) => setTimeout(resolve, 200)); });
+assert.deepEqual(sectionNames(), ["Best matches"]);
+provider = relatedOnly(true);
+await act(async () => { root.render(createElement(Host)); });
+for (let tick = 0; tick < 4; tick++) {
+  await act(async () => { await new Promise((resolve) => setTimeout(resolve, 40)); });
+  assert.deepEqual(sectionNames(), ["Best matches"], "Results never flicker back to this device's alone while the same search runs again.");
+}
+await act(async () => { finishAgain(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+assert.deepEqual(sectionNames(), ["Best matches"]);
+checks.push("searching again for the same words keeps the results steady");
+
+// Ask AI is part of search: first with nothing typed, and it asks what was typed.
+const asked: string[] = [];
+extra = { askTitle: "Urban heat draft", onAskAboutDocument(question: string) { asked.push(question); } };
+provider = createLocalVaultSearchProvider(() => ({ conversations, cloudDocuments }));
+await act(async () => { root.render(createElement(Host)); setOpen(true); });
+await type("");
+assert.equal(selectedTitle(), "✦ Ask AI about “Urban heat draft”", "With nothing typed, Ask AI comes first.");
+await type("why does shade help?");
+assert(rows().some((row) => row.textContent?.includes("Ask AI about “Urban heat draft”")));
+assert.equal(selectedTitle(), "✦ Ask AI about “Urban heat draft”", "A question puts Ask AI first.");
+await key("Enter");
+assert.deepEqual(asked, ["why does shade help?"]);
+checks.push("Ask AI about the open document lives in search");
 
 await act(async () => { root.unmount(); });
 console.log(JSON.stringify({ checks }));

@@ -1,7 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { MapPath, MapPathStep, MapPathSummary } from "../lib/mapPaths";
-import { getCurrentDocumentText } from "../lib/documentSources";
-import { plainPreview } from "../lib/roadmap";
+import { stageDocumentId } from "../lib/roadmapStageDocument";
 import type { Conversation } from "../types";
 import "./MapRoadmapCourse.css";
 
@@ -74,12 +73,14 @@ export function layoutCourse(path: MapPath, width: number): CourseLayout {
 const finished = (step: MapPathStep) => step.status === "done" || step.status === "skipped";
 
 /** Learn: the active roadmap filling the map pane as a course. Any lesson opens; nothing is locked. */
-export function MapRoadmapCourse({ path, trail, conversations, currentDocId, stepStrip, drafting, onOpen, onGoIn, onGoTo, onClose }: {
+export function MapRoadmapCourse({ path, trail, conversations, currentDocId, stepStrip, drafting, titleMenu, onOpen, onOpenStage, onGoIn, onGoTo, onClose }: {
   path: MapPath;
   trail: MapPathSummary[];
   conversations: Record<string, Conversation>;
   currentDocId: string | null;
   onOpen(docId: string): void;
+  /** A stage opens as a document: an index of its lessons, like any other node. */
+  onOpenStage(stageId: string): void;
   /** Go into a lesson that has its own roadmap. */
   onGoIn(pathId: string): void;
   onGoTo(pathId: string): void;
@@ -89,12 +90,11 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, ste
   drafting?: { label: string; onStop(): void } | null;
   /** Turn the roadmap off. */
   onClose?(): void;
+  /** The roadmap's name as a menu: switch roadmaps, see them all, change this one. */
+  titleMenu?: ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
-  // A stage is an index: click it to see what each of its lessons covers, with links to them.
-  const [openStageId, setOpenStageId] = useState<string | null>(null);
-  useEffect(() => setOpenStageId(null), [path.id]);
   useLayoutEffect(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -110,8 +110,9 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, ste
     hostRef.current?.querySelector(".is-current")?.scrollIntoView?.({ block: "nearest" });
   }, [currentDocId, path.id]);
   const layout = layoutCourse(path, width);
-  const openStage = layout.stages.find((stage) => stage.id === openStageId) ?? null;
-  const openLesson = (docId: string) => { setOpenStageId(null); onOpen(docId); };
+  // A stage is a document like any other: its index is open when it is the document being read.
+  const openStageId = layout.stages.find((stage) => currentDocId === stageDocumentId(path.id, stage.id))?.id ?? null;
+  const openLesson = onOpen;
   const stageById = new Map(layout.stages.map((stage) => [stage.id, stage]));
   const percent = path.total ? Math.round(path.finished / path.total * 100) : 0;
   // The open lesson's prerequisites and what it unlocks are marked in the course itself.
@@ -132,7 +133,7 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, ste
     <div className="map-course-head">
       <span className="map-course-trail">
         {trail.map((item) => <button key={item.id} type="button" onClick={() => onGoTo(item.id)}>{item.name}<span aria-hidden="true"> ›</span></button>)}
-        <strong title={path.name}>{path.name}</strong>
+        {titleMenu ?? <strong title={path.name}>{path.name}</strong>}
       </span>
       <span className="map-course-meter" aria-hidden="true"><span style={{ width: `${percent}%` }} /></span>
       <span className="map-course-count">{path.finished} of {path.total} done</span>
@@ -141,9 +142,7 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, ste
         <span className="map-course-spinner" aria-hidden="true" /><span>{drafting.label}</span>
         <button type="button" onClick={drafting.onStop}>Stop</button>
       </span> : null}
-      {openStage ? <StageIndex stage={openStage} stageCount={layout.stages.length} steps={path.steps.filter((step) => step.stageId === openStage.id)}
-        conversations={conversations} nextUpDocId={path.nextUpDocId} pathId={path.id} onOpen={openLesson} onGoIn={onGoIn} onClose={() => setOpenStageId(null)} />
-        : stepStrip ? <div className="map-course-step">{stepStrip}</div> : drafting ? null : <span className="map-course-legend" aria-hidden="true"><i className="is-done" />Done<i className="is-learning" />Learning<i className="is-optional" />Optional<span>↘ Has its own roadmap</span></span>}
+      {stepStrip ? <div className="map-course-step">{stepStrip}</div> : drafting ? null : <span className="map-course-legend" aria-hidden="true"><i className="is-done" />Done<i className="is-learning" />Learning<i className="is-optional" />Optional<span>↘ Has its own roadmap</span></span>}
     </div>
     {path.steps.length ? <div className="map-course-board" style={{ height: layout.height }}>
       <svg className="map-course-lines" width={layout.width} height={layout.height} aria-hidden="true">
@@ -161,12 +160,9 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, ste
       </svg>
       <div className="map-course-start" style={{ top: 12, left: layout.narrow ? 16 : layout.width / 2, transform: layout.narrow ? undefined : "translateX(-50%)" }}>Start</div>
       {layout.stages.map((stage) => <button key={stage.id} type="button" className={`map-course-stage${stage.id === openStageId ? " is-open" : ""}`}
-        style={{ left: stage.x, top: stage.y, width: stage.width, height: stage.height }} aria-expanded={stage.id === openStageId}
-        aria-label={`Stage ${stage.number}: ${stage.title}, ${stage.done} of ${stage.total} done. Show what its lessons cover`}
-        title="What this stage covers" onClick={() => {
-          setOpenStageId((current) => current === stage.id ? null : stage.id);
-          hostRef.current?.scrollTo?.({ top: 0, behavior: "smooth" });
-        }}>
+        style={{ left: stage.x, top: stage.y, width: stage.width, height: stage.height }} aria-current={stage.id === openStageId ? "page" : undefined}
+        aria-label={`Stage ${stage.number}: ${stage.title}, ${stage.done} of ${stage.total} done. Open its index`}
+        title="Open this stage: what each of its lessons covers" onClick={() => onOpenStage(stage.id)}>
         <span className="map-course-stage-number">{stage.number}</span>
         <strong>{stage.title}</strong>
         <em>{stage.done}/{stage.total}</em>
@@ -188,59 +184,13 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, ste
       })}
       <div className="map-course-start" style={{ top: layout.height - 26, left: layout.narrow ? 16 : layout.width / 2, transform: layout.narrow ? undefined : "translateX(-50%)" }}>{drafting ? "AI is adding lessons…" : path.finished === path.total ? "All done" : "Finish"}</div>
     </div> : drafting ? <p className="map-course-empty is-drafting"><span className="map-course-spinner" aria-hidden="true" />Lessons appear here as AI writes them.</p>
-      : <p className="map-course-empty">This roadmap has no lessons yet. Draft it with AI from the Roadmaps menu, or open its note and add steps.</p>}
+      : <p className="map-course-empty">This roadmap has no lessons yet. Draft it with AI from its name's menu above, or open its note and add steps.</p>}
   </div>;
 }
 
 const STATUS_WORDS = { "not-started": "not started", learning: "learning", done: "done", skipped: "skipped" } as const;
 
-/** One line on what a lesson covers: its first sentences, without the title it repeats. */
-export function lessonSummary(conversation: Conversation | undefined, limit = 150): string {
-  if (!conversation) return "";
-  const lines = getCurrentDocumentText(conversation).split(/\n/u);
-  const title = conversation.title.trim().toLocaleLowerCase();
-  const body = lines.filter((line) => {
-    const heading = /^\s*#{1,6}\s+(.*)$/u.exec(line);
-    return !(heading && heading[1].trim().toLocaleLowerCase() === title);
-  }).join("\n");
-  const text = plainPreview(body);
-  if (text.length <= limit) return text;
-  const cut = text.slice(0, limit);
-  const sentence = cut.lastIndexOf(". ");
-  return sentence > limit * 0.5 ? cut.slice(0, sentence + 1) : `${cut.slice(0, cut.lastIndexOf(" ") > 0 ? cut.lastIndexOf(" ") : limit)}…`;
-}
-
-/** A stage opened as an index: what each of its lessons covers, each a link to the lesson. */
-function StageIndex({ stage, stageCount, steps, conversations, nextUpDocId, pathId, onOpen, onGoIn, onClose }: {
-  stage: CourseLayout["stages"][number]; stageCount: number; steps: MapPathStep[]; conversations: Record<string, Conversation>;
-  nextUpDocId: string | null | undefined; pathId: string; onOpen(docId: string): void; onGoIn(pathId: string): void; onClose(): void;
-}) {
-  return <section className="map-course-index" aria-label={`Stage ${stage.number}: ${stage.title}`}>
-    <header>
-      <span className="map-course-stage-number" aria-hidden="true">{stage.number}</span>
-      <strong>{stage.title}</strong>
-      <span className="map-course-index-meta">Stage {stage.number} of {stageCount} · {stage.done} of {stage.total} done</span>
-      <button type="button" className="map-course-index-close" aria-label="Close this stage" title="Close" onClick={onClose}>×</button>
-    </header>
-    <ol>
-      {steps.map((step) => {
-        const summary = lessonSummary(conversations[step.docId]);
-        const hasRoadmap = step.docId !== pathId && conversations[step.docId]?.nodeType === "roadmap";
-        return <li key={step.docId} className={`is-${step.status}${step.optional ? " is-optional" : ""}`}>
-          <button type="button" disabled={step.drafting} onClick={() => onOpen(step.docId)}>
-            <span className="map-course-index-title">
-              {step.status === "done" ? <span className="map-course-mark" aria-hidden="true">✓</span> : step.status === "learning" ? <span className="map-course-mark is-learning" aria-hidden="true" /> : null}
-              {step.title}{step.optional ? <small> optional</small> : null}
-              {step.docId === nextUpDocId ? <span className="map-course-next">Next</span> : null}
-            </span>
-            <span className="map-course-index-summary">{summary || (step.drafting ? "AI is still writing this lesson." : "Not written yet. Open it and AI writes it.")}</span>
-          </button>
-          {hasRoadmap ? <button type="button" className="map-course-dive" aria-label={`Open the roadmap for ${step.title}`} title="Open its own roadmap" onClick={() => onGoIn(step.docId)}>↘</button> : null}
-        </li>;
-      })}
-    </ol>
-  </section>;
-}
+export { lessonSummary } from "../lib/roadmapStageDocument";
 
 /** Learn with no roadmap yet: say what Learn is and start one. */
 export function MapCourseEmpty({ onDraft, onNew }: { onDraft(goal: string): string | null; onNew(): void }) {

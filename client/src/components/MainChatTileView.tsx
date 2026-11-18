@@ -8,6 +8,17 @@ import {
   getThreadCategoryLabel,
 } from "../lib/threadCategories";
 import type { ConversationGroup, ThreadSummary } from "../types";
+import RoadmapTiles, { type RoadmapTile } from "./RoadmapTiles";
+
+export type TileTab = "documents" | "roadmaps";
+const TAB_KEY = "margin-chat:tile-tab";
+/** The tab Tile view last showed on this device. */
+export function readTileTab(): TileTab {
+  try { return window.localStorage.getItem(TAB_KEY) === "roadmaps" ? "roadmaps" : "documents"; } catch { return "documents"; }
+}
+export function rememberTileTab(tab: TileTab) {
+  try { window.localStorage.setItem(TAB_KEY, tab); } catch { /* remembered for this visit only */ }
+}
 
 function normalizeThreads(threads: ThreadSummary[]): ThreadSummary[] {
   return threads.map((thread) => {
@@ -35,6 +46,14 @@ interface MainChatTileViewProps {
   onOpenThread: (conversationId: string) => void;
   onToggleGroup: (groupId: string) => void;
   threads: ThreadSummary[];
+  /** With Roadmaps on, Tile view has a Roadmaps tab: every roadmap as a tile. */
+  roadmaps?: {
+    tiles: RoadmapTile[];
+    onOpen(id: string): void;
+    onDraft(goal: string): string | null;
+    tab: TileTab;
+    onTab(tab: TileTab): void;
+  };
 }
 
 function SearchIcon() {
@@ -120,9 +139,22 @@ export default function MainChatTileView({
   onOpenThread,
   onToggleGroup,
   threads,
+  roadmaps,
 }: MainChatTileViewProps) {
   const [query, setQuery] = useState("");
+  const tab: TileTab = roadmaps ? roadmaps.tab : "documents";
+  const chooseTab = (next: TileTab) => roadmaps?.onTab(next);
+  const tabs = roadmaps ? <div className="thread-tile-tabs" role="tablist" aria-label="Show">
+    <button type="button" role="tab" aria-selected={tab === "documents"} onClick={() => chooseTab("documents")}>Documents</button>
+    <button type="button" role="tab" aria-selected={tab === "roadmaps"} onClick={() => chooseTab("roadmaps")}>Roadmaps{roadmaps.tiles.length ? ` ${roadmaps.tiles.length}` : ""}</button>
+  </div> : null;
   const deferredQuery = useDeferredValue(query);
+  if (roadmaps && tab === "roadmaps") {
+    return <section className="thread-tile-view">
+      <div className="thread-tile-toolbar">{tabs}</div>
+      <RoadmapTiles roadmaps={roadmaps.tiles} onOpen={roadmaps.onOpen} onDraft={roadmaps.onDraft} />
+    </section>;
+  }
   const normalizedQuery = deferredQuery.trim().toLowerCase();
   const normalizedThreads = normalizeThreads(threads);
   const filteredThreads = normalizedThreads
@@ -166,6 +198,7 @@ export default function MainChatTileView({
   return (
     <section className="thread-tile-view">
       <div className="thread-tile-toolbar">
+        {tabs}
         <label className="thread-tile-search" htmlFor="thread-tile-search">
           <SearchIcon />
           <input

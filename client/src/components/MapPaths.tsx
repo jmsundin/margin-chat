@@ -22,6 +22,8 @@ export interface MapPathActions {
   onStepAI(pathId: string, docId: string, action: "explain" | "deeper"): string | null;
   /** A lesson was opened from Learn: one with nothing to read yet gets its lesson written by AI. */
   onLessonOpened?(pathId: string, docId: string, context: string): void;
+  /** A stage opens as a document: its index of lessons, under the roadmap. */
+  onOpenStage?(pathId: string, stageId: string): void;
   /** Keep or discard the path AI drafted; returns why it couldn't, or null. Drafts are kept on their own, so this is for older callers. */
   onDraftDecision(pathId: string, messageId: string, proposalId: string, action: "approve" | "dismiss"): string | null;
   onStopDraft(pathId: string): void;
@@ -34,8 +36,11 @@ export interface MapPathActions {
 
 const PathIcon = () => <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5" cy="18.5" r="2.4" /><circle cx="19" cy="5.5" r="2.4" /><path d="M7.2 17.2C14 15 9 9.5 16.8 6.8" /></svg>;
 
-/** The toolbar's Paths menu: turn a path on, start one by hand, or have AI draft one. */
-export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPick, onNew, onDraft, onRevise }: {
+/**
+ * The roadmap's name in Learn's header, as a menu: switch to another roadmap, see them all, change this
+ * one with AI, or start one. It names the roadmap on screen, so it never reads as a switch left on.
+ */
+export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPick, onNew, onDraft, onRevise, onShowAll }: {
   paths: MapPathSummary[];
   activeId: string | null;
   /** The roadmap's name is already on screen (Learn's header), so the button just says Roadmaps. */
@@ -45,6 +50,8 @@ export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPi
   onDraft(goal: string): string | null;
   /** Change the roadmap that's on with AI; absent when none is on or AI can't change it. */
   onRevise?(request: string): string | null;
+  /** Every roadmap as tiles (Tile view's Roadmaps tab). */
+  onShowAll?(): void;
 }) {
   const [drafting, setDrafting] = useState<false | "new" | "change">(false);
   const [goal, setGoal] = useState("");
@@ -52,9 +59,10 @@ export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPi
   const active = paths.find((path) => path.id === activeId);
   const close = (element: HTMLElement) => { element.closest("details")?.removeAttribute("open"); setDrafting(false); setError(null); };
   const link = roadmapDraftLink(goal);
-  return <DismissibleDetails className="map-paths-menu" onToggle={(event) => { if (!event.currentTarget.open) { setDrafting(false); setError(null); } }}>
-    <summary aria-label={active ? `Roadmap: ${active.name}` : "Roadmaps"} title="Roadmaps: learning paths drawn over your map" className={active ? "is-on" : undefined}>
-      <PathIcon /><span>{active && !nameShownElsewhere ? active.name : "Roadmaps"}</span>
+  return <DismissibleDetails className={`map-paths-menu${active ? " is-title" : ""}`} onToggle={(event) => { if (!event.currentTarget.open) { setDrafting(false); setError(null); } }}>
+    <summary aria-label={active ? `Roadmap: ${active.name}. Switch or change roadmaps` : "Roadmaps"} title={active ? "Switch to another roadmap, or change this one" : "Roadmaps"}>
+      {active ? null : <PathIcon />}<span>{active && !nameShownElsewhere ? active.name : "Roadmaps"}</span>
+      <svg className="map-paths-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
     </summary>
     <div role="menu">
       {drafting === "change" && active && onRevise ? <form className="map-paths-draft" onSubmit={(event) => {
@@ -85,6 +93,7 @@ export function MapPathsMenu({ paths, activeId, nameShownElsewhere = false, onPi
           <PathIcon /><span>{path.name}</span><em>{path.finished}/{path.total}</em>
         </button>) : <p className="map-paths-empty">A roadmap is a path through your notes: steps in order, with what each needs first.</p>}
         <hr />
+        {onShowAll ? <button type="button" role="menuitem" onClick={(event) => { close(event.currentTarget); onShowAll(); }}>All roadmaps</button> : null}
         <button type="button" role="menuitem" onClick={(event) => { close(event.currentTarget); onNew(); }}>+ New roadmap: click notes in order</button>
         {active && onRevise ? <button type="button" role="menuitem" onClick={() => { setGoal(""); setDrafting("change"); }}>✦ Change this roadmap with AI…</button> : null}
         <button type="button" role="menuitem" onClick={() => { setGoal(""); setDrafting("new"); }}>✦ Draft a roadmap with AI…</button>

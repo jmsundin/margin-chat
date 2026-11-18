@@ -1,6 +1,6 @@
 import { useFeature } from "../lib/features";
 import DismissibleDetails from "./DismissibleDetails";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
 import ConversationGraphView, { type ConversationGraphViewProps } from "./ConversationGraphView";
 import { requestUrlMap, type UrlMapAIOptions } from "../lib/urlMap";
 import type { PublicExpansion, PublicTopic } from "../lib/publicKnowledge";
@@ -62,13 +62,17 @@ interface Props extends ConversationGraphViewProps {
   /** Turn this roadmap on (a new requestId asks again). */
   /** Turns a roadmap on; `learn` opens it as a course instead of on the map. */
   pathRequest?: { id: string; requestId: number; learn?: boolean } | null;
+  /** Every roadmap as tiles: Tile view's Roadmaps tab. */
+  onShowAllRoadmaps?: () => void;
+  /** Document, Tile and Map, shown beside the sidebar's button while the sidebar is closed. */
+  viewToggle?: ReactNode;
 }
 
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 const hostname = (url: string) => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } };
 const editable = (target: EventTarget | null) => target instanceof HTMLElement && (target.isContentEditable || Boolean(target.closest("input, textarea, select, [contenteditable]:not([contenteditable='false'])")));
 
-export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, onDismissMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, pathRequest, onMoreFeatures, ...personalProps }: Props) {
+export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSidebar, sidebarOpen, urlMapAIOptions, onSavePublicTopic, publicMapAccount, onCreateMapNote, onSetMapConnection, onRemoveMapNote, onUndoMapEdit, onDismissMapEdit, mapEditMessage, canUndoMapEdit, onAddChildNote, onExpandTopicWithAI, onCancelTopicExpansion, expandingTopicId, topicExpansionProgress, topicExpansionError, onDismissTopicExpansionError, onAddTopicConnections, onSavePrivateAnswer, onKeepExplored, onCreateExploreDocument, paths: pathActions, pathRequest, onMoreFeatures, onShowAllRoadmaps, viewToggle, ...personalProps }: Props) {
   const mapTools = useFeature("mapTools");
   const [sourcesFor, setSourcesFor] = useState<string | "add" | null>(null);
   const [addedTopicId, setAddedTopicId] = useState<string | null>(null);
@@ -474,7 +478,13 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   // Bringing in sources and exploring topics come with More map tools; a plain map just adds notes.
   const moreFeatures = onMoreFeatures ? <button type="button" className="graph-map-more-features" title="Turn on more tools in Settings → Features"
     onClick={(event) => { closeMenu(event.currentTarget); onMoreFeatures(); }}>More features…</button> : null;
-  const menuActions = !mapTools ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onCreateMapNote({}); }}>New note</button> : <>
+  // Roadmaps left the bar: all of them are a tab of Tile view, and a new one by hand is picked here on the map.
+  const roadmapActions = pathActions ? <>
+    <span className="graph-map-menu-label">Roadmaps</span>
+    {onShowAllRoadmaps ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onShowAllRoadmaps(); }}>All roadmaps</button> : null}
+    <button type="button" onClick={(event) => { closeMenu(event.currentTarget); startPicking(); }}>New roadmap: click notes in order</button>
+  </> : null;
+  const menuActions = !mapTools ? <><button type="button" onClick={(event) => { closeMenu(event.currentTarget); onCreateMapNote({}); }}>New note</button>{roadmapActions}</> : <>
     <span className="graph-map-menu-label">Add and explore</span>
     <button type="button" onClick={(event) => { closeMenu(event.currentTarget); onCreateMapNote({}); }}>New note</button>
     {onAddTopicConnections && publicMapAccount ? <button type="button" onClick={(event) => { closeMenu(event.currentTarget); openSources("add"); }}>Add from Wikipedia</button> : null}
@@ -484,6 +494,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     <button type="button" title="Explored history: previews you have not kept" aria-label={`Explored history${historyCount ? `, ${historyCount} items` : ""}`}
       onClick={(event) => { closeMenu(event.currentTarget); setHistoryOpen(true); setSelectedPreview(null); setSourcesFor(null); }}>
       Explored history{historyCount ? <span className="graph-map-lens-badge">{historyCount > 99 ? "99+" : historyCount}</span> : null}</button>
+    {roadmapActions}
   </>;
   void addActions;
 
@@ -537,16 +548,9 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
             onToggle={(id) => setPicking((current) => current ? current.includes(id) ? current.filter((item) => item !== id) : [...current, id] : current)} /> : null}
         </>}
         renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
-        toolbarLeading={<>{sidebarToggle}{pathActions ? <MapModeSwitch mode={mapMode} onChange={chooseMapMode} /> : null}</>}
+        toolbarLeading={<>{sidebarToggle}{sidebarToggle ? viewToggle : null}{pathActions ? <MapModeSwitch mode={mapMode} onChange={chooseMapMode} /> : null}</>}
         scopeHidden={mapMode === "learn"}
-        toolbarTrailing={<>{pathActions ? <MapPathsMenu paths={pathSummaries} activeId={activePath ? activePathId : null} nameShownElsewhere={mapMode === "learn"}
-          onPick={(id) => { setPicking(null); setActivePath(id); }} onNew={startPicking}
-          onDraft={(goal) => {
-            const made = pathActions.onDraftPath(goal);
-            if ("error" in made) return made.error;
-            setPicking(null); setActivePath(made.id); return null;
-          }}
-          onRevise={activePath && pathActions.onRevisePath ? (request) => pathActions.onRevisePath!(activePath.id, request) : undefined} /> : null}</>}
+        // Roadmaps are reached from Tile view's Roadmaps tab and Learn; Learn's header names the roadmap on screen, as a menu.
         menuItems={menuActions} menuFooter={moreFeatures} scopeRequest={scopeRequest}
         focusRequest={personalProps.focusRequest ?? personalFocus}
         onFocusRequestHandled={(id) => { if (personalProps.focusRequest?.requestId === id) personalProps.onFocusRequestHandled?.(id); else setPersonalFocus(null); }}
@@ -580,6 +584,15 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
             const step = activePath.steps.find((item) => item.docId === id);
             if (step) pathActions.onLessonOpened?.(activePath.id, id, lessonContext(activePath, step));
           }}
+          onOpenStage={(stageId) => pathActions.onOpenStage?.(activePath.id, stageId)}
+          titleMenu={<MapPathsMenu paths={pathSummaries} activeId={activePath ? activePathId : null} onShowAll={onShowAllRoadmaps}
+          onPick={(id) => { setPicking(null); setActivePath(id); }} onNew={startPicking}
+          onDraft={(goal) => {
+            const made = pathActions.onDraftPath(goal);
+            if ("error" in made) return made.error;
+            setPicking(null); setActivePath(made.id); return null;
+          }}
+          onRevise={activePath && pathActions.onRevisePath ? (request) => pathActions.onRevisePath!(activePath.id, request) : undefined} />}
           onGoIn={(id) => setActivePath(id, [...pathTrail, activePath.id])}
           onGoTo={(id) => { const index = pathTrail.indexOf(id); setActivePath(id, index >= 0 ? pathTrail.slice(0, index) : []); }}
           onClose={() => setActivePath(null)} /> : null}

@@ -1,10 +1,16 @@
 import type { KeyboardEvent } from "react";
 import type { MainViewMode } from "../types";
-import { ariaShortcut, shortcutLabel, toggleViews as workspaceViews } from "../lib/workspaceViewShortcuts";
+import { ariaShortcut, shortcutLabel, workspaceViews } from "../lib/workspaceViewShortcuts";
 import "./WorkspaceModeToggle.css";
 
 export interface WorkspaceModeToggleProps {
   mainViewMode: MainViewMode;
+  /** The map is open around the document. */
+  mapOpen?: boolean;
+  /** Tile view is offered (the Tiles feature is on). */
+  showTiles?: boolean;
+  /** Map is offered here (a phone has its own map button instead). */
+  showMap?: boolean;
   onSetMainViewMode: (mode: MainViewMode) => void;
 }
 
@@ -16,23 +22,27 @@ function ModeIcon({ mode }: { mode: MainViewMode }) {
   </svg>;
 }
 
-/** Two icon buttons for Document and Tile, as one radio group. The map opens beside the document instead. */
-export default function WorkspaceModeToggle({ mainViewMode: shownMode, onSetMainViewMode }: WorkspaceModeToggleProps) {
-  const mainViewMode: MainViewMode = shownMode === "tiles" ? "tiles" : "chat";
+/**
+ * Icon buttons for Document, Tile (when Tiles is on) and Map, as one radio group. Map shows the map
+ * around the document beside it, so it is checked while the map is open; Document puts the map away.
+ */
+export default function WorkspaceModeToggle({ mainViewMode: shownMode, mapOpen = false, showTiles = true, showMap = true, onSetMainViewMode }: WorkspaceModeToggleProps) {
+  const views = workspaceViews.filter((view) => view.mode === "graph" ? showMap : view.mode !== "tiles" || showTiles || shownMode === "tiles");
+  const mainViewMode: MainViewMode = shownMode === "tiles" ? "tiles" : mapOpen || shownMode === "graph" ? "graph" : "chat";
   function handleKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    const index = workspaceViews.findIndex(({ mode }) => mode === mainViewMode);
-    const last = workspaceViews.length - 1;
+    const index = views.findIndex(({ mode }) => mode === mainViewMode);
+    const last = views.length - 1;
     const next = event.key === "Home" ? 0 : event.key === "End" ? last
-      : event.key === "ArrowRight" || event.key === "ArrowDown" ? (index + 1) % workspaceViews.length
-        : event.key === "ArrowLeft" || event.key === "ArrowUp" ? (index - 1 + workspaceViews.length) % workspaceViews.length : -1;
+      : event.key === "ArrowRight" || event.key === "ArrowDown" ? (index + 1) % views.length
+        : event.key === "ArrowLeft" || event.key === "ArrowUp" ? (index - 1 + views.length) % views.length : -1;
     if (next < 0) return;
     event.preventDefault();
-    onSetMainViewMode(workspaceViews[next].mode);
+    onSetMainViewMode(views[next].mode);
     event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="radio"]')[next]?.focus();
   }
 
   return <div className="workspace-mode-control" role="radiogroup" aria-label="Workspace view" onKeyDown={handleKeyDown}>
-    {workspaceViews.map((view) => {
+    {views.map((view) => {
       const active = view.mode === mainViewMode;
       return <button key={view.mode} type="button" role="radio" aria-checked={active} tabIndex={active ? 0 : -1}
         className="workspace-mode-option" aria-label={view.label} aria-keyshortcuts={ariaShortcut(view)}
