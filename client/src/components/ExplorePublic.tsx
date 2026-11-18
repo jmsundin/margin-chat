@@ -20,6 +20,10 @@ export interface ExplorePublicActions {
   onOpenNote: (id: string) => void;
   /** Opens a Wikipedia article to read beside. */
   onRead: (title: string) => void;
+  /** Opens a write-up of the topic beside, drafted by AI. */
+  onDetails: (node: BrowseNode) => void;
+  /** Makes a new note on the topic and opens it beside; returns a reason when it could not. */
+  onNewNote: (node: BrowseNode) => string | null;
   /** Saves a topic as a note; resolves to the note, or a reason it could not be saved. */
   onKeep: (node: BrowseNode) => Promise<{ id: string } | { error: string }>;
   /** Starts a roadmap for a topic in Learn; returns a reason when it could not start. */
@@ -30,9 +34,11 @@ export interface ExplorePublicActions {
  * Explore from Wikipedia or from a topic AI splits up. The same Tiles and Clusters as your notes,
  * except that each place is fetched the first time you open it.
  */
-export default function ExplorePublic({ source, layout, sourceMenu, actions, reader, onPlace }: {
+export default function ExplorePublic({ source, layout, leading, sourceMenu, actions, reader, onPlace }: {
   source: Exclude<ExploreSource, { kind: "notes" }>;
   layout: "tiles" | "clusters";
+  /** Controls before the breadcrumbs, such as the Layout menu. */
+  leading?: ReactNode;
   sourceMenu: (onTop: () => void) => ReactNode;
   actions: ExplorePublicActions;
   /** A reading pane shown beside the layout, when one is open. */
@@ -107,70 +113,120 @@ export default function ExplorePublic({ source, layout, sourceMenu, actions, rea
   const follow = useCallback((ids: string[]) => setPathIds((current) => current.length === ids.length && current.every((id, at) => id === ids[at]) ? current : ids), []);
   const enter = (node: BrowseNode) => { load(node); goTo([...pathIds.slice(0, path.length - 1), node.id]); };
 
-  return <div className={`explore-library is-${layout} is-public${reader ? " has-reader" : ""}`} data-graph-ui="true">
+  // Tapping a place opens a small menu by it: go inside, read about it, or make a note of it.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [menu, setMenu] = useState<{ node: BrowseNode; x: number; y: number; open: () => void } | null>(null);
+  const showMenu = (node: BrowseNode, point: { x: number; y: number }, open: () => void) => {
+    const box = rootRef.current?.getBoundingClientRect();
+    setMenu({ node, x: point.x - (box?.left ?? 0), y: point.y - (box?.top ?? 0), open });
+  };
+  useEffect(() => { setMenu(null); }, [sourceKey, layout]);
+
+  return <div ref={rootRef} className={`explore-library is-${layout} is-public${reader ? " has-reader" : ""}`} data-graph-ui="true">
     <div className="explore-public-main">
       <nav className="explore-library-crumbs" aria-label="Where you are in Explore">
+        {leading}
         <span>{sourceMenu(() => goTo([]))}{path.length > 1 ? <span aria-hidden="true">›</span> : null}</span>
         {path.slice(1).map((node, index) => index + 1 < path.length - 1
           ? <span key={node.id}><button type="button" onClick={() => goTo(pathIds.slice(0, index + 1))}>{node.label}</button><span aria-hidden="true">›</span></span>
           : <span key={node.id} className="is-here" aria-current="location">{node.label}</span>)}
       </nav>
-      {layout === "tiles" || here.kind === "article" || here.kind === "topic" ? <TopicHeader node={here} actions={actions} /> : null}
+      {here.kind === "root" && here.summary && layout === "tiles" ? <p className="explore-public-lede">{here.summary}</p> : null}
       {layout === "tiles"
         ? <PublicTiles node={here} siblings={path.length > 1 ? path[path.length - 2].children ?? [] : []} loading={loading.has(here.id)} error={errors[here.id]}
-          noteFor={actions.noteFor} onEnter={enter} onSibling={(node) => { load(node); goTo([...pathIds.slice(0, path.length - 2), node.id]); }}
+          noteFor={actions.noteFor} onPick={(node, point) => showMenu(node, point, () => enter(node))}
+          onSibling={(node) => { load(node); goTo([...pathIds.slice(0, path.length - 2), node.id]); }}
           onRetry={() => retry(here)} onOpenNote={actions.onOpenNote} onPeek={(node) => load(node, true)} />
         : <PublicClusters root={root} target={here} pathKey={path.map((node) => node.id).join(">")} flyRequest={flyRequest} loading={loading} errors={errors} noteFor={actions.noteFor}
-          onLoad={load} onFollow={follow} />}
+          onLoad={load} onFollow={follow} onPick={showMenu} />}
     </div>
+    {menu ? <NodeMenu key={menu.node.id} node={menu.node} x={menu.x} y={menu.y} bounds={rootRef.current} sourceKind={source.kind} actions={actions}
+      onOpen={() => { menu.open(); setMenu(null); }} onClose={() => setMenu(null)} /> : null}
     {reader}
   </div>;
 }
 
-/* ---------- The sign over the room you are in ---------- */
+/* ---------- The menu by a tapped place ---------- */
 
-function TopicHeader({ node, actions }: { node: BrowseNode; actions: ExplorePublicActions }) {
+const OPEN_LABEL: Record<BrowseNode["kind"], string> = { root: "Open", section: "Open", shelf: "Open the shelf", article: "Show what's inside", group: "Open", topic: "Show sub-topics" };
+
+function NodeMenu({ node, x, y, bounds, sourceKind, actions, onOpen, onClose }: {
+  node: BrowseNode; x: number; y: number; bounds: HTMLElement | null; sourceKind: ExploreSource["kind"]; actions: ExplorePublicActions; onOpen: () => void; onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
   const [extract, setExtract] = useState<string | null>(null);
   const [state, setState] = useState<{ busy?: boolean; message?: string; error?: boolean; kept?: string }>({});
   useEffect(() => {
-    setExtract(null); setState({});
-    if (!node.article || (node.kind !== "article" && node.kind !== "topic")) return;
+    if (!node.article || node.summary) return;
     const controller = new AbortController();
     getWikipediaSummary(wikipediaArticleUrl(node.article), controller.signal).then((summary) => {
       if (!controller.signal.aborted && summary?.extract) setExtract(summary.extract);
     }).catch(() => undefined);
     return () => controller.abort();
-  }, [node.id, node.article, node.kind]);
-  if (node.kind !== "article" && node.kind !== "topic" && node.kind !== "root") return null;
-  if (node.kind === "root") return node.summary ? <p className="explore-public-lede">{node.summary}</p> : null;
+  }, [node.article, node.summary]);
+  // Focus the first choice; Escape or a tap elsewhere closes the menu.
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+  useEffect(() => {
+    ref.current?.querySelector<HTMLButtonElement>("button")?.focus({ preventScroll: true });
+    const away = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) closeRef.current(); };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, []);
+  const width = 264, room = bounds?.clientWidth ?? 800, height = bounds?.clientHeight ?? 600;
+  const left = Math.max(8, Math.min(x - 24, room - width - 8));
+  const below = y + 300 < height || y < height / 2;
+  const style: CSSProperties = below ? { left, top: y + 10 } : { left, bottom: height - y + 10 };
   const noteId = state.kept ?? actions.noteFor(node.label, node.topic);
-  const text = extract ?? node.summary;
-  return <section className="explore-public-header" aria-label={node.label}>
-    <div>
-      <h2>{node.label}</h2>
-      {text ? <p>{text.length > 320 ? `${text.slice(0, 319).replace(/\s+\S*$/u, "")}…` : text}</p> : null}
+  const about = node.summary ?? extract;
+  const opensWithAi = sourceKind === "ai" || node.kind === "topic";
+  return <div ref={ref} className="explore-node-menu" role="menu" aria-label={node.label} style={style}
+    onKeyDown={(event) => {
+      if (event.key === "Escape") { event.stopPropagation(); onClose(); return; }
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+      event.preventDefault();
+      const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
+      const at = items.indexOf(document.activeElement as HTMLButtonElement);
+      items[(at + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length]?.focus();
+    }}>
+    <div className="explore-node-menu-head">
+      <strong>{node.label}</strong>
+      {about ? <span>{about.length > 150 ? `${about.slice(0, 149).replace(/\s+\S*$/u, "")}…` : about}</span> : null}
     </div>
-    <div className="explore-public-actions">
-      {node.article ? <button type="button" onClick={() => actions.onRead(node.article!)}>Read</button> : null}
-      {noteId ? <button type="button" className="is-mine" onClick={() => actions.onOpenNote(noteId)}>In your notes · Open</button>
-        : <button type="button" disabled={state.busy} onClick={() => {
-          setState({ busy: true });
-          void actions.onKeep(node).then((made) => setState("id" in made ? { kept: made.id, message: "Saved to your notes." } : { message: made.error, error: true }));
-        }}>{state.busy ? "Saving…" : "Keep as note"}</button>}
-      {actions.onRoadmap ? <button type="button" onClick={() => { const reason = actions.onRoadmap!(node); if (reason) setState({ message: reason, error: true }); }}>Make a roadmap</button> : null}
-    </div>
+    <button type="button" role="menuitem" onClick={onOpen}>{opensWithAi && node.kind !== "section" ? "Show sub-topics" : OPEN_LABEL[node.kind]}</button>
+    <button type="button" role="menuitem" onClick={() => { actions.onDetails(node); onClose(); }}>Topic details</button>
+    {node.article ? <button type="button" role="menuitem" onClick={() => { actions.onRead(node.article!); onClose(); }}>Wikipedia article</button> : null}
+    <button type="button" role="menuitem" onClick={() => {
+      const reason = actions.onNewNote(node);
+      if (reason) setState({ message: reason, error: true }); else onClose();
+    }}>New note</button>
+    {noteId ? <button type="button" role="menuitem" className="is-mine" onClick={() => { actions.onOpenNote(noteId); onClose(); }}>In your notes · Open</button>
+      : <button type="button" role="menuitem" disabled={state.busy} onClick={() => {
+        setState({ busy: true });
+        void actions.onKeep(node).then((made) => setState("id" in made ? { kept: made.id, message: "Saved to your notes." } : { message: made.error, error: true }));
+      }}>{state.busy ? "Saving…" : "Keep as note"}</button>}
+    {actions.onRoadmap ? <button type="button" role="menuitem" onClick={() => {
+      const reason = actions.onRoadmap!(node);
+      if (reason) setState({ message: reason, error: true }); else onClose();
+    }}>Make a roadmap</button> : null}
     {state.message ? <p className={`explore-public-status${state.error ? " is-error" : ""}`} role={state.error ? "alert" : "status"}>{state.message}</p> : null}
-  </section>;
+  </div>;
 }
 
 /* ---------- Tiles ---------- */
 
 const KIND_HINT: Record<BrowseNode["kind"], string> = { root: "", section: "", shelf: "Articles", article: "Article", group: "Part of the article", topic: "Topic" };
+/** Where a click happened, or the middle of the element for a key press. */
+function pointOf(event: { clientX: number; clientY: number; currentTarget: Element; detail?: number }) {
+  if (event.detail !== 0 && (event.clientX || event.clientY)) return { x: event.clientX, y: event.clientY };
+  const box = event.currentTarget.getBoundingClientRect();
+  return { x: box.left + Math.min(box.width / 2, 120), y: box.top + Math.min(box.height / 2, 60) };
+}
 const countText = (node: BrowseNode) => node.children ? `${node.children.length} inside` : node.hint ?? KIND_HINT[node.kind];
 
-function PublicTiles({ node, siblings, loading, error, noteFor, onEnter, onSibling, onRetry, onOpenNote, onPeek }: {
+function PublicTiles({ node, siblings, loading, error, noteFor, onPick, onSibling, onRetry, onOpenNote, onPeek }: {
   node: BrowseNode; siblings: BrowseNode[]; loading: boolean; error?: string; noteFor: ExplorePublicActions["noteFor"];
-  onEnter: (node: BrowseNode) => void; onSibling: (node: BrowseNode) => void; onRetry: () => void; onOpenNote: (id: string) => void;
+  onPick: (node: BrowseNode, point: { x: number; y: number }) => void; onSibling: (node: BrowseNode) => void; onRetry: () => void; onOpenNote: (id: string) => void;
   /** Fetches what a room holds in the background, so big rooms can show what is inside. */
   onPeek: (node: BrowseNode) => void;
 }) {
@@ -196,7 +252,7 @@ function PublicTiles({ node, siblings, loading, error, noteFor, onEnter, onSibli
         {children.map((child, at) => {
           const mine = noteFor(child.label, child.topic);
           return <button type="button" role="listitem" key={child.id} className={`explore-shelf-note${child.kind === "topic" ? " is-ai" : ""}`}
-            style={{ "--section": HUES[at % HUES.length] } as CSSProperties} onClick={() => onEnter(child)}>
+            style={{ "--section": HUES[at % HUES.length] } as CSSProperties} onClick={(event) => onPick(child, pointOf(event))}>
             <strong>{child.label}</strong>
             {child.summary ? <span>{child.summary}</span> : null}
             {mine ? <em className="explore-mine" onClick={(event) => { event.stopPropagation(); onOpenNote(mine); }}>In your notes</em> : null}
@@ -216,7 +272,7 @@ function PublicTiles({ node, siblings, loading, error, noteFor, onEnter, onSibli
       const compact = rect.height < 70 || rect.width < 110;
       return <button type="button" key={child.id} className={`explore-tile${compact ? " is-compact" : ""}${child.kind === "topic" ? " is-ai" : ""}`}
         style={{ left: rect.x, top: rect.y, width: rect.width, height: rect.height, "--section": color } as CSSProperties}
-        title={child.label} onClick={() => onEnter(child)}>
+        title={child.label} onClick={(event) => onPick(child, pointOf(event))}>
         <span className="explore-tile-sign">{child.label}</span>
         {compact || !countText(child) ? null : <span className="explore-tile-meta">{countText(child)}</span>}
         {!compact && child.summary && rect.height > 120 ? <span className="explore-tile-summary">{child.summary}</span> : null}
@@ -231,9 +287,11 @@ function PublicTiles({ node, siblings, loading, error, noteFor, onEnter, onSibli
 /** A circle opens into what it holds once it is this many pixels across; a closed one asks for its contents a little sooner. */
 const OPEN_RADIUS = 120, FETCH_RADIUS = 90;
 
-function PublicClusters({ root, target, pathKey, flyRequest, loading, errors, noteFor, onLoad, onFollow }: {
+function PublicClusters({ root, target, pathKey, flyRequest, loading, errors, noteFor, onLoad, onFollow, onPick }: {
   root: BrowseNode; target: BrowseNode; pathKey: string; flyRequest: number; loading: Set<string>; errors: Record<string, string>;
   noteFor: ExplorePublicActions["noteFor"]; onLoad: (node: BrowseNode, auto?: boolean) => void; onFollow: (ids: string[]) => void;
+  /** Opens the menu for a circle; `open` goes inside it. */
+  onPick: (node: BrowseNode, point: { x: number; y: number }, open: () => void) => void;
 }) {
   const [ref, size, element] = useSize<HTMLDivElement>();
   const circles = useMemo(() => packBrowse(root, colorOf), [root]);
@@ -302,10 +360,13 @@ function PublicClusters({ root, target, pathKey, flyRequest, loading, errors, no
     onFollow(ids);
   }, [camera, size, openIds, parentOf, onFollow]);
 
-  const pick = (circle: BrowseCircle) => {
+  const pick = (circle: BrowseCircle, point: { x: number; y: number }) => {
     if (dragged.current) return;
-    onLoad(circle.node);
-    fly(fitCircle(circle, size.width, size.height));
+    onPick(circle.node, point, () => { onLoad(circle.node); fly(fitCircle(circle, size.width, size.height)); });
+  };
+  const centre = (circle: BrowseCircle) => {
+    const box = element?.getBoundingClientRect();
+    return { x: (box?.left ?? 0) + circle.x * k + camera.x, y: (box?.top ?? 0) + circle.y * k + camera.y };
   };
   return <div className="explore-clusters" ref={ref} {...handlers}>
     <svg width={size.width} height={size.height} role="group" aria-label="Clusters of topics">
@@ -321,7 +382,8 @@ function PublicClusters({ root, target, pathKey, flyRequest, loading, errors, no
         return <g key={circle.key} className={`explore-cluster${open ? " is-open" : ""}${node.kind === "topic" ? " is-ai" : ""}${busy ? " is-loading" : ""}`}
           style={{ "--section": circle.color } as CSSProperties} role="button" tabIndex={0}
           aria-label={`${node.label}${node.children ? `, ${node.children.length} inside` : ""}${open ? "" : ". Open"}`}
-          onClick={() => pick(circle)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pick(circle); } }}>
+          onClick={(event) => pick(circle, { x: event.clientX, y: event.clientY })}
+          onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pick(circle, centre(circle)); } }}>
           <circle cx={x} cy={y} r={r}>{errors[circle.id] ? <title>{errors[circle.id]}</title> : null}</circle>
           {mine && r > 10 ? <circle className="explore-cluster-mine" cx={x + r * 0.7} cy={y - r * 0.7} r={Math.min(7, Math.max(3, r * 0.12))}><title>In your notes</title></circle> : null}
           {open ? <text className="explore-cluster-heading" x={x} y={y - r + Math.min(22, r * 0.12) + 6} textAnchor="middle" style={{ fontSize: 14 }}>{node.label}</text>

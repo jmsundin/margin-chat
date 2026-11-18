@@ -139,3 +139,27 @@
   .explore-library.is-public.has-reader > .topic-explorer-pane { position: absolute; inset: 0; width: auto; z-index: 2; }
 }
 @media (prefers-reduced-motion: reduce) { .explore-public-spinner { animation: none; } }
+
+/* The menu by a tapped place: what you can do with it, in one small card. */
+.explore-node-menu { position: absolute; z-index: 40; width: 264px; max-width: calc(100% - 16px); display: flex; flex-direction: column; padding: 6px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--panel-strong, var(--panel-bg)); box-shadow: 0 12px 32px rgb(0 0 0 / 0.18); }
+.explore-node-menu-head { display: flex; flex-direction: column; gap: 3px; padding: 6px 8px 8px; margin-bottom: 4px; border-bottom: 1px solid var(--line); }
+.explore-node-menu-head strong { font-size: 14px; line-height: 1.25; }
+.explore-node-menu-head span { color: var(--muted); font-size: 12.5px; line-height: 1.4; }
+.explore-node-menu button { display: block; width: 100%; padding: 7px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--ink); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; }
+.explore-node-menu button:hover, .explore-node-menu button:focus-visible { background: var(--accent-soft); outline: none; }
+.explore-node-menu button.is-mine { color: var(--sage); font-weight: 600; }
+.explore-node-menu button:disabled { opacity: 0.6; cursor: default; }
+.explore-node-menu .explore-public-status { margin: 4px 8px; }
+
+/* The Layout pill floats at the top left, in the breadcrumb row or over Canvas, with no row of its own. */
+.explore-library-crumbs > .explore-layout-menu { flex: 0 0 auto; margin-right: 4px; }
+.explore-layout-float { position: absolute; top: 8px; left: 10px; z-index: 31; }
+
+/* Topic details beside Explore. */
+.topic-details-body p { margin: 12px 0; line-height: 1.55; font-size: 14.5px; }
+.topic-details-by { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
+.topic-details-error { padding: 12px 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
+.topic-details-error button, .topic-details-actions button { padding: 5px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--button-surface); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }
+.topic-details-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.topic-details-actions button.is-primary { border-color: var(--sage); background: var(--sage); color: var(--bg); font-weight: 600; }
+.topic-details-actions [role="alert"] { color: var(--danger, #c0392b); font-size: 12.5px; }

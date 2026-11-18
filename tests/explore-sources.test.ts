@@ -91,3 +91,13 @@ describe("the walk", () => {
     expect(circles.length).toBeLessThan(5);
   });
 });
+
+describe("Topic details", () => {
+  test("a write-up saved as a note keeps its Wikipedia source when it has one", async () => {
+    const { topicDetailsNote, topicDetailsQuestion } = await import("../client/src/components/TopicDetailsPane");
+    expect(topicDetailsNote({ id: "a:Sleep", label: "Sleep", kind: "article", article: "Sleep", weight: 1 }, " Sleep restores the body. "))
+      .toBe("Sleep restores the body.\n\nSource: [Sleep on Wikipedia](https://en.wikipedia.org/wiki/Sleep)\n");
+    expect(topicDetailsNote({ id: "t:x", label: "X", kind: "topic", weight: 1 }, "About X")).toBe("About X\n");
+    expect(topicDetailsQuestion("Rapamycin")).toContain("\"Rapamycin\"");
+  });
+});

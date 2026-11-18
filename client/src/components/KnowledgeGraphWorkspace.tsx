@@ -29,6 +29,7 @@ import { readExploreSource, writeExploreSource, type BrowseNode, type ExploreSou
 import ExploreSourceMenu from "./ExploreSourceMenu";
 import ExplorePublic from "./ExplorePublic";
 import WikipediaPane from "./WikipediaPane";
+import TopicDetailsPane, { topicDetailsQuestion } from "./TopicDetailsPane";
 import { isPassageNote, type PassageNote } from "../lib/wikipediaReader";
 import { explorerStorageKey, addRoot, aiSubtopicQuestion } from "../lib/topicExplorer";
 import { emptyExploration, topicItemId } from "../lib/mapExploration";
@@ -247,7 +248,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     return () => window.removeEventListener("storage", changed);
   }, []);
   function chooseExploreSource(source: ExploreSource) {
-    setExploreSourceState(source); writeExploreSource(source); setReaderTitle(null);
+    setExploreSourceState(source); writeExploreSource(source); setSidePane(null);
     // Public sources open in Tiles or Clusters; the free Canvas is your own map.
     if (source.kind !== "notes" && exploreLayout === "canvas") chooseExploreLayout("tiles");
   }
@@ -262,8 +263,9 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     }
     setExploreLayoutState(layout); writeExploreLayout(layout);
   }
-  // Reading a Wikipedia article beside Tiles or Clusters.
-  const [readerTitle, setReaderTitle] = useState<string | null>(null);
+  // Beside Tiles or Clusters: a Wikipedia article, Topic details, or a note you made from a topic.
+  const [sidePane, setSidePane] = useState<{ kind: "wikipedia"; title: string } | { kind: "details"; node: BrowseNode } | { kind: "document"; id: string } | null>(null);
+  const setReaderTitle = (title: string | null) => setSidePane(title ? { kind: "wikipedia", title } : null);
   const passagesKey = `${explorerStorageKey(personalProps.workspaceKey ?? "workspace")}:passages`;
   const [passageNotes, setPassageNotesState] = useState<PassageNote[]>(() => {
     try { const value = JSON.parse(window.localStorage.getItem(passagesKey) ?? "[]"); return Array.isArray(value) ? value.filter(isPassageNote) : []; }
@@ -303,6 +305,21 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
       return { error: error instanceof Error ? error.message : "That note could not be made. Try again." };
     }
   }
+  const askDetails = useMemo(() => publicMapAccount?.canAsk ? async (label: string, signal: AbortSignal) => {
+    const answer = await askAboutNote({ userId: publicMapAccount.userId, topic: { label: label.slice(0, 200), description: "" }, noteContent: "",
+      question: topicDetailsQuestion(label), options: publicMapAccount.aiOptions, signal });
+    return answer.answer;
+  } : undefined, [publicMapAccount]);
+  /** Makes a note in the vault and opens it beside Explore; returns why it could not. */
+  function notePublic(title: string, content: string): string | null {
+    if (!onCreateExploreDocument) return "Notes can't be made here.";
+    const id = onCreateExploreDocument({ title: title.slice(0, 200), content });
+    if (!id) return "That note could not be made. Try again.";
+    setSidePane({ kind: "document", id });
+    return null;
+  }
+  const newPublicNote = (node: BrowseNode) => notePublic(node.label,
+    node.article ? `Source: [${node.article} on Wikipedia](${wikipediaArticleUrl(node.article)})\n\n` : "");
   function roadmapFor(node: BrowseNode): string | null {
     if (!pathActions) return "Roadmaps are off. Turn them on in Settings → Features.";
     const goal = node.article ? `Learn ${node.label}: ${wikipediaArticleUrl(node.article)}` : `Learn ${node.label}`;
@@ -645,15 +662,23 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         // Picking notes for a roadmap, or a roadmap lit on the map, needs the map itself.
         exploreLayout={picking || activePath ? "canvas" : exploreLayout} onExploreLayoutChange={picking || activePath ? undefined : chooseExploreLayout}
         exploreSourceMenu={renderSourceMenu}
-        renderPublicExplore={exploreSource.kind === "notes" ? undefined : (layout) => <ExplorePublic source={exploreSource} layout={layout} sourceMenu={renderSourceMenu}
+        renderPublicExplore={exploreSource.kind === "notes" ? undefined : (layout, leading) => <ExplorePublic source={exploreSource} layout={layout} leading={leading} sourceMenu={renderSourceMenu}
           onPlace={(place) => { publicPlace.current = place; }}
           actions={{ ask: askSubtopics, noteFor, onOpenNote: (id) => personalProps.onOpenConversation(id), onRead: setReaderTitle, onKeep: keepPublic,
+            onDetails: (node) => setSidePane({ kind: "details", node }), onNewNote: newPublicNote,
             ...(pathActions ? { onRoadmap: roadmapFor } : {}) }}
-          reader={readerTitle ? <WikipediaPane title={readerTitle} account={publicMapAccount} notes={passageNotes} onNotesChange={setPassageNotes}
-            onNavigate={setReaderTitle} onClose={() => setReaderTitle(null)}
+          reader={sidePane?.kind === "wikipedia" ? <WikipediaPane title={sidePane.title} account={publicMapAccount} notes={passageNotes} onNotesChange={setPassageNotes}
+            onNavigate={setReaderTitle} onClose={() => setSidePane(null)}
             onCreateDocument={(title, content) => Boolean(onCreateExploreDocument?.({ title, content }))}
             onExplore={(text) => { if (publicMapAccount?.canAsk) chooseExploreSource({ kind: "ai", topic: text.replace(/\s+/gu, " ").trim().slice(0, 200) }); }}
-            onAddTopics={(_answer, article) => { setExploringFrom(article); setExploring(true); }} /> : undefined} />}
+            onAddTopics={(_answer, article) => { setExploringFrom(article); setExploring(true); }} />
+            : sidePane?.kind === "details" ? <TopicDetailsPane node={sidePane.node} ask={askDetails} onSave={notePublic} onRead={setReaderTitle} onClose={() => setSidePane(null)} />
+            : sidePane?.kind === "document" ? <aside className="topic-explorer-pane is-document" aria-label="Note beside Explore">
+              {conversations[sidePane.id] && personalProps.renderDockedConversation ? <div className="conversation-graph-dock-body">
+                {personalProps.renderDockedConversation(sidePane.id, undefined, { leading: null, pinned: false, onTogglePin: () => undefined,
+                  onClose: () => setSidePane(null), onOpenDocument: (id) => setSidePane({ kind: "document", id }) })}
+              </div> : <p className="topic-explorer-pane-message" role="status">Opening your note…</p>}
+            </aside> : undefined} />}
         // Roadmaps are reached from Tile view's Roadmaps tab and Learn; Learn's header names the roadmap on screen, as a menu.
         menuItems={menuActions} menuFooter={moreFeatures} scopeRequest={scopeRequest}
         focusRequest={personalProps.focusRequest ?? personalFocus}
