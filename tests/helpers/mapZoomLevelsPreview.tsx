@@ -1,4 +1,6 @@
 import { createRoot } from "react-dom/client";
+import { useState } from "react";
+import type { ExploreLayout } from "../../client/src/lib/exploreLibrary";
 import ConversationGraphView from "../../client/src/components/ConversationGraphView";
 import { createMainConversation } from "../../client/src/initialState";
 import type { Conversation } from "../../client/src/types";
@@ -90,10 +92,15 @@ window.fetch = (input, init) => {
   }
   return realFetch(input, init);
 };
-createRoot(document.getElementById("root")!).render(<main style={{ height: "100dvh", display: "flex", background: "var(--bg)" }}>
-  <ConversationGraphView workspaceKey={`map-zoom-levels-${copies}-${ai ? "ai" : "plain"}`} activeConversationId="d0" conversations={conversations}
+const startLayout = (["tiles", "clusters", "canvas"] as const).find((layout) => layout === params.get("layout"));
+function Preview() {
+  const [layout, setLayout] = useState<ExploreLayout | undefined>(startLayout);
+  return <main style={{ height: "100dvh", display: "flex", background: "var(--bg)" }}>
+  <ConversationGraphView exploreLayout={layout} onExploreLayoutChange={layout ? setLayout : undefined} workspaceKey={`map-zoom-levels-${copies}-${ai ? "ai" : "plain"}`} activeConversationId="d0" conversations={conversations}
     groups={{}} isVisible jev={{ userId: `zoom-preview-${copies}-${ai ? "ai" : "plain"}`, enabled: true, ready: true }}
     onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => "d0"} onOpenConversation={() => {}}
     onToggleGroup={() => {}} onUpdateGraphNodeLayouts={() => {}} renderDockedConversation={(id) => <p style={{ padding: 16 }}>{conversations[id].title}</p>}
     renderExpandedConversation={(id) => <p>{conversations[id].title}</p>} />
-</main>);
+</main>;
+}
+createRoot(document.getElementById("root")!).render(<Preview />);
