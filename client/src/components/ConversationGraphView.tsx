@@ -1322,7 +1322,10 @@ export default function ConversationGraphView({
   const setCanvasGrouping = useCallback((next: CanvasGrouping) => { setCanvasGroupingState(next); writeStoredJson(workspaceKey && `${CANVAS_GROUPING_KEY}:${workspaceKey}`, next); }, [workspaceKey]);
   // Topics on the Map are the clusters found from links and meaning, drawn as boxes.
   // Tiles and Clusters show the map's topics as a library, whatever the Map groups its boxes by.
-  const libraryActive = !!exploreLayout && exploreLayout !== "canvas" && !scopeHidden && navigation.state.contentLens !== "concepts";
+  // The map around one document (beside the page, or Note/Around) has no themes or topic boxes to file into
+  // sections, so the library came up empty ("0 notes") over the map and hid its scope switch: it stays the map.
+  const libraryActive = !!exploreLayout && exploreLayout !== "canvas" && !scopeHidden && navigation.state.contentLens !== "concepts"
+    && scope.kind !== "focus";
   const topicsGrouping = canvasGrouping === "topics" || libraryActive;
   const canvasTopics = isCanvasMode && navigation.state.contentLens !== "concepts" && topicsGrouping;
   const findsTopics = isClustersMode || canvasTopics;
@@ -1922,7 +1925,10 @@ export default function ConversationGraphView({
   }, [canvasGroupBoxes, levelLabels.labels, conversations]);
   // Explore's library: the same themes, topics and blocks, as sections inside sections.
   const layoutMenu = exploreLayout && onExploreLayoutChange && !scopeHidden
-    ? <ExploreLayoutMenu value={exploreLayout} onChange={onExploreLayoutChange} publicSource={Boolean(renderPublicExplore)} /> : null;
+    // Around one document the map is drawn as the Canvas whatever was picked; picking Tiles or Clusters there
+    // widens it to All, where the library has sections to show.
+    ? <ExploreLayoutMenu value={scope.kind === "focus" ? "canvas" : exploreLayout} publicSource={Boolean(renderPublicExplore)}
+      onChange={(layout) => { if (layout !== "canvas" && scope.kind === "focus") chooseScope("all"); onExploreLayoutChange(layout); }} /> : null;
   const libraryRoot = useMemo(() => libraryActive ? buildLibrary({ themes: canvasThemeBoxes, boxes: canvasGroupBoxes, blockNames, summaries: levelSummaries,
     titleOf: (id) => conversations[id]?.title?.trim() || "Untitled" }) : null,
   [libraryActive, canvasThemeBoxes, canvasGroupBoxes, blockNames, levelSummaries, conversations]);
