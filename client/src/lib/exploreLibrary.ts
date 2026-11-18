@@ -189,6 +189,29 @@ export function squarify(values: number[], width: number, height: number, gap = 
   }).sort((a, b) => a.index - b.index);
 }
 
+/** Below this width rooms stack as full-width tiles (a phone), instead of a treemap of slivers. */
+export const STACK_ROOMS_BELOW = 560;
+
+/**
+ * Lays rooms out for the space they get: a treemap when there is room, or on a phone a list of
+ * full-width tiles, biggest first, taller for bigger rooms, that scrolls. `height` is how tall
+ * the whole layout is (for a stack, more than the space it scrolls in).
+ */
+export function layRooms(values: number[], width: number, height: number, gap = 12): { rects: TileRect[]; height: number; stacked: boolean } {
+  if (width >= STACK_ROOMS_BELOW) return { rects: squarify(values, width, height, gap), height, stacked: false };
+  if (!values.length || width <= 0) return { rects: [], height: 0, stacked: true };
+  const max = Math.max(1, ...values);
+  const order = values.map((value, index) => ({ index, value })).sort((a, b) => b.value - a.value);
+  const rects: TileRect[] = [];
+  let y = 0;
+  for (const item of order) {
+    const tall = Math.round(76 + 84 * Math.sqrt(Math.max(0, item.value) / max));
+    rects.push({ index: item.index, x: 0, y, width, height: tall });
+    y += tall + gap;
+  }
+  return { rects: rects.sort((a, b) => a.index - b.index), height: Math.max(0, y - gap), stacked: true };
+}
+
 /* ---------- Clusters: circles inside circles ---------- */
 
 export interface PackedCircle {

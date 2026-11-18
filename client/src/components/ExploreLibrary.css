@@ -150,6 +150,18 @@
 .explore-node-menu button.is-mine { color: var(--sage); font-weight: 600; }
 .explore-node-menu button:disabled { opacity: 0.6; cursor: default; }
 .explore-node-menu .explore-public-status { margin: 4px 8px; }
+/* Phone: the menu is a sheet over everything (the document sheet too), with a dimmed screen behind it. */
+.explore-node-sheet { position: fixed; inset: 0; z-index: var(--z-popover); display: flex; align-items: flex-end; background: rgb(0 0 0 / 0.32); }
+.explore-node-menu.is-sheet { position: relative; width: 100%; max-width: none; max-height: min(80vh, 560px); overflow-y: auto; overscroll-behavior: contain;
+  padding: 8px 10px calc(10px + env(safe-area-inset-bottom, 0px)); border-width: 1px 0 0; border-radius: 16px 16px 0 0; box-shadow: 0 -10px 32px rgb(0 0 0 / 0.22); }
+.explore-node-menu.is-sheet button { padding: 12px 10px; font-size: 15.5px; }
+.explore-node-menu.is-sheet .explore-node-menu-head strong { font-size: 16px; }
+.explore-node-menu.is-sheet .explore-node-menu-head span { font-size: 13.5px; }
+.explore-node-menu.is-sheet .explore-node-menu-cancel { margin-top: 4px; border-top: 1px solid var(--line); border-radius: 0; text-align: center; color: var(--muted); }
+
+/* Phone: rooms stack as full-width tiles that scroll. */
+.explore-tiles.is-stacked { overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.explore-tiles-length { width: 1px; pointer-events: none; }
 
 /* The Layout pill floats at the top left, in the breadcrumb row or over Canvas, with no row of its own. */
 .explore-library-crumbs > .explore-layout-menu { flex: 0 0 auto; margin-right: 4px; }

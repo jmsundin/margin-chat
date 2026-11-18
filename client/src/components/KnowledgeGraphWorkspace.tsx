@@ -315,7 +315,9 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     if (!onCreateExploreDocument) return "Notes can't be made here.";
     const id = onCreateExploreDocument({ title: title.slice(0, 200), content });
     if (!id) return "That note could not be made. Try again.";
-    setSidePane({ kind: "document", id });
+    // On a phone the new note already opens in the document sheet under the map; a second copy
+    // beside Explore would cover the map with the same note.
+    if (phoneScreen()) setSidePane(null); else setSidePane({ kind: "document", id });
     return null;
   }
   const newPublicNote = (node: BrowseNode) => notePublic(node.label,
@@ -775,6 +777,11 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         onPreviewConnections={(noteId) => { setSourcesFor(null); showAround(noteId); }} /> : null}
     </div>
   </section>;
+}
+
+/** Phone-sized screens, where Explore sits above the document sheet. */
+function phoneScreen() {
+  return typeof window !== "undefined" && window.matchMedia?.("(max-width: 760px)").matches === true;
 }
 
 /** A phone-width search box cuts the long placeholder off mid-word. */
