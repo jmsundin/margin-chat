@@ -3,6 +3,7 @@ import { VAULT_TOOL_DEFINITIONS, createVaultTools } from "../chat/agent/vaultToo
 import { HttpError } from "../lib/errors.mjs";
 import { WRITE_TOOL_DEFINITIONS, agentActor, createWriteTools } from "./writeTools.mjs";
 import { BLAME_TOOL_DEFINITION, UPDATE_TOOL_DEFINITION, createAuthorshipTools, matchesAuthorFilter } from "./authorshipTools.mjs";
+import { ROADMAP_READ_DEFINITION, ROADMAP_TOOL_NAMES, ROADMAP_WRITE_DEFINITIONS, createRoadmapTools } from "./roadmapTools.mjs";
 import { PAGE_EDIT_TOOL_DEFINITION, PAGE_READ_TOOL_DEFINITION, PAGE_TOOL_NAMES, createPageTools } from "./pageTools.mjs";
 import { vaultQuotaFor } from "../vault/index.mjs";
 
@@ -24,7 +25,7 @@ const SERVER_INFO = { name: "margin-chat", title: "Margin Chat", version: "1.0.0
 const INSTRUCTIONS = [
   "Margin Chat holds the user's documents, notes, chats, PDFs and the map of how they connect.",
   "Use search_vault to find material by words or meaning, find_document to see which document a description is about, read_document to read one by its document_id,",
-  "and list_related to see its parent, children, typed relations and links.",
+  "and list_related to see its parent, children, typed relations and links. read_roadmap shows a study roadmap's stages, steps and progress.",
   "Documents the user hid from AI are never included.",
 ].join(" ");
 const READ_ONLY_NOTE = "This connection is read-only.";
@@ -32,6 +33,7 @@ const WRITE_NOTE = [
   "With create_document and append_to_document you can add to the vault. Search before creating, so you don't duplicate a document that already exists.",
   "With update_document you can edit lines the user didn't write (text by AI, other apps or imports); the user's own lines can't be changed, moved or deleted.",
   "Read with include_authorship (or get_document_blame) first, change only lines not by the user, and send the revision and line hashes you read.",
+  "To turn a course, certification path or syllabus you have read into a study roadmap, send its outline to create_roadmap; read_roadmap and add_to_roadmap read and extend one.",
   "An HTML page the user plays in the vault (a game or tool) and the scripts beside it are code: read them with read_page_file and change them in place with edit_page_file, which keeps the version it replaces.",
 ].join(" ");
 const AUTHOR_FILTERS = ["any", "mine", "not-mine", "ai", "agent", "import"];
@@ -83,9 +85,10 @@ export const MCP_TOOLS = [
   })),
   ...CHATGPT_TOOLS,
   BLAME_TOOL_DEFINITION,
+  ROADMAP_READ_DEFINITION,
 ];
 const TOOL_NAMES = new Set(MCP_TOOLS.map((tool) => tool.name));
-const ALL_WRITE_TOOLS = [...WRITE_TOOL_DEFINITIONS, UPDATE_TOOL_DEFINITION, PAGE_READ_TOOL_DEFINITION, PAGE_EDIT_TOOL_DEFINITION];
+const ALL_WRITE_TOOLS = [...WRITE_TOOL_DEFINITIONS, ...ROADMAP_WRITE_DEFINITIONS, UPDATE_TOOL_DEFINITION, PAGE_READ_TOOL_DEFINITION, PAGE_EDIT_TOOL_DEFINITION];
 const WRITE_TOOL_NAMES = new Set(ALL_WRITE_TOOLS.map((tool) => tool.name));
 
 /** The tools a token may use: everyone reads; a write token can also add and update. */
@@ -136,6 +139,9 @@ export function createMcpService({ database, vaultService, passageService, creat
         console.error("MCP authorship tool failed", error);
         return { ok: false, error: name === "update_document" ? "The vault couldn't be saved just now. Nothing was changed." : "The vault couldn't be read just now." };
       }
+    }
+    if (ROADMAP_TOOL_NAMES.has(name)) {
+      return createRoadmapTools({ userId: user.id, vault: vaultService, agentName: user.token?.name, agentId: user.token?.id, quotaBytes: vaultQuotaFor(user) }).run(name, args);
     }
     if (PAGE_TOOL_NAMES.has(name)) return createPageTools({ userId: user.id, vault: vaultService, database, quotaBytes: vaultQuotaFor(user) }).run(name, args);
     if (writing) return createWriteTools({ userId: user.id, vault: vaultService, agentName: user.token?.name, agentId: user.token?.id, quotaBytes: vaultQuotaFor(user) }).run(name, args);
