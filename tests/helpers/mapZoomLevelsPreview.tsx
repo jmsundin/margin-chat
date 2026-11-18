@@ -1,6 +1,9 @@
 import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import type { ExploreLayout } from "../../client/src/lib/exploreLibrary";
+import { parseExploreSource, type ExploreSource } from "../../client/src/lib/exploreSources";
+import ExploreSourceMenu from "../../client/src/components/ExploreSourceMenu";
+import ExplorePublic from "../../client/src/components/ExplorePublic";
 import ConversationGraphView from "../../client/src/components/ConversationGraphView";
 import { createMainConversation } from "../../client/src/initialState";
 import type { Conversation } from "../../client/src/types";
@@ -93,10 +96,21 @@ window.fetch = (input, init) => {
   return realFetch(input, init);
 };
 const startLayout = (["tiles", "clusters", "canvas"] as const).find((layout) => layout === params.get("layout"));
+// ?source=wikipedia or ?source=ai:Longevity starts Explore from a public source. AI answers are made up here.
+const fakeTopics = (label: string) => ["Causes", "Treatments", "Measuring it", "History", "Open questions"].map((part, at) => ({
+  id: `Q${9000 + at + label.length * 10}`, aliases: [], label: `${label}: ${part}`, description: `What is known about ${part.toLowerCase()} of ${label}.`,
+  wikidataUrl: "https://www.wikidata.org/wiki/Q1", retrievedAt: "2026-11-18T00:00:00.000Z" }));
 function Preview() {
   const [layout, setLayout] = useState<ExploreLayout | undefined>(startLayout);
+  const [source, setSource] = useState<ExploreSource>(() => parseExploreSource(params.get("source")));
+  const menu = (onTop: () => void) => <ExploreSourceMenu value={source} canAsk onChange={setSource} onTop={onTop} />;
   return <main style={{ height: "100dvh", display: "flex", background: "var(--bg)" }}>
-  <ConversationGraphView exploreLayout={layout} onExploreLayoutChange={layout ? setLayout : undefined} workspaceKey={`map-zoom-levels-${copies}-${ai ? "ai" : "plain"}`} activeConversationId="d0" conversations={conversations}
+  <ConversationGraphView exploreLayout={layout} onExploreLayoutChange={layout ? setLayout : undefined} exploreSourceMenu={menu}
+    renderPublicExplore={source.kind === "notes" ? undefined : (shown) => <ExplorePublic source={source} layout={shown} sourceMenu={menu}
+      actions={{ ask: async (label) => { await new Promise((done) => setTimeout(done, 300)); return fakeTopics(label); },
+        noteFor: (label) => /^(health|senolytic|longevity)$/i.test(label) ? "d0" : null, onOpenNote: () => {}, onRead: () => {},
+        onKeep: async () => ({ id: "d0" }), onRoadmap: () => null }} />}
+    workspaceKey={`map-zoom-levels-${copies}-${ai ? "ai" : "plain"}`} activeConversationId="d0" conversations={conversations}
     groups={{}} isVisible jev={{ userId: `zoom-preview-${copies}-${ai ? "ai" : "plain"}`, enabled: true, ready: true }}
     onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => "d0"} onOpenConversation={() => {}}
     onToggleGroup={() => {}} onUpdateGraphNodeLayouts={() => {}} renderDockedConversation={(id) => <p style={{ padding: 16 }}>{conversations[id].title}</p>}
