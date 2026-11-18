@@ -7,6 +7,8 @@ import type { TopicExpansion } from "../../client/src/lib/topicExpansion";
 
 const browser = new Window({ url: "http://topic-expansion-interactions.test/" });
 startMapsInGroupedView(browser.localStorage as unknown as Storage);
+// These checks drive notes on the free Map (Canvas); Explore now opens on Tiles by default.
+browser.localStorage.setItem("margin-chat:explore-layout", "canvas");
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "Element", "Node", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "ResizeObserver", "DOMRect"]) {
   Object.defineProperty(globalThis, name, { configurable: true, value: name === "window" ? browser : (browser as any)[name] });
 }
