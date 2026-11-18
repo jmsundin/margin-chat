@@ -114,7 +114,7 @@ function Preview() {
         onDetails: setDetails, onNewNote: () => null,
         onKeep: async () => ({ id: "d0" }), onRoadmap: () => null }}
       reader={details ? <TopicDetailsPane node={details} onClose={() => setDetails(null)} onSave={() => null}
-        ask={async (label) => { await new Promise((done) => setTimeout(done, 300)); return `${label} is a made-up write-up for this preview.\n\nA second paragraph about its main ideas.`; }} /> : undefined} />}
+        ask={async (label) => { await new Promise((done) => setTimeout(done, 300)); return `**${label}** is a made-up write-up for this preview.\n\n## Main ideas\n\n- First idea, with *emphasis*\n- Second idea\n\nA closing paragraph.`; }} /> : undefined} />}
     workspaceKey={`map-zoom-levels-${copies}-${ai ? "ai" : "plain"}`} activeConversationId="d0" conversations={conversations}
     groups={{}} isVisible jev={{ userId: `zoom-preview-${copies}-${ai ? "ai" : "plain"}`, enabled: true, ready: true }}
     onActivateConversation={() => {}} onAssignGroup={() => {}} onCreateChildConversation={() => "d0"} onOpenConversation={() => {}}

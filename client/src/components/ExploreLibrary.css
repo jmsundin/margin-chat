@@ -156,7 +156,10 @@
 .explore-layout-float { position: absolute; top: 8px; left: 10px; z-index: 31; }
 
 /* Topic details beside Explore. */
-.topic-details-body p { margin: 12px 0; line-height: 1.55; font-size: 14.5px; }
+.topic-details-body p, .topic-details-body li { margin: 12px 0; line-height: 1.55; font-size: 14.5px; }
+.topic-details-body li { margin: 4px 0; }
+.topic-details-body ul, .topic-details-body ol { margin: 8px 0; padding-left: 22px; }
+.topic-details-body h1, .topic-details-body h2, .topic-details-body h3, .topic-details-body h4 { margin: 18px 0 6px; font-size: 15.5px; line-height: 1.3; }
 .topic-details-by { display: block; margin-top: 8px; color: var(--muted); font-size: 12px; }
 .topic-details-error { padding: 12px 0; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
 .topic-details-error button, .topic-details-actions button { padding: 5px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--button-surface); color: var(--ink); font: inherit; font-size: 13px; cursor: pointer; }

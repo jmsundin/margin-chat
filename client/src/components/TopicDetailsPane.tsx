@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { renderMarkdownToHtml } from "../lib/markdown";
 import type { BrowseNode } from "../lib/exploreSources";
 import { getWikipediaSummary, wikipediaArticleUrl } from "../lib/wikipedia";
 import "./TopicExplorer.css";
@@ -44,6 +45,7 @@ export default function TopicDetailsPane({ node, ask, onSave, onRead, onClose }:
   }, [node.id, node.label, node.article, ask, attempt]);
 
   const text = state && "text" in state ? state.text : "";
+  const html = useMemo(() => text ? renderMarkdownToHtml(text) : "", [text]);
   return <aside className="topic-explorer-pane is-details" aria-label={`Topic details: ${node.label}`}>
     <header className="topic-explorer-pane-header">
       <span className="topic-explorer-pane-kind" aria-hidden="true">{ask ? "✦" : "W"}</span>
@@ -54,7 +56,8 @@ export default function TopicDetailsPane({ node, ask, onSave, onRead, onClose }:
       {!state ? <p className="topic-explorer-pane-message" role="status">{ask ? `AI is writing about ${node.label}…` : `Reading about ${node.label}…`}</p>
         : "error" in state ? <div className="topic-details-error"><p role="alert">{state.error}</p>{ask ? <button type="button" onClick={() => setAttempt((count) => count + 1)}>Try again</button> : null}</div>
         : <>
-          {text.split(/\n{2,}/u).map((paragraph, index) => <p key={index}>{paragraph.trim()}</p>)}
+          {/* AI answers in Markdown (bold, lists, headings); it is drawn, not shown as symbols. */}
+          <div className="topic-details-text" dangerouslySetInnerHTML={{ __html: html }} />
           <small className="topic-details-by">{state.by === "ai" ? "Written by AI. Check what matters to you." : "From Wikipedia's summary."}</small>
         </>}
     </div>
