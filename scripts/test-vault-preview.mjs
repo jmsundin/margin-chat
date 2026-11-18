@@ -8,6 +8,9 @@
  * or external network are made. Optional { action: "controls", chat: true }
  * serves deterministic synthetic document replies; chat otherwise stays unavailable.
  * With { web: true } as well, a roadmap built from a link reads that page from the network.
+ * { action: "library", count: 10000 } adds a large made-up vault (tests/helpers/libraryVault.mjs)
+ * in themed folders with links; from then on the Map groups notes by made-up meaning vectors and
+ * names its groups from that vault's own themes, topics and blocks, with no model calls.
  */
 import { createServer } from "node:http";
 import { mkdtemp, readFile, stat } from "node:fs/promises";
@@ -27,6 +30,8 @@ import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite-pgvector";
 import { loadMigrations, migrateDatabase } from "../server/db/migrations.mjs";
 import * as languageCourseRepository from "../server/db/languageCourseRepository.mjs";
+import { buildLibraryVault, fixtureEmbedding } from "../tests/helpers/libraryVault.mjs";
+import { parseGeneratedCategories, parseGeneratedDocumentCategories, parseGeneratedMapLevels } from "../server/chat/title.mjs";
 import germanStories from "../packages/workspace-contracts/miniStories/de.mjs";
 import { readStoryLines } from "../packages/workspace-contracts/languageCourses.mjs";
 
@@ -399,6 +404,57 @@ const handler = createApiHandler({
   runtimeConfig: { host: "127.0.0.1", port: 0 },
 });
 
+// The large test library, once added: notes by title, for made-up map names and meaning vectors.
+const library = { byTitle: new Map(), vectors: new Map() };
+async function seedLibrary(userId, count) {
+  const notes = buildLibraryVault(count);
+  for (const note of notes) library.byTitle.set(note.title.toLowerCase(), note);
+  const current = (await vaultService.snapshot(userId)).manifest;
+  const fresh = notes.filter((note) => !current.files[note.path]);
+  for (let at = 0; at < fresh.length; at += 500) {
+    await vaultService.commit(userId, fresh.slice(at, at + 500).map((note) => ({ path: note.path, content: note.content, baseRevision: null })));
+  }
+  return { added: fresh.length, total: notes.length };
+}
+/** Meaning vectors for every document the app has sent us, from their words; as the real route returns them. */
+function libraryTopics(userId) {
+  const conversations = Object.values(projection.get(userId)?.state?.conversations ?? {});
+  const embeddings = conversations.map((conversation) => {
+    const text = `${conversation.title ?? ""}\n${(conversation.messages ?? []).map((message) => message.content ?? "").join("\n")}`.slice(0, 4000);
+    let embedding = library.vectors.get(text);
+    if (!embedding) {
+      const values = fixtureEmbedding(text);
+      const largest = values.reduce((most, value) => Math.max(most, Math.abs(value)), 0) || 1;
+      embedding = Buffer.from(Int8Array.from(values, (value) => Math.round((value * 127) / largest)).buffer).toString("base64");
+      library.vectors.set(text, embedding);
+    }
+    return { id: conversation.id, embedding };
+  });
+  return { model: "fixture-words", dimensions: 512, embeddings, neighbours: [], cursor: null, pending: 0, placements: [] };
+}
+/** Names a Map group the way a model would, from the library note its titles belong to. */
+function libraryNames(kind, prompt) {
+  const lines = String(prompt ?? "").split("\n");
+  const noteIn = (line) => line.split(/[;:,|]|\s[-–]\s/u).map((part) => library.byTitle.get(part.trim().toLowerCase())).find(Boolean);
+  const topics = new Map([...library.byTitle.values()].map((note) => [note.topic.toLowerCase(), note]));
+  const reply = lines.flatMap((line) => {
+    const code = /^\s*([CDTPB]\d+)\b/u.exec(line)?.[1];
+    if (!code) return [];
+    if (code.startsWith("T")) {
+      const note = line.replace(/^[^:]*:\s*/u, "").split(/[;,]/u).map((part) => topics.get(part.trim().toLowerCase())).find(Boolean) ?? noteIn(line);
+      return note ? [`${code}: ${note.theme} | Notes across ${note.theme.toLowerCase()}, from ${note.topic.toLowerCase()} onwards.`] : [];
+    }
+    const note = noteIn(line);
+    if (!note) return [];
+    if (code.startsWith("P")) return [`${code}: How ${note.topic.toLowerCase()} works, with ${note.block.toLowerCase()} and more.`];
+    if (code.startsWith("B")) return [`${code}: ${note.block}`];
+    return [`${code}: ${note.topic}`];
+  }).join("\n");
+  if (kind === "categories") return { categories: parseGeneratedCategories(reply) };
+  if (kind === "document-categories") return { assignments: parseGeneratedDocumentCategories(reply) };
+  return { levels: parseGeneratedMapLevels(reply) };
+}
+
 async function seed(userId) {
   const snapshot = await vaultService.snapshot(userId);
   if (snapshot.manifest.revision) return;
@@ -427,7 +483,10 @@ const server = createServer(async (request, response) => {
           for (const field of ["delayMs", "authDelayMs", "chatDelayMs"]) if (Number.isSafeInteger(body[field]) && body[field] >= 0 && body[field] <= 120000) controls[field] = body[field];
           if (typeof body.userId === "string" && /^preview-[a-z0-9_-]+$/u.test(body.userId)) controls.userId = body.userId;
           if (body.seed !== false) await seed(controls.userId);
-        } else return sendJson(response, 400, { error: "Use action: controls or remote" });
+        } else if (body.action === "library") {
+          const count = Number.isSafeInteger(body.count) ? Math.max(100, Math.min(50000, body.count)) : 10000;
+          return sendJson(response, 200, await seedLibrary(controls.userId, count));
+        } else return sendJson(response, 400, { error: "Use action: controls, remote or library" });
       }
       const manifest = (await vaultService.snapshot(controls.userId)).manifest;
       return sendJson(response, 200, { controls, user: user(), manifest, activeApiRequests, requestCounts, lastChatRequest, projection: projection.get(controls.userId) ?? null, directory }, { "Cache-Control": "no-store" });
@@ -445,6 +504,21 @@ const server = createServer(async (request, response) => {
           for await (const chunk of request) bytes += chunk.length;
           requestCounts.dictation = (requestCounts.dictation ?? 0) + 1;
           return sendJson(response, 200, { text: `Esta es la parte número ${requestCounts.dictation}. Tiene ${Math.round(bytes / 32000)} segundos.`, model: "synthetic-transcribe" });
+        }
+        if (library.byTitle.size && url.pathname === "/api/vault/topics" && request.method === "POST") {
+          await readJsonBody(request, 16 * 1024);
+          return sendJson(response, 200, libraryTopics(controls.userId));
+        }
+        if (library.byTitle.size && url.pathname === "/api/chat/title" && request.method === "POST") {
+          const body = await readJsonBody(request, 512 * 1024);
+          if (["categories", "document-categories", "map-levels"].includes(body.kind)) return sendJson(response, 200, libraryNames(body.kind, body.prompt));
+          // A cluster is named after the topic most of its known titles belong to.
+          const counts = new Map();
+          for (const line of String(body.prompt ?? "").split("\n")) for (const part of line.split(/[;:,|]|\s[-–]\s/u)) {
+            const note = library.byTitle.get(part.trim().toLowerCase());
+            if (note) counts.set(note.topic, (counts.get(note.topic) ?? 0) + 1);
+          }
+          return sendJson(response, 200, { title: [...counts].sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Mixed notes" });
         }
         if (url.pathname.startsWith("/api/chat")) {
           requestCounts.chat++;
