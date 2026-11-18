@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { fitCircle, useCirclesCamera, useSize } from "./exploreCamera";
 import { getDocumentPreview } from "../lib/documentSources";
-import { groupLinks, libraryPath, packLibrary, squarify, type ExploreLayout, type LibrarySection, type PackedCircle } from "../lib/exploreLibrary";
+import { groupLinks, layRooms, libraryPath, packLibrary, type ExploreLayout, type LibrarySection, type PackedCircle } from "../lib/exploreLibrary";
 import type { Conversation } from "../types";
 import "./ExploreLibrary.css";
 
@@ -64,8 +64,9 @@ function ExploreTiles({ section, siblings, titleOf, conversations, selectedId, o
   selectedId?: string | null; onEnter: (id: string) => void; onSibling: (id: string) => void; onOpenNote: (id: string) => void;
 }) {
   const [ref, size] = useSize<HTMLDivElement>();
-  const rects = useMemo(() => section.sections.length && size.width ? squarify(section.sections.map((child) => child.allIds.length), size.width, size.height, 12) : [],
+  const rooms = useMemo(() => section.sections.length && size.width ? layRooms(section.sections.map((child) => child.allIds.length), size.width, size.height, 12) : null,
     [section, size]);
+  const rects = rooms?.rects ?? [];
   if (!section.sections.length) {
     const others = siblings.filter((sibling) => sibling.id !== section.id);
     return <div className="explore-shelf">
@@ -82,7 +83,8 @@ function ExploreTiles({ section, siblings, titleOf, conversations, selectedId, o
       </div> : null}
     </div>;
   }
-  return <div className="explore-tiles" ref={ref}>
+  return <div className={`explore-tiles${rooms?.stacked ? " is-stacked" : ""}`} ref={ref}>
+    {rooms?.stacked ? <div className="explore-tiles-length" style={{ height: rooms.height }} aria-hidden="true" /> : null}
     {rects.map((rect) => {
       const child = section.sections[rect.index];
       const inner = child.sections;

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildLibrary, groupLinks, LIBRARY_ROOT_ID, libraryPath, packCircles, packLibrary, pathToNote, squarify, type LibraryInput } from "../client/src/lib/exploreLibrary";
+import { buildLibrary, groupLinks, LIBRARY_ROOT_ID, libraryPath, packCircles, packLibrary, layRooms, pathToNote, squarify, type LibraryInput } from "../client/src/lib/exploreLibrary";
 
 const notes = (prefix: string, count: number) => Array.from({ length: count }, (_, at) => `${prefix}${at}`);
 const input = (overrides: Partial<LibraryInput> = {}): LibraryInput => ({
@@ -101,5 +101,25 @@ describe("circles", () => {
     const standIn = (id: string) => (id.startsWith("s") ? "A" : id.startsWith("m") ? "B" : null);
     expect(groupLinks([{ sourceId: "s1", targetId: "m1" }, { sourceId: "m2", targetId: "s3" }, { sourceId: "s1", targetId: "s2" }, { sourceId: "s1", targetId: "x" }], standIn))
       .toEqual([{ a: "A", b: "B", count: 2 }]);
+  });
+});
+
+describe("layRooms", () => {
+  test("a wide space gets the treemap", () => {
+    const rooms = layRooms([40, 20, 10], 1000, 600, 12);
+    expect(rooms.stacked).toBe(false);
+    expect(rooms.rects).toEqual(squarify([40, 20, 10], 1000, 600, 12));
+  });
+  test("a phone gets full-width rooms, biggest first, that scroll", () => {
+    const rooms = layRooms([5, 40, 20], 360, 300, 10);
+    expect(rooms.stacked).toBe(true);
+    expect(rooms.rects.every((rect) => rect.x === 0 && rect.width === 360)).toBe(true);
+    const order = [...rooms.rects].sort((a, b) => a.y - b.y).map((rect) => rect.index);
+    expect(order).toEqual([1, 2, 0]);
+    expect(rooms.rects[1].height).toBeGreaterThan(rooms.rects[0].height);
+    expect(rooms.rects[0].height).toBeGreaterThanOrEqual(76);
+    const last = rooms.rects[0];
+    expect(rooms.height).toBe(last.y + last.height);
+    expect(rooms.height).toBeGreaterThan(300);
   });
 });

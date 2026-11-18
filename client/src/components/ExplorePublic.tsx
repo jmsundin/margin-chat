@@ -1,6 +1,7 @@
+import { createPortal } from "react-dom";
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { browsePath, canOpen, openWikipediaNode, packBrowse, sourceRoot, topicChildren, withChildren, type BrowseCircle, type BrowseNode, type ExploreSource } from "../lib/exploreSources";
-import { squarify } from "../lib/exploreLibrary";
+import { layRooms } from "../lib/exploreLibrary";
 import type { PublicTopic } from "../lib/publicKnowledge";
 import { getWikipediaSummary, wikipediaArticleUrl } from "../lib/wikipedia";
 import { fitCircle, useCirclesCamera, useSize } from "./exploreCamera";
@@ -173,6 +174,9 @@ function NodeMenu({ node, x, y, bounds, sourceKind, actions, onOpen, onClose }: 
     document.addEventListener("pointerdown", away, true);
     return () => document.removeEventListener("pointerdown", away, true);
   }, []);
+  // On a phone the menu is a sheet from the bottom of the screen, over the document sheet, so every
+  // choice fits under a thumb; beside a tap it would run under the document or off the screen.
+  const [sheet] = useState(phoneScreen);
   const width = 264, room = bounds?.clientWidth ?? 800, height = bounds?.clientHeight ?? 600;
   const left = Math.max(8, Math.min(x - 24, room - width - 8));
   const below = y + 300 < height || y < height / 2;
@@ -180,7 +184,7 @@ function NodeMenu({ node, x, y, bounds, sourceKind, actions, onOpen, onClose }: 
   const noteId = state.kept ?? actions.noteFor(node.label, node.topic);
   const about = node.summary ?? extract;
   const opensWithAi = sourceKind === "ai" || node.kind === "topic";
-  return <div ref={ref} className="explore-node-menu" role="menu" aria-label={node.label} style={style}
+  const menu = <div ref={ref} className={`explore-node-menu${sheet ? " is-sheet" : ""}`} role="menu" aria-label={node.label} style={sheet ? undefined : style}
     onKeyDown={(event) => {
       if (event.key === "Escape") { event.stopPropagation(); onClose(); return; }
       if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
@@ -210,7 +214,14 @@ function NodeMenu({ node, x, y, bounds, sourceKind, actions, onOpen, onClose }: 
       if (reason) setState({ message: reason, error: true }); else onClose();
     }}>Make a roadmap</button> : null}
     {state.message ? <p className={`explore-public-status${state.error ? " is-error" : ""}`} role={state.error ? "alert" : "status"}>{state.message}</p> : null}
+    {sheet ? <button type="button" className="explore-node-menu-cancel" onClick={onClose}>Cancel</button> : null}
   </div>;
+  return sheet ? createPortal(<div className="explore-node-sheet" data-graph-ui="true">{menu}</div>, document.body) : menu;
+}
+
+/** Phone-sized screens get the menu as a bottom sheet. */
+function phoneScreen() {
+  return typeof window !== "undefined" && window.matchMedia?.("(max-width: 760px)").matches === true;
 }
 
 /* ---------- Tiles ---------- */
@@ -234,8 +245,9 @@ function PublicTiles({ node, siblings, loading, error, noteFor, onPick, onSiblin
   const children = node.children ?? [];
   // A list of articles reads best as a shelf of cards; sections read best as rooms.
   const shelf = children.length > 0 && children.every((child) => child.kind === "article" || child.kind === "topic");
-  const rects = useMemo(() => !shelf && children.length && size.width ? squarify(children.map((child) => child.weight), size.width, size.height, 12) : [],
+  const rooms = useMemo(() => !shelf && children.length && size.width ? layRooms(children.map((child) => child.weight), size.width, size.height, 12) : null,
     [shelf, children, size]);
+  const rects = rooms?.rects ?? [];
   // The biggest rooms show what is inside them, fetched a few at a time.
   useEffect(() => {
     for (const rect of rects.filter((item) => item.height > 150 && item.width > 160).slice(0, 8)) {
@@ -264,7 +276,8 @@ function PublicTiles({ node, siblings, loading, error, noteFor, onPick, onSiblin
       </div> : null}
     </div>;
   }
-  return <div className="explore-tiles" ref={ref}>
+  return <div className={`explore-tiles${rooms?.stacked ? " is-stacked" : ""}`} ref={ref}>
+    {rooms?.stacked ? <div className="explore-tiles-length" style={{ height: rooms.height }} aria-hidden="true" /> : null}
     {rects.map((rect) => {
       const child = children[rect.index];
       const color = HUES[rect.index % HUES.length];
