@@ -1,12 +1,13 @@
 import { useDeferredValue, useEffect, useState, type MouseEvent } from "react";
 import type { VaultSearchDocumentHit, VaultSearchPassageHit, VaultSearchProvider, VaultSearchResults, VaultSearchScope } from "../lib/vaultSearch";
+import { useVaultSearchResults } from "../lib/useVaultSearchResults";
 import { cloudPathOf, highlight, meta, type VaultSearchOpenMode } from "./VaultSearchPalette";
 import "./SearchResultsPanel.css";
 
 type Hit = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit };
 type Grouping = "family" | "passage";
 
-const SCOPE_LABELS: Record<VaultSearchScope, string> = { all: "Anywhere", family: "This family", documents: "Documents", notes: "Notes", recent: "Last 12 months" };
+const SCOPE_LABELS: Record<VaultSearchScope, string> = { all: "Anywhere", family: "This family", documents: "Documents", notes: "Notes", recent: "Last 12 months", roadmaps: "Roadmaps" };
 const PAGE = 40;
 
 const yearOf = (value?: string) => value && Number.isFinite(Date.parse(value)) ? new Date(value).getFullYear() : null;
@@ -29,11 +30,10 @@ export default function SearchResultsPanel({ initialQuery, initialScope, provide
   const [grouping, setGrouping] = useState<Grouping>("family");
   const [limit, setLimit] = useState(PAGE);
   const [openedKey, setOpenedKey] = useState<string | null>(null);
-  const [results, setResults] = useState<VaultSearchResults | null>(null);
   const deferredQuery = useDeferredValue(query);
 
   useEffect(() => { setQuery(initialQuery); setScope(initialScope); setYear(null); }, [initialQuery, initialScope]);
-  useEffect(() => provider.search({ query: deferredQuery, scope, currentConversationId }, setResults), [provider, deferredQuery, scope, currentConversationId]);
+  const results = useVaultSearchResults(provider, { query: deferredQuery, scope, currentConversationId });
   useEffect(() => { setLimit(PAGE); }, [deferredQuery, scope, year, grouping]);
 
   const searching = !!deferredQuery.trim();

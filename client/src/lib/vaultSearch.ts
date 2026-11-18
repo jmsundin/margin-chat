@@ -5,7 +5,7 @@ import { searchVaultIndex } from "./vaultHydration";
 import type { VaultFindVerdict, VaultFoundDocument, VaultIndexEntry, VaultRelatedPassage, VaultSearchEvent, VaultSearchPassage } from "./vaultTypes";
 
 /** Narrows one search; "family" means the focused document's root and everything under it. */
-export type VaultSearchScope = "all" | "family" | "documents" | "notes" | "recent";
+export type VaultSearchScope = "all" | "family" | "documents" | "notes" | "recent" | "roadmaps";
 
 export type VaultSearchTarget =
   | { kind: "loaded"; conversationId: string }
@@ -112,8 +112,27 @@ function isNote(conversation: Conversation) {
   return conversation.kind === "note" || !!conversation.document?.marginNote;
 }
 
+/** Roadmaps and what is in them: each roadmap, its lessons, and the documents under it (its stage indexes). */
+const roadmapMemberCache = new WeakMap<Record<string, Conversation>, Set<string>>();
+function roadmapMembers(conversations: Record<string, Conversation>) {
+  let members = roadmapMemberCache.get(conversations);
+  if (members) return members;
+  members = new Set<string>();
+  for (const conversation of Object.values(conversations)) {
+    if (conversation.nodeType !== "roadmap") continue;
+    members.add(conversation.id);
+    for (const node of conversation.roadmap?.nodes ?? []) members.add(node.target.docId);
+  }
+  for (const conversation of Object.values(conversations)) {
+    if (conversation.parentId && conversations[conversation.parentId]?.nodeType === "roadmap") members.add(conversation.id);
+  }
+  roadmapMemberCache.set(conversations, members);
+  return members;
+}
+
 function inScope(conversation: Conversation, request: VaultSearchRequest, familyRootId: string | null, conversations: Record<string, Conversation>, now: number) {
   switch (request.scope) {
+    case "roadmaps": return roadmapMembers(conversations).has(conversation.id);
     case "family": return !!familyRootId && getConversationRootId(conversations, conversation.id) === familyRootId;
     case "documents": return !isNote(conversation);
     case "notes": return isNote(conversation);
@@ -124,8 +143,8 @@ function inScope(conversation: Conversation, request: VaultSearchRequest, family
 
 function cloudInScope(entry: VaultIndexEntry, scope: VaultSearchScope, now: number) {
   switch (scope) {
-    // Cloud entries carry no family until downloaded, so the family scope stays on this device.
-    case "family": return false;
+    // Cloud entries carry no family or roadmap until downloaded, so these scopes stay on this device.
+    case "family": case "roadmaps": return false;
     case "documents": return entry.kind !== "note";
     case "notes": return entry.kind === "note";
     case "recent": return now - Date.parse(entry.updated ?? entry.created ?? "") <= YEAR_MS;
@@ -276,7 +295,7 @@ export function createVaultSearchProvider(getInput: () => LocalVaultSearchInput,
     search(request, emit) {
       const input = getInput();
       const local = searchLocalVault(request, input);
-      if (!searchCloud || !vaultSearchTerms(request.query).length || request.scope === "family") {
+      if (!searchCloud || !vaultSearchTerms(request.query).length || request.scope === "family" || request.scope === "roadmaps") {
         emit(local);
         return () => undefined;
       }

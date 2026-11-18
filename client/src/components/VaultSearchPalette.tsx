@@ -5,6 +5,7 @@ import {
   vaultSearchTerms, type VaultSearchDocumentHit, type VaultSearchPassageHit, type VaultSearchProvider,
   type VaultSearchResults, type VaultSearchScope,
 } from "../lib/vaultSearch";
+import { useVaultSearchResults } from "../lib/useVaultSearchResults";
 import { spotlightFromSearch } from "../lib/mapSpotlight";
 import { prepareSearchSources } from "../lib/searchExploration";
 import type { Conversation } from "../types";
@@ -14,8 +15,10 @@ import "./VaultSearchPalette.css";
 
 export type VaultSearchOpenMode = "here" | "beside";
 type Entry = { kind: "document"; hit: VaultSearchDocumentHit } | { kind: "passage"; hit: VaultSearchPassageHit } | { kind: "answer"; hit: { key: string } }
-  | { kind: "feature"; hit: { key: string; feature: FeatureInfo } } | { kind: "create"; hit: { key: string; title: string } };
+  | { kind: "feature"; hit: { key: string; feature: FeatureInfo } } | { kind: "create"; hit: { key: string; title: string } }
+  | { kind: "ask"; hit: { key: string } };
 const ANSWER_ENTRY: Entry = { kind: "answer", hit: { key: "answer:vault" } };
+const ASK_ENTRY: Entry = { kind: "ask", hit: { key: "ask:document" } };
 
 const PASSAGE_PAGE = 30;
 const TYPING_PAUSE_MS = 120;
@@ -25,6 +28,7 @@ const SCOPES: Array<{ id: VaultSearchScope; label: string }> = [
   { id: "documents", label: "Documents" },
   { id: "notes", label: "Notes" },
   { id: "recent", label: "Last 12 months" },
+  { id: "roadmaps", label: "Roadmaps" },
 ];
 
 function SearchIcon() { return <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>; }
@@ -76,7 +80,7 @@ const isMac = () => typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(n
  * Cmd+O (variant "switcher"): titles only, like a quick switcher. When no title matches, Enter creates
  * a document with the typed title; Shift+Enter always does.
  */
-export default function VaultSearchPalette({ isOpen, variant = "search", onClose: closePalette, query: savedQuery, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onCreateDocument, onExplore: exploreHandler, onKeepOpen: keepOpenHandler, onAnswer: answerHandler, onShowOnMap: showOnMapHandler }: {
+export default function VaultSearchPalette({ isOpen, variant = "search", onClose: closePalette, query: savedQuery, onQueryChange, provider, conversations, currentConversationId, currentFamilyTitle, openingPath, onOpenDocument, onOpenPassage, onCreateDocument, onExplore: exploreHandler, onKeepOpen: keepOpenHandler, onAnswer: answerHandler, onShowOnMap: showOnMapHandler, askTitle, onAskAboutDocument: askHandler }: {
   isOpen: boolean;
   variant?: "search" | "switcher";
   onClose: () => void;
@@ -99,6 +103,10 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
   onAnswer?: (question: string) => void;
   /** Lights what was found on the Map, brightest the strongest match. */
   onShowOnMap?: (query: string, scores: Record<string, number>) => void;
+  /** The document Ask AI talks about, by its title. */
+  askTitle?: string;
+  /** Opens Ask AI about the document on screen, asking what was typed (nothing when the box is empty). */
+  onAskAboutDocument?: (question: string) => void;
 }) {
   // What is typed stays here, so a keystroke redraws only the search box and not
   // the whole workspace; the workspace hears the query when search closes or hands off.
@@ -108,6 +116,7 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
   const onExplore = switcher ? undefined : exploreHandler;
   const onAnswer = switcher ? undefined : answerHandler;
   const onShowOnMap = switcher ? undefined : showOnMapHandler;
+  const onAskAboutDocument = switcher ? undefined : askHandler;
   const [query, setQuery] = useState(savedQuery);
   const [pendingEnter, setPendingEnter] = useState<{ mode: VaultSearchOpenMode; until: number } | null>(null);
   const [shownSavedQuery, setShownSavedQuery] = useState(savedQuery);
@@ -118,7 +127,6 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [passageLimit, setPassageLimit] = useState(PASSAGE_PAGE);
   const [documentLimit, setDocumentLimit] = useState(PASSAGE_PAGE);
-  const [results, setResults] = useState<VaultSearchResults | null>(null);
   const deferredQuery = useDeferredValue(query);
   // Each keystroke would otherwise search the vault again; a short pause lets fast typing finish first.
   const [searchedQuery, setSearchedQuery] = useState(query);
@@ -135,10 +143,7 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
   const id = useId();
   const mod = isMac() ? "⌘" : "Ctrl";
 
-  useEffect(() => {
-    if (!isOpen) return;
-    return provider.search({ query: searchedQuery, scope, currentConversationId }, setResults);
-  }, [isOpen, provider, searchedQuery, scope, currentConversationId]);
+  const results = useVaultSearchResults(provider, { query: searchedQuery, scope, currentConversationId }, isOpen);
   useEffect(() => { setPassageLimit(PASSAGE_PAGE); setDocumentLimit(PASSAGE_PAGE); setSelectedKey(null); }, [searchedQuery, scope]);
   // Reads the vault's documents while the box waits for the first letter, in short idle slices.
   useEffect(() => {
@@ -172,6 +177,9 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
   const canAnswer = !!onAnswer && query.trim().length >= 3;
   // A question puts the answer first; otherwise it follows what was found.
   const answerFirst = canAnswer && (found?.question ?? /\?\s*$/u.test(query));
+  // Ask AI lives here rather than on a button of its own: first with nothing typed, beside the vault's answer otherwise.
+  const canAsk = !!onAskAboutDocument;
+  const askFirst = canAsk && (!searching || (found?.question ?? /\?\s*$/u.test(query)));
   // Typing a feature's name (or a word for it) offers to turn it on, after the titles that match.
   const features = useFeatures();
   const featureEntries: Entry[] = searching && !switcher ? matchFeatures(query).map((feature) => ({ kind: "feature" as const, hit: { key: `feature:${feature.id}`, feature } })) : [];
@@ -186,10 +194,12 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
   const createFirst = !!createEntry && !documents.length;
   const entries: Entry[] = [
     ...(createFirst ? [createEntry] : []),
+    ...(askFirst ? [ASK_ENTRY] : []),
     ...(answerFirst ? [ANSWER_ENTRY] : []),
     ...foundEntries,
     // With no titles to show, a feature typed by name comes before asking the vault.
     ...(featuresEarly ? featureEntries : []),
+    ...(canAsk && !askFirst ? [ASK_ENTRY] : []),
     ...(canAnswer && !answerFirst ? [ANSWER_ENTRY] : []),
     ...shownDocuments.map((hit) => ({ kind: "document" as const, hit })),
     ...(featuresEarly ? [] : featureEntries),
@@ -235,6 +245,7 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
   function open(entry: Entry, mode: VaultSearchOpenMode) {
     if (entry.kind === "create") { create(entry.hit.title); return; }
     if (entry.kind === "answer") { onAnswer?.(query.trim()); return; }
+    if (entry.kind === "ask") { setQuery(""); if (savedQuery) onQueryChange(""); onAskAboutDocument?.(query.trim()); return; }
     if (entry.kind === "feature") { setFeature(entry.hit.feature.id, !features[entry.hit.feature.id]); return; }
     if (entry.kind === "document") onOpenDocument(entry.hit, mode);
     else onOpenPassage(entry.hit, mode);
@@ -305,6 +316,14 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
         <p className="vault-search-preview-text">AI writes a short answer using only passages from your vault, and lists the documents it cites. Nothing is saved unless you save it. Uses your AI allowance, like Ask AI.</p>
       </>;
     }
+    if (selected.kind === "ask") {
+      return <>
+        <p className="vault-search-preview-crumb">Ask AI</p>
+        <h3>{askTitle || "This document"}</h3>
+        {searching ? <p className="vault-search-meta">{query.trim()}</p> : null}
+        <p className="vault-search-preview-text">{searching ? "Asks AI this about the document you're reading, in a chat beside it." : "Opens a chat beside the document you're reading, about the whole of it."} Uses your AI allowance.</p>
+      </>;
+    }
     if (selected.kind === "feature") {
       const { feature } = selected.hit;
       return <>
@@ -372,12 +391,15 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
         <span className="vault-search-hidden">{switcher ? "Find or create a document by title" : "Search titles and passages in your whole vault"}</span>
         <input ref={inputRef} aria-activedescendant={selected ? `${id}-${entryKey(selected)}` : undefined} aria-controls={`${id}-results`}
           aria-expanded="true" autoComplete="off" onChange={(event) => { setPendingEnter(null); setQuery(event.target.value); }}
-          placeholder={switcher ? "Find or create a document…" : "Search titles and passages in your whole vault…"}
+          placeholder={switcher ? "Find or create a document…" : onAskAboutDocument ? "Search your vault, or ask AI…" : "Search titles and passages in your whole vault…"}
           role="combobox" type="search" value={query}/>
+        {/* The field's own clear × hides under voice typing's mic, which sits at the field's right end; this one comes after it. */}
+        {query ? <button aria-label="Clear the search" className="vault-search-clear" onClick={() => { setPendingEnter(null); setQuery(""); inputRef.current?.focus(); }}
+          title="Clear" type="button"><svg aria-hidden="true" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><circle cx="10" cy="10" r="7.5"/><path d="m7.5 7.5 5 5m0-5-5 5"/></svg></button> : null}
         <button aria-label="Close search" className="vault-search-close" onClick={onClose} type="button"><kbd>Esc</kbd><span className="vault-search-close-x" aria-hidden="true">×</span></button>
       </label>
       {switcher ? null : <div aria-label="Narrow the search" className="vault-search-scopes" role="group">
-        {SCOPES.map((option) => <button aria-pressed={scope === option.id} key={option.id} onClick={() => { setScope(option.id); inputRef.current?.focus(); }}
+        {SCOPES.filter((option) => option.id !== "roadmaps" || features.roadmaps || scope === "roadmaps").map((option) => <button aria-pressed={scope === option.id} key={option.id} onClick={() => { setScope(option.id); inputRef.current?.focus(); }}
           title={option.id === "family" && currentFamilyTitle ? `Only ${currentFamilyTitle} and the documents under it` : undefined} type="button">
           {option.id === "family" && currentFamilyTitle ? `In ${currentFamilyTitle}` : option.label}</button>)}
       </div>}
@@ -386,6 +408,10 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
           <p className="vault-search-hidden" role="status">{status}</p>
           <ul aria-label="Search results" id={`${id}-results`} role="listbox">
             {createFirst ? createRow : null}
+            {askFirst ? row(ASK_ENTRY, <>
+              <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Ask AI about “{askTitle || "this document"}”</span>
+              <span className="vault-search-meta">{searching ? query.trim() : "Type a question, or press Enter to open the chat"}</span>
+            </>) : null}
             {answerFirst ? row(ANSWER_ENTRY, <>
               <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Answer from my vault</span>
               <span className="vault-search-meta">A short answer that cites your documents</span>
@@ -399,6 +425,10 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
               {entry.kind === "passage" ? <span className="vault-search-snippet">{highlight(entry.hit.preview, searchedQuery)}</span> : null}
             </>))}
             {featuresEarly ? featureRows : null}
+            {canAsk && !askFirst ? row(ASK_ENTRY, <>
+              <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Ask AI about “{askTitle || "this document"}”</span>
+              <span className="vault-search-meta">{searching ? query.trim() : "Type a question, or press Enter to open the chat"}</span>
+            </>) : null}
             {canAnswer && !answerFirst ? row(ANSWER_ENTRY, <>
               <span className="vault-search-row-title vault-search-answer-title"><span aria-hidden="true">✦</span> Answer from my vault</span>
               <span className="vault-search-meta">A short answer that cites your documents</span>
@@ -432,6 +462,8 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
             <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">{features[selected.hit.feature.id] ? "Turn off" : "Turn on"} <kbd>↵</kbd></button>
           </div> : selected?.kind === "create" ? <div className="vault-search-actions">
             <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">Create <kbd>↵</kbd></button>
+          </div> : selected?.kind === "ask" ? <div className="vault-search-actions">
+            <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">{searching ? "Ask" : "Open the chat"} <kbd>↵</kbd></button>
           </div> : selected?.kind === "answer" ? <div className="vault-search-actions">
             <button className="vault-search-primary" onClick={() => open(selected, "here")} type="button">Answer <kbd>↵</kbd></button>
           </div> : selected ? <div className="vault-search-actions">

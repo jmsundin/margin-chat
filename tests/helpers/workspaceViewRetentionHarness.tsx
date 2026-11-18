@@ -106,10 +106,11 @@ async function settle() {
   assert.equal(frames.size, 0, "Workspace animation effects settle.");
 }
 async function click(target: any) { assert(target, "Expected a click target"); await act(async () => target.click()); await settle(); }
+// The view toggle holds the map: Map opens it beside the document, Document View puts it away.
 async function toggleMap(label: string) {
-  await click([...container.querySelectorAll(`[aria-label="${label}"]`)].find(isVisible));
+  await switchMode(label === "Show the map around this document" ? "Map" : "Document View");
 }
-async function switchMode(label: "Document View" | "Tile View") {
+async function switchMode(label: "Document View" | "Tile View" | "Map") {
   await click([...container.querySelectorAll('.workspace-mode-control [role="radio"]')].find((item) => isVisible(item) && item.getAttribute("aria-label") === label));
 }
 try {
@@ -145,7 +146,7 @@ try {
   assert.equal(editorMounts, initialMounts, "Returning to Document does not recreate existing editors.");
   checks.push("returning to Document preserves edits, scroll position, and every editor instance");
 
-  // The map has no view of its own: it opens beside the document from the button at the top right.
+  // The map has no view of its own: it opens beside the document from the view toggle's Map.
   await toggleMap("Show the map around this document");
   const initialMap = element(".conversation-graph-viewport");
   assert(isVisible(initialMap));

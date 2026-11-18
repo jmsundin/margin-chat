@@ -147,7 +147,9 @@ import { isBoardDocument, makeBoardDocument, unmakeBoardDocument } from "./lib/b
 import { buildBoardNoteMessage, type BoardNoteRequest } from "./lib/boardAI";
 import RoadmapView from "./components/RoadmapView";
 import type { MapPathActions } from "./components/MapPaths";
-import { buildMapPath, createMapPath, isPathDocument, pathNameFromGoal } from "./lib/mapPaths";
+import { buildMapPath, createMapPath, isPathDocument, listMapPaths, pathNameFromGoal } from "./lib/mapPaths";
+import type { RoadmapTile } from "./components/RoadmapTiles";
+import { isStageDocumentId, missingLessonLines, stageDocumentId, stageDocumentMarkdown } from "./lib/roadmapStageDocument";
 import FlashcardReview from "./components/FlashcardReview";
 import { LanguageLibrary } from "./components/LanguageLibrary";
 import { scheduleCards, useFlashcards } from "./lib/useFlashcards";
@@ -165,7 +167,7 @@ import type { AIRetrievalPassage, DocumentRelationTypeId } from "./types";
 import { useTopicExpansion } from "./lib/useTopicExpansion";
 import GraphSourceFocus from "./components/GraphSourceFocus";
 import { ConversationGroupPickerContext } from "./components/ConversationGroupControls";
-import MainChatTileView from "./components/MainChatTileView";
+import MainChatTileView, { readTileTab, rememberTileTab, type TileTab } from "./components/MainChatTileView";
 import SettingsPage, { type SettingsSection } from "./components/SettingsPage";
 import ChatHistoryImport from "./components/ChatHistoryImport";
 import { LanguageLessonDialog, type LessonRequest } from "./components/LanguageLessonDialog";
@@ -873,6 +875,8 @@ function WorkspaceAppContent({
   const sheetRestRef = useRef<DocumentSheet>(PAGE_SHEET);
   /** A roadmap to turn on in the map beside the document. */
   const [pathRequest, setPathRequest] = useState<{ id: string; requestId: number } | null>(null);
+  const [tileTab, setTileTabState] = useState<TileTab>(readTileTab);
+  const setTileTab = (tab: TileTab) => { setTileTabState(tab); rememberTileTab(tab); };
   const canvasSectionRef = useRef<HTMLElement | null>(null);
   const documentAreaRef = useRef<HTMLDivElement | null>(null);
   const mapUndoRef = useRef<((current: AppState) => AppState) | null>(null);
@@ -956,8 +960,8 @@ function WorkspaceAppContent({
     }
   }, [pendingConversationIds, chatExecutions]);
   /**
-   * Roadmaps AI drafts go straight in, with no approval step: when a run ends, any roadmap it proposed is
-   * added (with an Undo on the map). Roadmap documents are checked too, so a draft left waiting goes in.
+   * Roadmaps AI drafts go straight in, with no approval step: when a run ends, the roadmap it proposed and
+   * every other change of that run are made (with an Undo on the map). Roadmap documents are checked too, so a draft left waiting goes in.
    */
   const roadmapDraftChecks = useRef(new Set<string>());
   const roadmapDraftsTried = useRef(new Set<string>());
@@ -971,8 +975,13 @@ function WorkspaceAppContent({
       const conversation = conversations[id];
       if (!conversation) continue;
       for (const message of conversation.messages.slice(-8)) {
-        for (const proposal of message.execution?.agent?.proposals ?? []) {
-          if (proposal.kind !== "roadmap" || proposal.status || roadmapDraftsTried.current.has(proposal.id)) continue;
+        const proposals = message.execution?.agent?.proposals ?? [];
+        // A run on a roadmap, or one that drafted a roadmap, makes all its changes (new lesson notes too) with no approval
+        // step; they stay listed under the AI's reply. The roadmap goes first, so its steps exist for anything after it.
+        const roadmapRun = conversation.nodeType === "roadmap" || proposals.some((proposal) => proposal.kind === "roadmap");
+        if (!roadmapRun) continue;
+        for (const proposal of [...proposals].sort((a, b) => Number(b.kind === "roadmap") - Number(a.kind === "roadmap"))) {
+          if (proposal.status || roadmapDraftsTried.current.has(proposal.id)) continue;
           roadmapDraftsTried.current.add(proposal.id);
           const reason = handleAgentProposal(id, message.id, proposal.id, "approve");
           if (reason) setDocumentErrors((current) => ({ ...current, [id]: reason }));
@@ -1597,6 +1606,15 @@ function WorkspaceAppContent({
   }, [flashcards.scheduled]);
   /** Which opt-in features are on (Settings → Features); every device of the account matches. */
   const features = useFeatures();
+  /** Tile view's Roadmaps tab, worked out only while it can be seen. */
+  const roadmapTiles = useMemo<RoadmapTile[]>(() => !isTileView || !features.roadmaps ? [] : listMapPaths(state.conversations).map((summary) => {
+    const path = buildMapPath(state.conversations[summary.id], state.conversations);
+    const parentId = state.conversations[summary.id]?.parentId;
+    const parentName = parentId && isPathDocument(state.conversations[parentId]) ? state.conversations[parentId].title : undefined;
+    return { id: summary.id, name: summary.name, finished: path.finished, total: path.total, stages: new Set(path.steps.map((step) => step.stageId)).size,
+      nextUp: path.steps.find((step) => step.docId === path.nextUpDocId)?.title ?? null, ...(parentName ? { parentName } : {}),
+      ...(pendingConversationIds[summary.id] ? { drafting: true } : {}) };
+  }), [isTileView, features.roadmaps, state.conversations, pendingConversationIds]);
   /** Write or Read as last picked per document, and the device's page view for documents never picked. */
   const documentModePicks = useDocumentModePicks();
   const deviceDocumentView = useSyncExternalStore(subscribeDocumentEditorPreference, readDocumentViewMode, () => "live" as const);
@@ -1992,6 +2010,8 @@ function WorkspaceAppContent({
   }, [notebookPrefs.aiBehaviour]);
   /** On a computer the quiet page puts the path, and tabs when there's more than one, on a single line. */
   const quietHeader = quietPage && !isMobileViewport;
+  /** The document search's Ask AI talks about: the one being read, when it is a document, note or page. */
+  const askableConversation = activeConversation && (activeConversation.document || activeConversation.kind === "note" || isPlayPage(activeConversation)) ? activeConversation : null;
   const [mobileHeaderOpen, setMobileHeaderOpen] = useState(false);
   const headerOpen = isMobileViewport ? mobileHeaderOpen : desktopHeaderOpen;
   const workspaceHeaderRef = useRef<HTMLElement | null>(null);
@@ -5924,6 +5944,8 @@ function WorkspaceAppContent({
 
   /** A `[[link]]`'s pop-up, or Cmd/Ctrl and click on it: the linked document opens beside the one it's in. */
   function handleOpenWikiLink(sourceId: string, document: WikiLinkDocument) {
+    // A roadmap stage's index hands over to the lesson it links to, which opens in its place (Back returns).
+    if (state.conversations[document.id] && isStageDocumentId(sourceId)) { handleSwitchDocumentInPlace(sourceId, document.id); return; }
     if (state.conversations[document.id]) { openLinkedDocumentBeside(sourceId, document.id); return; }
     if (!document.cloudPath) return;
     // Still in the cloud: download it, then open it beside.
@@ -6347,6 +6369,19 @@ function WorkspaceAppContent({
     if (shownSheet.mode === "page") handleExpandSheet();
   }
 
+  /** Tile view's Roadmaps tab: a tile opens its roadmap's document with the roadmap beside it in Learn. */
+  function handleOpenRoadmapFromTiles(pathId: string) {
+    if (!state.conversations[pathId]) return;
+    handleSelectConversation(pathId, { nextViewMode: "chat" });
+    showRoadmapOnMap(pathId, true);
+  }
+
+  /** Learn's All roadmaps: Tile view on its Roadmaps tab. */
+  function handleShowAllRoadmaps() {
+    setTileTab("roadmaps");
+    handleSetMainViewMode("tiles");
+  }
+
   /** The ⋯ menu's Show on map: a roadmap turns itself on; any other document opens the map around it. */
   function handleShowOnMap(conversationId: string) {
     if (conversationId !== activeConversation.id) handleSelectConversation(conversationId, { nextViewMode: "chat" });
@@ -6381,6 +6416,39 @@ function WorkspaceAppContent({
     roadmapLessonsAsked.current.add(docId);
     if (handleRoadmapStepAI(pathId, docId, "explain", context)) roadmapLessonsAsked.current.delete(docId);
   }, [lessonToWrite, activeConversation.id]);
+  /**
+   * A roadmap stage opens as a document, like every other node: its index under the roadmap, made the
+   * first time, with a link to each lesson. Lessons added since are linked at its end; the rest is the user's.
+   */
+  function handleOpenRoadmapStage(pathId: string, stageId: string) {
+    const current = currentStateRef.current;
+    const roadmap = current.conversations[pathId];
+    if (!roadmap || !isPathDocument(roadmap)) return;
+    const path = buildMapPath(roadmap, current.conversations);
+    const stage = path.steps.find((step) => step.stageId === stageId);
+    if (!stage) return;
+    const id = stageDocumentId(pathId, stageId);
+    const existing = current.conversations[id];
+    if (!existing) {
+      const args = { parentId: pathId, id, noteId: createId("note"), createdAt: new Date().toISOString(), title: stage.stageTitle,
+        content: stageDocumentMarkdown(path, stageId, current.conversations), activate: false };
+      const next = addMapChildNote(current, args);
+      if (!next.conversations[id]) return;
+      currentStateRef.current = next;
+      setState((latest) => latest.conversations[id] ? latest : addMapChildNote(latest, args));
+    } else if (!existing.document && existing.notes?.[0]) {
+      // Never written in yet: lessons the stage gained are added to its list.
+      const missing = missingLessonLines(path, stageId, existing.notes[0].content, current.conversations);
+      if (missing.length) setState((latest) => {
+        const note = latest.conversations[id];
+        if (!note?.notes?.[0] || note.document) return latest;
+        const content = `${note.notes[0].content.replace(/\s*$/u, "")}\n${missing.join("\n")}\n`;
+        return { ...latest, conversations: { ...latest.conversations, [id]: { ...note, notes: [{ ...note.notes[0], content }, ...note.notes.slice(1)] } } };
+      });
+    }
+    handleSelectConversation(id, { nextViewMode: "chat" });
+  }
+
   const mapPathActions: MapPathActions = {
     onCreatePath: (title, docIds) => {
       if (!docIds.length) return { error: "Click at least one note to make a path." };
@@ -6400,6 +6468,7 @@ function WorkspaceAppContent({
     onStepAI: (pathId, docId, action) => handleRoadmapStepAI(pathId, docId, action),
     // Handled after the lesson has opened, so it runs on the state that opened it.
     onLessonOpened: (pathId, docId, context) => setLessonToWrite({ pathId, docId, context }),
+    onOpenStage: handleOpenRoadmapStage,
     onDraftDecision: (pathId, messageId, proposalId, action) => handleAgentProposal(pathId, messageId, proposalId, action),
     onStopDraft: (pathId) => stopChatStream(pathId),
     writingIds: pendingConversationIds,
@@ -7371,9 +7440,23 @@ function WorkspaceAppContent({
           <SidebarPanelIcon />
         </button>
         <h1>Margin Chat</h1>
-        {features.tiles || isTileView ? <WorkspaceModeToggle mainViewMode={mainViewMode} onSetMainViewMode={handleSetMainViewMode} /> : null}
+        {renderViewToggle()}
       </div>
     );
+  }
+
+  /** Document, Tile and Map: beside the sidebar's toggle, in the sidebar or (when it is closed) at the start of the document's bar. */
+  function renderViewToggle() {
+    const tiles = features.tiles || features.roadmaps;
+    // A phone keeps its map button by the title, so its toggle is only Document and Tile, and only with Tile view on.
+    if (isMobileViewport && !tiles && !isTileView) return null;
+    const mapOpen = !isMobileViewport && !isTileView && shownSheet.mode !== "page";
+    return <WorkspaceModeToggle mainViewMode={mainViewMode} mapOpen={mapOpen} showTiles={tiles} showMap={!isMobileViewport} onSetMainViewMode={(mode) => {
+      if (mode === "graph") { if (!mapOpen) handleSetMainViewMode("graph"); return; }
+      // Document puts the map away; from Tiles it comes back to the document as it was.
+      if (mode === "chat" && mapOpen) { handleToggleDocumentMap(); return; }
+      handleSetMainViewMode(mode);
+    }} />;
   }
 
   function renderRelatedItems() {
@@ -7596,10 +7679,15 @@ function WorkspaceAppContent({
                 <div className="canvas-head">
                   <div className="canvas-view-intro">
                     <p className="eyebrow">Tiles</p>
-                    <h2>Your documents</h2>
-                    <p className="canvas-hint">
-                      Every main document as a card. Search, or open one to keep working.
-                    </p>
+                    {features.roadmaps && tileTab === "roadmaps" ? <>
+                      <h2>Your roadmaps</h2>
+                      <p className="canvas-hint">Every roadmap as a card. Open one to learn it in order, or start a new one.</p>
+                    </> : <>
+                      <h2>Your documents</h2>
+                      <p className="canvas-hint">
+                        Every main document as a card. Search, or open one to keep working.
+                      </p>
+                    </>}
                     {newVault ? <ViewIntro id="tiles" className="is-tiles" title="What Tiles shows">
                       Each main document gets a card here, with its side documents and notes counted on it. Make a group to keep a project&apos;s documents together.
                     </ViewIntro> : null}
@@ -7617,6 +7705,13 @@ function WorkspaceAppContent({
                   onOpenThread={handleSelectConversation}
                   onToggleGroup={handleToggleConversationGroup}
                   threads={threadSummaries}
+                  roadmaps={features.roadmaps ? { tiles: roadmapTiles, tab: tileTab, onTab: setTileTab, onOpen: handleOpenRoadmapFromTiles,
+                    onDraft: (goal) => {
+                      const made = mapPathActions.onDraftPath(goal);
+                      if ("error" in made) return made.error;
+                      handleOpenRoadmapFromTiles(made.id);
+                      return null;
+                    } } : undefined}
                 />
               </WorkspaceView>
               {/* The sheet's edge: always there on a computer, so the page itself can be dragged aside to show the map. */}
@@ -7666,6 +7761,8 @@ function WorkspaceAppContent({
                     onSetRelation={handleSetMapRelation}
                     paths={features.roadmaps ? mapPathActions : undefined}
                     pathRequest={pathRequest}
+                    onShowAllRoadmaps={features.roadmaps ? handleShowAllRoadmaps : undefined}
+                    viewToggle={showMapModal && !isMobileViewport ? renderViewToggle() : undefined}
                     onRemoveMapNote={handleRemoveMapNote}
                     onUndoMapEdit={handleUndoMapEdit}
                     mapEditMessage={mapEditMessage}
@@ -7745,6 +7842,12 @@ function WorkspaceAppContent({
                       onClick={handleToggleLeftSidebar}
                       type="button"
                     ><SidebarPanelIcon /></button>}
+                    {/* With the map open beside, its own bar holds these beside its sidebar button. */}
+                    {!leftSidebarOpen && !isMobileViewport && shownSheet.mode === "page" ? renderViewToggle() : null}
+                    {!leftSidebarOpen && !isMobileViewport && shownSheet.mode === "page" ? <button type="button" className="workspace-menu-button document-search-button" aria-keyshortcuts="Meta+K Control+K"
+                      aria-label="Search or ask AI" title="Search your vault, or ask AI (⌘K / Ctrl+K)" onClick={() => handleOpenSearch()}>
+                      <svg aria-hidden="true" className="workspace-menu-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 5 5"/></svg>
+                    </button> : null}
                     {isMobileViewport ? <button type="button" className="document-header-title" aria-expanded={mobileHeaderOpen}
                       aria-controls="document-header-details" title={mobileHeaderOpen ? "Hide tabs and path" : "Show tabs, path and views"}
                       onClick={() => setMobileHeaderOpen((open) => !open)}>
@@ -7764,16 +7867,14 @@ function WorkspaceAppContent({
                         Map
                       </button> : null}
                       {/* On computers each document's own header holds it. */}
-                      {showSpaceStart ? null : <DocumentMapButton open={shownSheet.mode !== "page"} onToggle={handleToggleDocumentMap} />}
+                      {/* On computers the view toggle beside the sidebar's holds the map; a phone keeps its own button here. */}
+                      {showSpaceStart || !isMobileViewport ? null : <DocumentMapButton open={shownSheet.mode !== "page"} onToggle={handleToggleDocumentMap} />}
                       {/* On a phone a page's Play and page controls sit in this row, beside its title. */}
                       {isMobileViewport && isPlayPage(headerConversation) ? <span className="html-page-header-slot" ref={setHtmlHeaderSlot} /> : null}
                       {isMobileViewport && maximizedDocument ? renderFullScreenButton() : null}
                       {isMobileViewport && !showSpaceStart ? renderDocumentModeSwitch(headerConversation) : null}
-                      {isMobileViewport ? renderDocumentMenu(headerConversation) : quietHeader ? <>
-                        {activeConversation.document || activeConversation.kind === "note" || isPlayPage(activeConversation) ? <button type="button" className="note-chat-open-button" aria-expanded={noteChatFor === activeConversation.id}
-                          onClick={() => setNoteChatFor((open) => open === activeConversation.id ? null : activeConversation.id)}
-                          title={isPlayPage(activeConversation) ? "Ask the AI about what's on screen" : "Ask the AI about this whole note"}>Ask</button> : null}
-                      </> : <>
+                      {/* Ask AI is in search (⌘K), with nothing typed or with a question, so it needs no button of its own. */}
+                      {isMobileViewport ? renderDocumentMenu(headerConversation) : quietHeader ? null : <>
                         <button type="button" className="document-header-toggle" aria-expanded={desktopHeaderOpen}
                           aria-label={desktopHeaderOpen ? "Hide path and views" : "Show path and views"}
                           title={desktopHeaderOpen ? "Hide path and views" : "Show path and views"} onClick={toggleDesktopHeader}>
@@ -8083,6 +8184,13 @@ function WorkspaceAppContent({
             onKeepOpen={(query, scope) => { handleCloseSearch(); setMainViewMode("chat"); setSearchPanel({ query, scope }); }}
             onAnswer={vault.searchCloud ? handleAnswerFromVault : undefined}
             onShowOnMap={(query, scores) => showOnMap(`Found for “${query}”`, scores)}
+            askTitle={askableConversation ? askableConversation.title || "Untitled document" : undefined}
+            onAskAboutDocument={askableConversation ? (question) => {
+              const id = askableConversation.id;
+              handleCloseSearch();
+              setNoteChatFor(id);
+              if (question) void handleAskAboutPage(id, question);
+            } : undefined}
             onOpenDocument={handleOpenVaultSearchDocument}
             onOpenPassage={handleOpenVaultSearchPassage}
             onQueryChange={setSearchQuery}
