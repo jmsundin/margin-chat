@@ -6,7 +6,7 @@ Use it to study a subject, read papers and books with an AI beside you, research
 
 **Try it at [marginchat.com](https://www.marginchat.com)**, in the browser, as a desktop app for Mac, Windows and Linux, or as a Chrome extension.
 
-![Highlighting a passage and asking AI about it opens the answer as a side document linked to the passage](docs/media/readme/ask-ai-side-document.gif)
+![Highlighting a sentence in a note about rapamycin and asking why a late start matters: the answer opens as a side document beside the note, linked to the sentence](docs/media/readme/ask-ai-side-document.gif)
 
 ## Why Margin Chat
 
@@ -26,7 +26,7 @@ Select text and choose **Ask AI**. Answer in a side document beside the original
 
 Keep a private thought next to the line that sparked it. Notes sit in the margin beside their passage and are saved as small linked documents.
 
-![Selecting a phrase and adding a margin note beside it](docs/media/readme/margin-note.gif)
+![Selecting a phrase and writing a margin note beside it, which stays next to its passage](docs/media/readme/margin-note.gif)
 
 ### Map view
 
@@ -37,13 +37,31 @@ Every document is a card and every link is a line. Zoom out to see how topics cl
 - **Clusters**: group notes by their links or by meaning, and let AI name each cluster.
 - **Search and Explore**: add notes from Wikipedia, the web or an AI answer straight onto the map.
 
-![Zooming the map from clusters of notes into readable document cards](docs/media/readme/map-view.gif)
+![Opening the map beside a note and walking from note to note: each click centers the map on that note and opens it beside](docs/media/readme/map-view.gif)
 
 ### Search the whole vault
 
-Press <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> to search by words and by meaning. Results open as a preview of the passage itself, with your search terms highlighted, so you find the line, not just the file.
+Press <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> to search by words and by meaning. Results open as a preview of the passage itself, with your search terms highlighted, so you find the line, not just the file. Or choose **Answer from my vault** for a short answer written only from your own notes, with each claim cited.
 
-![Searching the vault and previewing matching passages](docs/media/readme/vault-search.gif)
+![Searching the vault for deep sleep and getting an answer written only from your own notes](docs/media/readme/vault-search.gif)
+
+### Learn anything with a roadmap
+
+Type what you want to learn and AI drafts a roadmap: stages, lessons in order, and what each one unlocks. Open a lesson and AI writes it for you as a document you can annotate, question and keep. Or paste a link to a course outline and the roadmap follows it.
+
+![Typing a goal, drafting a roadmap with AI, and opening the first lesson in Learn](docs/media/readme/roadmap-learn.gif)
+
+### Explore beyond your notes
+
+Walk through Wikipedia's topics on the map like shelves in a library, tap any topic for details written by AI, and keep what you find as a note in your vault.
+
+![Walking from Health into Physical fitness on Wikipedia, reading AI details about cardiorespiratory fitness, and saving it as a note](docs/media/readme/explore-wikipedia.gif)
+
+### Read in another language
+
+Switch any document to Language mode and tap a word: see its meaning from Wiktionary, machine translation and AI in this sentence, then rate how well you know it.
+
+![Opening a Spanish note in Language mode and tapping words to see their meanings](docs/media/readme/language-reader.gif)
 
 ### Your second brain in every AI app
 
