@@ -32,7 +32,12 @@ export function getCurrentDocumentText(conversation: Conversation): string {
 
 /** A short plain-text excerpt for previews in navigation lists. */
 export function getDocumentPreview(conversation: Conversation, length = 140): string {
-  return getCurrentDocumentText(conversation).slice(0, 600)
+  // Previews sit under the title, so a first heading that only repeats it ("# Sleep and aging") is left out.
+  const text = getCurrentDocumentText(conversation);
+  const title = conversation.title?.trim().toLocaleLowerCase();
+  const firstLine = /^\s*#{1,6}\s+([^\n]*)\n?/u.exec(text);
+  const body = title && firstLine && firstLine[1].trim().toLocaleLowerCase() === title ? text.slice(firstLine[0].length) : text;
+  return body.slice(0, 600)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
     .replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim().slice(0, length) || "No content yet";
 }
