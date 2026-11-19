@@ -9,6 +9,7 @@ import { saveAuthorshipMode, saveAuthorshipOnlyMine, useAuthorshipMode, type Aut
 import { ConversationGroupPickerContext } from "./ConversationGroupControls";
 import GroupPickerModal from "./GroupPickerModal";
 import { SpaceMenuContext } from "./Spaces";
+import { useMobileKeyboard } from "./MobileKeyboard";
 import "./DocumentMenu.css";
 
 export interface DocumentMenuProps {
@@ -108,6 +109,9 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
   const [agentEditOpen, setAgentEditOpen] = useState(false);
   const [spacesOpen, setSpacesOpen] = useState(false);
   const [pageViewOpen, setPageViewOpen] = useState(false);
+  /** The second page of the menu: the less common actions. */
+  const [more, setMore] = useState(false);
+  const phone = useMobileKeyboard().mobile;
   const authorship = useAuthorshipMode();
   const spaceActions = useContext(SpaceMenuContext);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -146,7 +150,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
     };
   }, []);
 
-  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); setSpacesOpen(false); setPageViewOpen(false); } }, [open]);
+  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); setSpacesOpen(false); setPageViewOpen(false); setMore(false); } }, [open]);
   useOutsideDismiss(open, () => close(), menu, trigger);
 
   useEffect(() => {
@@ -176,7 +180,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
       window.removeEventListener("scroll", positionMenu, true);
       document.removeEventListener("keydown", escape);
     };
-  }, [open]);
+  }, [open, more]);
 
   useEffect(() => {
     if (!renameOpen) return;
@@ -215,6 +219,9 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
     };
   }, [renameOpen]);
 
+  const hasMore = Boolean(onAssignGroup || onRevealInFolder || spaceActions || onNewMarginNote || onMakeFlashcards || onMakeRoadmap
+    || onCheckClaims || onToggleBoard || onToggleHiddenFromAI || onSetAgentEdit || pageView || onMoreFeatures || (onMinimize && phone && !minimized));
+
   function action(callback: ((id: string) => void) | undefined) {
     close(true);
     callback?.(conversation.id);
@@ -250,8 +257,10 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         }
         if (event.key === "Tab") close(true);
       }}>
-      {/* About the document, then making from it, then what AI may read, then its pane on screen. */}
-      {onTogglePin || onRename || onAssignGroup || onRevealInFolder || onVersionHistory ? <div role="group" className="document-menu-section">
+      {/* The everyday actions first; making things, organizing, AI access and page view wait under More,
+          so the first menu a new user opens stays short. */}
+      {!more ? <>
+      {onTogglePin || onRename || onVersionHistory ? <div role="group" className="document-menu-section">
         {onTogglePin ? <button type="button" role="menuitem" onClick={() => action(onTogglePin)}>
           {pinned ? "Unpin document" : "Pin document"}
         </button> : null}
@@ -264,6 +273,53 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         {onRename ? <button type="button" role="menuitem" aria-haspopup="dialog" onClick={() => {
           close(true); setRenameTitle(conversation.title); setRenameOpen(true);
         }}>Rename document</button> : null}
+        {onVersionHistory ? <button type="button" role="menuitem" title="See earlier versions of this document and restore one."
+          onClick={() => action(onVersionHistory)}>Version history</button> : null}
+      </div> : null}
+      {onOpenBeside || onPutBackInMargin || onAskAboutNote || onMoveToSideDocument || onMoveToMargin ? <div role="group" className="document-menu-section">
+        {onOpenBeside ? <button type="button" role="menuitem" title="Open this note beside its page, wider. It stays the same note."
+          onClick={() => action(onOpenBeside)}>Open beside</button> : null}
+        {onPutBackInMargin ? <button type="button" role="menuitem" title="Put this note back in its page's margin, beside its passage."
+          onClick={() => action(onPutBackInMargin)}>Put back in margin</button> : null}
+        {onAskAboutNote ? <button type="button" role="menuitem" onClick={() => action(onAskAboutNote)}>Ask…</button> : null}
+        {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."
+          onClick={() => action(onMoveToSideDocument)}>Move to side document</button> : null}
+        {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
+          onClick={() => action(onMoveToMargin)}>Move to margin</button> : null}
+      </div> : null}
+      {onShowOnMap || (onReviewFlashcards && flashcardCount > 0) ? <div role="group" className="document-menu-section">
+        {onShowOnMap ? <button type="button" role="menuitem" title="Show the map around this document, beside it (⌘G)."
+          onClick={() => action(onShowOnMap)}>Show on map</button> : null}
+        {onReviewFlashcards && flashcardCount > 0 ? <button type="button" role="menuitem"
+          title="Study the flashcards written in this document and its notes."
+          onClick={() => action(onReviewFlashcards)}>
+          <span>Review cards</span>
+          <span className="document-menu-group-name">{flashcardCount}</span>
+        </button> : null}
+      </div> : null}
+      {onToggleMaximize || (onMinimize && !phone) || onRestore || onClose ? <div role="group" className="document-menu-section">
+        {onToggleMaximize ? <button type="button" role="menuitem" onClick={() => action(onToggleMaximize)}>
+          {maximized ? "Leave full screen" : "Full screen"}
+        </button> : null}
+        {!minimized && onMinimize && !phone
+          ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
+        {minimized && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Restore document</button> : null}
+        {closed && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Open document</button> : null}
+        {onClose ? <button type="button" role="menuitem" onClick={() => action(onClose)}>Close document</button> : null}
+      </div> : null}
+      {hasMore ? <div role="group" className="document-menu-section">
+        <button type="button" role="menuitem" className="document-menu-group-setting document-menu-more" aria-haspopup="menu"
+          title="Groups, spaces, flashcards, roadmaps, AI access and page view" onClick={() => setMore(true)}>
+          <span>More</span><span aria-hidden="true">›</span>
+        </button>
+      </div> : null}
+      </> : <>
+      <div role="group" className="document-menu-section">
+        <button type="button" role="menuitem" className="document-menu-back" onClick={() => setMore(false)}>
+          <span aria-hidden="true">‹</span><span>More</span>
+        </button>
+      </div>
+      {onAssignGroup || onRevealInFolder || (onMinimize && phone && !minimized) ? <div role="group" className="document-menu-section">
         {onAssignGroup ? <button type="button" role="menuitem" className="document-menu-group-setting"
           aria-label={`Group for ${title}: ${groupName}`} aria-haspopup="dialog"
           onClick={() => { close(true); setGroupOpen(true); }}>
@@ -271,8 +327,8 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
         </button> : null}
         {onRevealInFolder ? <button type="button" role="menuitem" title="Show this document's file in your vault folder."
           onClick={() => action(onRevealInFolder)}>{revealLabel}</button> : null}
-        {onVersionHistory ? <button type="button" role="menuitem" title="See earlier versions of this document and restore one."
-          onClick={() => action(onVersionHistory)}>Version history</button> : null}
+        {!minimized && onMinimize && phone
+          ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
       </div> : null}
       {spaceActions ? <div role="group" className="document-menu-section">
         <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={spacesOpen}
@@ -291,39 +347,22 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <button type="button" role="menuitem" onClick={() => { close(true); spaceActions.onCreateWith(conversation.id); }}>New space with this</button>
         </div> : null}
       </div> : null}
-      {onNewMarginNote || onAskAboutNote || onMoveToSideDocument || onMoveToMargin || onOpenBeside || onPutBackInMargin ? <div role="group" className="document-menu-section">
-        {onOpenBeside ? <button type="button" role="menuitem" title="Open this note beside its page, wider. It stays the same note."
-          onClick={() => action(onOpenBeside)}>Open beside</button> : null}
-        {onPutBackInMargin ? <button type="button" role="menuitem" title="Put this note back in its page's margin, beside its passage."
-          onClick={() => action(onPutBackInMargin)}>Put back in margin</button> : null}
+      {onNewMarginNote || onMakeFlashcards || onMakeRoadmap || onCheckClaims || onToggleBoard ? <div role="group" className="document-menu-section">
         {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
-        {onAskAboutNote ? <button type="button" role="menuitem" onClick={() => action(onAskAboutNote)}>Ask…</button> : null}
-        {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."
-          onClick={() => action(onMoveToSideDocument)}>Move to side document</button> : null}
-        {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
-          onClick={() => action(onMoveToMargin)}>Move to margin</button> : null}
-      </div> : null}
-      {onToggleHiddenFromAI || onMakeRoadmap || onShowOnMap || onToggleBoard || onSetAgentEdit || onMakeFlashcards || onCheckClaims ? <div role="group" className="document-menu-section">
-        {onCheckClaims ? <button type="button" role="menuitem" title="Find the claims this document makes and check each against your other notes."
-          onClick={() => action(onCheckClaims)}>Check claims…</button> : null}
         {onMakeFlashcards ? <button type="button" role="menuitem" title="The AI suggests flashcards from this document; you choose which to add."
           onClick={() => action(onMakeFlashcards)}>Make flashcards…</button> : null}
-        {onReviewFlashcards && flashcardCount > 0 ? <button type="button" role="menuitem"
-          title="Study the flashcards written in this document and its notes."
-          onClick={() => action(onReviewFlashcards)}>
-          <span>Review cards</span>
-          <span className="document-menu-group-name">{flashcardCount}</span>
-        </button> : null}
-        {onShowOnMap ? <button type="button" role="menuitem" title="Show the map around this document, beside it (⌘G)."
-          onClick={() => action(onShowOnMap)}>Show on map</button> : null}
         {onMakeRoadmap ? <button type="button" role="menuitem" title="AI drafts a roadmap that builds on this document. It appears on the map, and you edit it there."
           onClick={() => action(onMakeRoadmap)}>✦ Make a roadmap from this…</button> : null}
+        {onCheckClaims ? <button type="button" role="menuitem" title="Find the claims this document makes and check each against your other notes."
+          onClick={() => action(onCheckClaims)}>Check claims…</button> : null}
         {onToggleBoard ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.nodeType === "board"}
           title="Show this document as one full-page canvas. Its first drawing becomes the board; its text stays below."
           onClick={() => action(onToggleBoard)}>
           <span>Board</span>
           <span className="document-menu-check" aria-hidden="true">{conversation.nodeType === "board" ? "✓" : ""}</span>
         </button> : null}
+      </div> : null}
+      {onToggleHiddenFromAI || onSetAgentEdit ? <div role="group" className="document-menu-section">
         {onToggleHiddenFromAI ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.hiddenFromAI === true}
           title="AI and connected apps can't read a hidden document, even when you search your whole workspace."
           onClick={() => action(onToggleHiddenFromAI)}>
@@ -382,20 +421,11 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           </button> : null}
         </div> : null}
       </div> : null}
-      {onToggleMaximize || onMinimize || onRestore || onClose ? <div role="group" className="document-menu-section">
-        {onToggleMaximize ? <button type="button" role="menuitem" onClick={() => action(onToggleMaximize)}>
-          {maximized ? "Leave full screen" : "Full screen"}
-        </button> : null}
-        {!minimized && onMinimize
-          ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
-        {minimized && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Restore document</button> : null}
-        {closed && onRestore ? <button type="button" role="menuitem" onClick={() => action(onRestore)}>Open document</button> : null}
-        {onClose ? <button type="button" role="menuitem" onClick={() => action(onClose)}>Close document</button> : null}
-      </div> : null}
       {onMoreFeatures ? <div role="group" className="document-menu-section">
         <button type="button" role="menuitem" className="document-menu-more-features" title="Turn on more tools in Settings → Features"
           onClick={() => { close(); onMoreFeatures(); }}>More features…</button>
       </div> : null}
+      </>}
     </div>, document.body) : null}
     {renameOpen && onRename ? createPortal(<div className="document-rename-backdrop"
       onPointerDown={(event) => event.stopPropagation()}

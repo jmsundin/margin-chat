@@ -48,6 +48,9 @@
 .document-menu .document-menu-group-setting { display: flex; align-items: center; gap: 8px; }
 .document-menu [role="menuitemradio"] { display: flex; align-items: flex-start; gap: 8px; }
 .document-menu-choices { padding-left: 12px; }
+/* More opens a second page of the menu; its first row goes back. */
+.document-menu .document-menu-more > span[aria-hidden] { margin-left: auto; color: var(--muted); }
+.document-menu .document-menu-back { display: flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 600; }
 .document-menu-group-name { margin-left: auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--muted); }
 .document-rename-backdrop {
   position: fixed;

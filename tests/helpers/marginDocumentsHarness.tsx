@@ -171,8 +171,10 @@ async function createSide() {
 function notePane(id: string): any { return element(`[data-document-id="${id}"]`); }
 async function documentAction(id: string, label: string) {
   await click(notePane(id).querySelector('.document-header [aria-haspopup="menu"]:not(.document-mode-trigger)'));
-  const action = [...browser.document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.trim() === label);
-  await click(action);
+  const find = () => [...browser.document.querySelectorAll('[role="menuitem"]')].find((item) => item.textContent?.trim() === label);
+  // Less common actions, such as New margin note, are on the menu's More page.
+  if (!find()) await click(browser.document.querySelector(".document-menu-more"));
+  await click(find());
 }
 try {
   await act(async () => root.render(createElement(WorkspaceApp, props)));

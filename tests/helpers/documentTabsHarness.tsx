@@ -342,15 +342,17 @@ try {
   checks.push("scope changes that hide a pin preserve keyboard focus in the surviving document tabs");
 
   await act(async () => enableGroups(true));
+  // Group is on the menu's More page.
+  const openMore = async () => { await click(options); await click(browser.document.querySelector(".document-menu-more")); };
   const openGroup = async () => {
-    await click(options);
+    await openMore();
     const groupSetting = browser.document.querySelector('[role="menuitem"][aria-haspopup="dialog"]');
     assert(groupSetting);
     await click(groupSetting);
     assert.equal(browser.document.querySelector('[role="menu"]'), null, "Opening group settings closes the tab menu.");
     assert.equal(browser.document.activeElement?.getAttribute("aria-label"), "Search groups");
   };
-  await click(options);
+  await openMore();
   let groupSetting = browser.document.querySelector('[role="menuitem"][aria-haspopup="dialog"]');
   assert.equal(groupSetting?.getAttribute("aria-label"), "Group for Main: Coding");
   for (let step = 0; step < 4 && browser.document.activeElement !== groupSetting; step += 1) {
@@ -364,7 +366,7 @@ try {
   assert.deepEqual(groupAssignments, [["main", "research"]]);
   assert.equal(browser.document.querySelector('[role="dialog"]'), null);
   assert.equal(browser.document.activeElement, options, "Choosing a group restores focus to the persistent tab options trigger.");
-  await click(options);
+  await openMore();
   assert.equal(browser.document.querySelector('[role="menuitem"][aria-haspopup="dialog"]')?.getAttribute("aria-label"), "Group for Main: Research");
   await click(options);
   await openGroup();
