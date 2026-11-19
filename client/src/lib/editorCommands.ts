@@ -1,7 +1,19 @@
 import { formatDocumentDateTime } from "./documentDateTime";
 
-/** Actions the phone keyboard bar sends to whichever editor holds the caret. */
-export type EditorCommand = "wiki-link" | "date-time" | "indent" | "outdent";
+/**
+ * Actions the phone keyboard bar sends to whichever editor holds the caret. Ask AI, the caret's
+ * ⋯ menu and voice typing are offered only when the field lists them in EDITOR_ACTIONS_ATTRIBUTE.
+ */
+export type EditorCommand = "wiki-link" | "date-time" | "indent" | "outdent" | EditorAction;
+export type EditorAction = "ask-ai" | "caret-menu" | "dictate";
+
+/** Space-separated EditorActions a field answers, e.g. `data-editor-actions="ask-ai dictate"`. */
+export const EDITOR_ACTIONS_ATTRIBUTE = "data-editor-actions";
+
+export function editorActionsOf(field: HTMLElement | null): EditorAction[] {
+  const value = field?.closest(`[${EDITOR_ACTIONS_ATTRIBUTE}]`)?.getAttribute(EDITOR_ACTIONS_ATTRIBUTE) ?? "";
+  return value.split(/\s+/u).filter((action): action is EditorAction => action === "ask-ai" || action === "caret-menu" || action === "dictate");
+}
 
 const EDITOR_COMMAND_EVENT = "margin-editor-command";
 
@@ -20,6 +32,7 @@ export function runEditorCommand(field: HTMLElement, command: EditorCommand) {
   const event = new CustomEvent<EditorCommand>(EDITOR_COMMAND_EVENT, { detail: command, cancelable: true });
   if (!field.dispatchEvent(event)) return true;
   if (!(field instanceof HTMLTextAreaElement || field instanceof HTMLInputElement) || field.readOnly || field.disabled) return false;
+  if (command === "ask-ai" || command === "caret-menu" || command === "dictate") return false;
   if (command === "wiki-link") return insertIntoField(field, "[[");
   if (command === "date-time") return insertIntoField(field, formatDocumentDateTime());
   if (!(field instanceof HTMLTextAreaElement)) return false;

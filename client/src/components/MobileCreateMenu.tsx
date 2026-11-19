@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SelectionIcon } from "./SelectionToolbar";
+import { MicIcon } from "./DictationButton";
 import "./MobileCreateMenu.css";
 
 /** What a new side document or margin note will point at. */
@@ -18,13 +19,15 @@ type MobileCreateMenuProps = {
   onMarginNote: () => void;
   /** Files picked from the phone, added to the vault the way Upload files does. */
   onUpload: (files: File[]) => void;
+  /** Voice typing into the open document; the phone has no mic button over the text. */
+  onVoiceTyping?: () => boolean;
 };
 
 const SIDE_HINT: Record<MobileCreateTarget, string> = { selection: "From the selected text", paragraph: "From this paragraph", document: "Beside this document" };
 const NOTE_HINT: Record<MobileCreateTarget, string> = { selection: "On the selected text", paragraph: "On this paragraph", document: "On this document" };
 
 /** The phone's + button: a new document in a new tab, a side document, a margin note or files from the phone. */
-export function MobileCreateMenu({ slot, prepare, onNewDocument, onNewBoard, onSideDocument, onMarginNote, onUpload }: MobileCreateMenuProps) {
+export function MobileCreateMenu({ slot, prepare, onNewDocument, onNewBoard, onSideDocument, onMarginNote, onUpload, onVoiceTyping }: MobileCreateMenuProps) {
   const [target, setTarget] = useState<MobileCreateTarget | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const uploadRef = useRef<HTMLInputElement>(null);
@@ -91,6 +94,9 @@ export function MobileCreateMenu({ slot, prepare, onNewDocument, onNewBoard, onS
           <path d="M8 10.5V2.5M5 5.5l3-3 3 3" /><path d="M2.5 10v3.5h11V10" />
         </svg><span><strong>Upload file</strong><small>Notes, PDFs or photos from this phone</small></span>
       </button>
+      {onVoiceTyping ? <button type="button" role="menuitem" onClick={run(() => { onVoiceTyping(); })}>
+        <MicIcon size={20} /><span><strong>Voice typing</strong><small>Talk into this document</small></span>
+      </button> : null}
     </div>, document.body) : null}
   </>;
 }

@@ -9,3 +9,4 @@
 .mobile-create-menu span { display: grid; gap: 1px; }
 .mobile-create-menu strong { font-size: 15px; font-weight: 600; }
 .mobile-create-menu small { font-size: 12px; color: var(--muted); }
+.mobile-create-menu button > svg:not(.selection-toolbar-icon) { flex: none; color: var(--muted); }

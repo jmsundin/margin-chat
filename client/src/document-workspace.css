@@ -257,3 +257,13 @@
 .document-panel .document-roadmap-chip span { font-weight: 600; }
 .document-panel .document-roadmap-chip:hover { background: color-mix(in srgb, #9b8cff 22%, transparent); }
 .document-panel .document-roadmap-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Phones: the header slides away while a page is scrolled down and back on the way up
+   (usePhoneHeaderTuck). It stays while its drop-down or the sidebar is open. */
+@media (max-width: 700px) {
+  .document-workspace-header { transition: margin-top .22s ease; }
+  body[data-phone-header="tucked"]:not(:has(.document-header-backdrop, .workspace-sidebar-pane:not(.is-collapsed))) .document-workspace-header { margin-top: calc(-1 * var(--tucked-header-height, 44px)); }
+}
+@media (max-width: 700px) and (prefers-reduced-motion: reduce) {
+  .document-workspace-header { transition: none; }
+}
