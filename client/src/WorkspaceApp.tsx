@@ -306,6 +306,8 @@ import type {
 
 // Map View pulls in the graph canvases and ELK layout; load it on first visit.
 const KnowledgeGraphWorkspace = lazy(() => import("./components/KnowledgeGraphWorkspace"));
+// Help carries every guide's text; load it the first time it is opened.
+const HelpPanel = lazy(() => import("./components/HelpPanel"));
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 
@@ -940,6 +942,8 @@ function WorkspaceAppContent({
   const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
   const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
+  /** Help: the guides panel beside the workspace. */
+  const [helpOpen, setHelpOpen] = useState(false);
   const [chatImportReminder, setChatImportReminder] = useState(false);
   // The next time the app opens, this picture of the workspace shows while it starts.
   // Days after the first visit, someone who never brought in old chats is offered it once.
@@ -2518,6 +2522,17 @@ function WorkspaceAppContent({
     }
     document.addEventListener("keydown", handleSidebarShortcut, true);
     return () => document.removeEventListener("keydown", handleSidebarShortcut, true);
+  }, []);
+
+  // F1 opens and closes Help, from anywhere including an editor.
+  useEffect(() => {
+    function handleHelpShortcut(event: KeyboardEvent) {
+      if (event.key !== "F1" || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+      event.preventDefault();
+      if (!event.repeat) setHelpOpen((open) => !open);
+    }
+    document.addEventListener("keydown", handleHelpShortcut, true);
+    return () => document.removeEventListener("keydown", handleHelpShortcut, true);
   }, []);
 
   // ⌃1–⌃9 go to a space in its listed order, ⌃0 to No space; ⌘D keeps the visiting document in the space you're in.
@@ -7625,6 +7640,7 @@ function WorkspaceAppContent({
               onOpenInbox={guest ? undefined : () => setCaptureInboxOpen(true)}
               onImportChatHistory={() => setHistoryImportOpen(true)}
               onTakeTour={inExtension ? undefined : startTour}
+              onOpenHelp={() => { setHelpOpen(true); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onOpenProfile={() => {
                 setProfileSaveError(null);
                 setProfileInitialTab(null);
@@ -8280,6 +8296,19 @@ function WorkspaceAppContent({
             onOpenChat={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
             onClose={() => setHistoryImportOpen(false)}
           />}
+          {helpOpen ? <Suspense fallback={null}><HelpPanel
+            onClose={() => setHelpOpen(false)}
+            canRun={(action) => action.kind === "tour" ? !inExtension
+              : action.kind === "settings" ? !(guest && (action.section === "billing" || action.section === "api-keys" || action.section === "agents"))
+              : true}
+            onAction={(action) => {
+              // On a phone Help fills the screen, so it steps aside for what the button opens.
+              if (isMobileViewport || action.kind === "tour") setHelpOpen(false);
+              if (action.kind === "settings") { setProfileSaveError(null); setProfileInitialTab(action.section); setProfileModalOpen(true); }
+              else if (action.kind === "tour") startTour();
+              else if (action.kind === "search") handleOpenSearch();
+              else setHistoryImportOpen(true);
+            }} /></Suspense> : null}
           <SettingsPage
             initialTab={profileInitialTab}
             onOpenWebsiteSettings={onOpenWebsiteSettings}

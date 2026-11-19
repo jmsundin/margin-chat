@@ -1,0 +1,61 @@
+/* Help sits beside the workspace, under dialogs: a guide's button can open Settings on top of it. */
+.help-panel {
+  background: var(--panel-strong, var(--bg)); border-left: 1px solid var(--line-strong); bottom: 0; box-shadow: var(--shadow);
+  color: var(--ink); display: flex; flex-direction: column; font-size: .88rem; position: fixed; right: 0; top: 0;
+  width: min(400px, 100vw); z-index: calc(var(--z-modal) - 1);
+  padding-bottom: env(safe-area-inset-bottom); padding-top: env(safe-area-inset-top);
+}
+.help-panel button { font: inherit; }
+.help-head { align-items: center; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; padding: 10px 12px 10px 16px; }
+.help-head-title { font-size: 1rem; font-weight: 600; }
+.help-toolbar { align-items: center; border-bottom: 1px solid var(--line); display: flex; gap: 4px; padding: 8px 10px; }
+.help-icon-button {
+  align-items: center; background: transparent; border: 0; border-radius: 8px; color: var(--muted); cursor: pointer;
+  display: inline-flex; flex: none; height: 32px; justify-content: center; width: 32px;
+}
+.help-icon-button:hover:not(:disabled) { background: var(--button-surface); color: var(--ink); }
+.help-icon-button:disabled { cursor: default; opacity: .35; }
+.help-search {
+  background: var(--button-surface); border: 1px solid transparent; border-radius: 8px; color: var(--ink); flex: 1; font: inherit;
+  min-width: 0; padding: 6px 10px;
+}
+.help-search:focus { border-color: var(--line-strong); outline: none; }
+.help-body { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 14px 16px 24px; }
+.help-body :is(h2, h3):focus { outline: none; }
+
+.help-section-title { color: var(--muted); font-size: .76rem; font-weight: 600; letter-spacing: .02em; margin: 14px 0 6px; }
+.help-section-title:first-child { margin-top: 0; }
+.help-title { font-size: 1.2rem; font-weight: 650; line-height: 1.25; margin: 0 0 6px; }
+.help-lead { color: var(--muted); line-height: 1.5; margin: 0 0 14px; }
+.help-list, .help-related, .help-bullets, .help-steps { list-style: none; margin: 0; padding: 0; }
+.help-list { display: flex; flex-direction: column; gap: 2px; }
+.help-row {
+  align-items: center; background: transparent; border: 0; border-radius: 10px; color: var(--ink); cursor: pointer; display: flex;
+  gap: 10px; padding: 9px 10px; text-align: left; width: 100%;
+}
+.help-row:hover { background: var(--button-surface); }
+.help-row > svg { color: var(--muted); flex: none; }
+.help-row-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.help-row-title { font-weight: 600; }
+.help-row-summary { color: var(--muted); display: -webkit-box; font-size: .8rem; line-height: 1.4; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; }
+.help-count { color: var(--muted); flex: none; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.help-result-count { color: var(--muted); font-size: .78rem; margin: 0 0 6px; }
+.help-empty { color: var(--muted); line-height: 1.5; margin: 0; }
+
+.help-crumb { background: transparent; border: 0; color: var(--muted); cursor: pointer; font-size: .78rem; margin: 0 0 6px; padding: 0; }
+.help-crumb:hover, .help-link:hover { text-decoration: underline; }
+.help-link { background: transparent; border: 0; color: var(--ink); cursor: pointer; padding: 0; text-align: left; text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.help-action { background: var(--ink); border: 0; border-radius: 8px; color: var(--bg, #0b1115); cursor: pointer; font-weight: 600; margin: 0 0 6px; padding: 8px 14px; }
+.help-guide h3 { font-size: .92rem; font-weight: 650; margin: 18px 0 8px; }
+.help-bullets { display: flex; flex-direction: column; gap: 6px; line-height: 1.5; list-style: disc; padding-left: 18px; }
+.help-steps { counter-reset: help-step; display: flex; flex-direction: column; gap: 12px; }
+.help-steps > li { counter-increment: help-step; display: flex; flex-direction: column; gap: 2px; line-height: 1.5; padding-left: 34px; position: relative; }
+.help-steps > li::before {
+  align-items: center; background: var(--button-surface); border-radius: 999px; content: counter(help-step); display: flex;
+  font-size: .76rem; font-weight: 600; height: 22px; justify-content: center; left: 0; position: absolute; top: 0; width: 22px;
+}
+.help-related { display: flex; flex-direction: column; gap: 6px; }
+
+@media (max-width: 640px) {
+  .help-panel { border-left: 0; width: 100vw; z-index: var(--z-modal); }
+}
