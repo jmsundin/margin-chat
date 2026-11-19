@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useRef, useState } from "react";
+import { useContext, useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import type { Conversation, ConversationGroup } from "../types";
 import { getConversationGroupId } from "../lib/conversationGroups";
@@ -309,7 +309,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
       </div> : null}
       {hasMore ? <div role="group" className="document-menu-section">
         <button type="button" role="menuitem" className="document-menu-group-setting document-menu-more" aria-haspopup="menu"
-          title="Groups, spaces, flashcards, roadmaps, AI access and page view" onClick={() => setMore(true)}>
+          title="Make, organize, view and AI" onClick={() => setMore(true)}>
           <span>More</span><span aria-hidden="true">›</span>
         </button>
       </div> : null}
@@ -319,18 +319,21 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <span aria-hidden="true">‹</span><span>More</span>
         </button>
       </div>
-      {onAssignGroup || onRevealInFolder || (onMinimize && phone && !minimized) ? <div role="group" className="document-menu-section">
+      {onNewMarginNote || onMakeFlashcards || onMakeRoadmap ? <MenuSection label="Make">
+        {onNewMarginNote ? <button type="button" role="menuitem" aria-label="New margin note"
+          onClick={() => action(onNewMarginNote)}>Margin note</button> : null}
+        {onMakeFlashcards ? <button type="button" role="menuitem" title="The AI suggests flashcards from this document; you choose which to add."
+          onClick={() => action(onMakeFlashcards)}>Flashcards…</button> : null}
+        {onMakeRoadmap ? <button type="button" role="menuitem" title="AI drafts a roadmap that builds on this document. It appears on the map, and you edit it there."
+          onClick={() => action(onMakeRoadmap)}>Roadmap…</button> : null}
+      </MenuSection> : null}
+      {onAssignGroup || spaceActions || onRevealInFolder || (onMinimize && phone && !minimized) ? <MenuSection label="Organize">
         {onAssignGroup ? <button type="button" role="menuitem" className="document-menu-group-setting"
           aria-label={`Group for ${title}: ${groupName}`} aria-haspopup="dialog"
           onClick={() => { close(true); setGroupOpen(true); }}>
           <span>Group</span><span className="document-menu-group-name" title={groupName}>{groupName}</span><span aria-hidden="true">›</span>
         </button> : null}
-        {onRevealInFolder ? <button type="button" role="menuitem" title="Show this document's file in your vault folder."
-          onClick={() => action(onRevealInFolder)}>{revealLabel}</button> : null}
-        {!minimized && onMinimize && phone
-          ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize document</button> : null}
-      </div> : null}
-      {spaceActions ? <div role="group" className="document-menu-section">
+        {spaceActions ? <>
         <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={spacesOpen}
           title="Keep this document, with its side documents and notes, in a space you can come back to."
           onClick={() => setSpacesOpen((value) => !value)}>
@@ -346,23 +349,56 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           </button>)}
           <button type="button" role="menuitem" onClick={() => { close(true); spaceActions.onCreateWith(conversation.id); }}>New space with this</button>
         </div> : null}
-      </div> : null}
-      {onNewMarginNote || onMakeFlashcards || onMakeRoadmap || onCheckClaims || onToggleBoard ? <div role="group" className="document-menu-section">
-        {onNewMarginNote ? <button type="button" role="menuitem" onClick={() => action(onNewMarginNote)}>New margin note</button> : null}
-        {onMakeFlashcards ? <button type="button" role="menuitem" title="The AI suggests flashcards from this document; you choose which to add."
-          onClick={() => action(onMakeFlashcards)}>Make flashcards…</button> : null}
-        {onMakeRoadmap ? <button type="button" role="menuitem" title="AI drafts a roadmap that builds on this document. It appears on the map, and you edit it there."
-          onClick={() => action(onMakeRoadmap)}>✦ Make a roadmap from this…</button> : null}
-        {onCheckClaims ? <button type="button" role="menuitem" title="Find the claims this document makes and check each against your other notes."
-          onClick={() => action(onCheckClaims)}>Check claims…</button> : null}
+        </> : null}
+        {onRevealInFolder ? <button type="button" role="menuitem" title="Show this document's file in your vault folder."
+          onClick={() => action(onRevealInFolder)}>{revealLabel}</button> : null}
+        {!minimized && onMinimize && phone
+          ? <button type="button" role="menuitem" onClick={() => action(onMinimize)}>Minimize</button> : null}
+      </MenuSection> : null}
+      {pageView || onToggleBoard ? <MenuSection label="View">
+        {pageView ? <>
+          <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={pageViewOpen}
+            title="How this page shows its Markdown, and whether it marks who wrote what."
+            onClick={() => setPageViewOpen((value) => !value)}>
+            <span>Page view</span>
+            <span className="document-menu-group-name">{languageLearning?.on ? "Language" : PAGE_MODES.find((option) => option.mode === readDocumentViewMode())!.label}</span>
+            <span aria-hidden="true">{pageViewOpen ? "⌄" : "›"}</span>
+          </button>
+          {pageViewOpen ? <div role="group" aria-label="Page view" className="document-menu-choices">
+            {PAGE_MODES.filter((option) => !onPickWritingView || option.mode !== "reading").map((option) => {
+              const checked = !languageLearning?.on && readDocumentViewMode() === option.mode;
+              return <button key={option.mode} type="button" role="menuitemradio" aria-checked={checked}
+                title={option.title} onClick={() => { close(true); if (languageLearning?.on) languageLearning.onToggle(false); saveDocumentViewMode(option.mode); onPickWritingView?.(); }}>
+                <span>{option.label}</span>
+                <span className="document-menu-check" aria-hidden="true">{checked ? "✓" : ""}</span>
+              </button>;
+            })}
+            {languageLearning ? <button type="button" role="menuitemradio" aria-checked={languageLearning.on}
+              title="Tap, click or select text to see what it means" onClick={() => { close(true); languageLearning.onToggle(!languageLearning.on); }}>
+              <span>Language learning</span>
+              <span className="document-menu-check" aria-hidden="true">{languageLearning.on ? "✓" : ""}</span>
+            </button> : null}
+            {AUTHORSHIP_MODES.map((option) => <button key={option.mode} type="button" role="menuitemcheckbox" aria-checked={authorship.mode === option.mode}
+              title={option.title} onClick={() => { close(true); saveAuthorshipMode(authorship.mode === option.mode ? "off" : option.mode); }}>
+              <span>{option.label}</span>
+              <span className="document-menu-check" aria-hidden="true">{authorship.mode === option.mode ? "✓" : ""}</span>
+            </button>)}
+            {authorship.onlyMine ? <button type="button" role="menuitemcheckbox" aria-checked title="Show every line again"
+              onClick={() => { close(true); saveAuthorshipOnlyMine(false); }}>
+              <span>Only my lines</span><span className="document-menu-check" aria-hidden="true">✓</span>
+            </button> : null}
+          </div> : null}
+        </> : null}
         {onToggleBoard ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.nodeType === "board"}
           title="Show this document as one full-page canvas. Its first drawing becomes the board; its text stays below."
           onClick={() => action(onToggleBoard)}>
           <span>Board</span>
           <span className="document-menu-check" aria-hidden="true">{conversation.nodeType === "board" ? "✓" : ""}</span>
         </button> : null}
-      </div> : null}
-      {onToggleHiddenFromAI || onSetAgentEdit ? <div role="group" className="document-menu-section">
+      </MenuSection> : null}
+      {onCheckClaims || onToggleHiddenFromAI || onSetAgentEdit ? <MenuSection label="AI">
+        {onCheckClaims ? <button type="button" role="menuitem" title="Find the claims this document makes and check each against your other notes."
+          onClick={() => action(onCheckClaims)}>Check claims…</button> : null}
         {onToggleHiddenFromAI ? <button type="button" role="menuitemcheckbox" aria-checked={conversation.hiddenFromAI === true}
           title="AI and connected apps can't read a hidden document, even when you search your whole workspace."
           onClick={() => action(onToggleHiddenFromAI)}>
@@ -387,41 +423,8 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
             </button>)}
           </div> : null}
         </> : null}
-      </div> : null}
-      {pageView ? <div role="group" className="document-menu-section">
-        <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={pageViewOpen}
-          title="How this page shows its Markdown, and whether it marks who wrote what."
-          onClick={() => setPageViewOpen((value) => !value)}>
-          <span>Page view</span>
-          <span className="document-menu-group-name">{languageLearning?.on ? "Language" : PAGE_MODES.find((option) => option.mode === readDocumentViewMode())!.label}</span>
-          <span aria-hidden="true">{pageViewOpen ? "⌄" : "›"}</span>
-        </button>
-        {pageViewOpen ? <div role="group" aria-label="Page view" className="document-menu-choices">
-          {PAGE_MODES.filter((option) => !onPickWritingView || option.mode !== "reading").map((option) => {
-            const checked = !languageLearning?.on && readDocumentViewMode() === option.mode;
-            return <button key={option.mode} type="button" role="menuitemradio" aria-checked={checked}
-              title={option.title} onClick={() => { close(true); if (languageLearning?.on) languageLearning.onToggle(false); saveDocumentViewMode(option.mode); onPickWritingView?.(); }}>
-              <span>{option.label}</span>
-              <span className="document-menu-check" aria-hidden="true">{checked ? "✓" : ""}</span>
-            </button>;
-          })}
-          {languageLearning ? <button type="button" role="menuitemradio" aria-checked={languageLearning.on}
-            title="Tap, click or select text to see what it means" onClick={() => { close(true); languageLearning.onToggle(!languageLearning.on); }}>
-            <span>Language learning</span>
-            <span className="document-menu-check" aria-hidden="true">{languageLearning.on ? "✓" : ""}</span>
-          </button> : null}
-          {AUTHORSHIP_MODES.map((option) => <button key={option.mode} type="button" role="menuitemcheckbox" aria-checked={authorship.mode === option.mode}
-            title={option.title} onClick={() => { close(true); saveAuthorshipMode(authorship.mode === option.mode ? "off" : option.mode); }}>
-            <span>{option.label}</span>
-            <span className="document-menu-check" aria-hidden="true">{authorship.mode === option.mode ? "✓" : ""}</span>
-          </button>)}
-          {authorship.onlyMine ? <button type="button" role="menuitemcheckbox" aria-checked title="Show every line again"
-            onClick={() => { close(true); saveAuthorshipOnlyMine(false); }}>
-            <span>Only my lines</span><span className="document-menu-check" aria-hidden="true">✓</span>
-          </button> : null}
-        </div> : null}
-      </div> : null}
-      {onMoreFeatures ? <div role="group" className="document-menu-section">
+      </MenuSection> : null}
+      {onMoreFeatures ? <div role="group" className="document-menu-section document-menu-footer">
         <button type="button" role="menuitem" className="document-menu-more-features" title="Turn on more tools in Settings → Features"
           onClick={() => { close(); onMoreFeatures(); }}>More features…</button>
       </div> : null}
@@ -454,4 +457,13 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
       onCreate={groupPicker.onCreateAndAssign ? (name) => groupPicker.onCreateAndAssign?.(conversation.id, name) : undefined}
       onClose={() => setGroupOpen(false)} /> : null}
   </>;
+}
+
+/** A titled block of the More page: a small heading over a few related actions. */
+function MenuSection({ label, children }: { label: string; children: ReactNode }) {
+  const id = useId();
+  return <div role="group" aria-labelledby={id} className="document-menu-section">
+    <div id={id} className="document-menu-heading" aria-hidden="true">{label}</div>
+    {children}
+  </div>;
 }

@@ -318,7 +318,7 @@ try {
   checks.push('a note across two lines joins them into one block and anchors the whole passage');
 
   const previousIds = new Set(Object.keys(latest.conversations));
-  await documentAction(noteId, 'New margin note');
+  await documentAction(noteId, 'Margin note');
   const nestedId = Object.keys(latest.conversations).find((id) => !previousIds.has(id))!;
   assert(nestedId);
   assert.equal(latest.conversations[nestedId].parentId, noteId);
