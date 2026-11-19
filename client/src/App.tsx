@@ -6,10 +6,11 @@ import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserW
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
 import OAuthConsent from "./components/OAuthConsent";
+import TrialOffer from "./components/TrialOffer";
 import { AUTH_PATHS, resolveSiteRoute, type SiteRoute } from "./lib/siteRoutes";
 import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
 import {
-  requestAuthSession, requestBillingDashboard, requestConfirmCheckoutSession, requestCreateBillingPortalSession, requestCreateTopUpSession,
+  requestAuthSession, requestBillingDashboard, requestConfirmCheckoutSession, requestCreateBillingPortalSession, requestCreateTopUpSession, requestCancelTrial, requestPlanTrial,
   requestCreateCheckoutSession, requestUpgradeToPlus, requestLogin, requestLogout, requestPasswordReset,
   requestPasswordResetConfirm, requestVerifyEmail, requestSignup, requestUpdateApiKeys, requestUpdateProfile, requestChangePassword, requestDeleteAccount, ApiError,
 } from "./lib/api";
@@ -21,7 +22,7 @@ import DictationControl from "./components/DictationControl";
 import DesktopAppPrompt from "./components/DesktopAppPrompt";
 import { isGuestPath } from "./lib/guestMode";
 import { syncPaper } from "./lib/quietPage";
-import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData, BillingPlan } from "./types";
+import type { ApiKeyProvider, AuthenticatedUser, BillingDashboardData, BillingPlan, PlanTrial } from "./types";
 
 // Documents open in the block editor, so fetch its chunk alongside the workspace rather than after it renders.
 let workspaceModule: Promise<typeof import("./WorkspaceApp")> | null = null;
@@ -103,6 +104,8 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
   const [billingDashboardLoading, setBillingDashboardLoading] = useState(false);
   const [billingDashboardError, setBillingDashboardError] = useState<string | null>(null);
   const [billingOpenRequest, setBillingOpenRequest] = useState(0);
+  // Set by a fresh signup when the server offers a free trial; skipping or leaving clears it.
+  const [trialOffer, setTrialOffer] = useState<{ userId: string; trial: PlanTrial } | null>(null);
   const [checkoutReturn, setCheckoutReturn] = useState(() => getCheckoutReturn(new URLSearchParams(window.location.search)));
   const [billingPortalReturn, setBillingPortalReturn] = useState(() => new URLSearchParams(window.location.search).get("billing") === "return");
   const [route, setRoute] = useState<SiteRoute>(() => resolveSiteRoute(window.location, Boolean(extension)));
@@ -396,6 +399,8 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
 
     try {
       const user = await requestSignup(args);
+      const trial = extension || user.role === "admin" || user.billing.status !== "inactive" ? null : await requestPlanTrial();
+      setTrialOffer(trial ? { userId: user.id, trial } : null);
       rememberOfflineUser(user);
       setAuthUser(user);
       setAuthStatus("authenticated");
@@ -538,12 +543,34 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
     }
   }
 
-  async function handleStartSubscription(plan: BillingPlan = "plus") {
+  async function handleStartSubscription(plan: BillingPlan = "plus", options: { trial?: boolean } = {}) {
     if (extension) { openWebsiteSettings("billing"); return; }
     await redirectToStripe(
-      (userId) => requestCreateCheckoutSession(userId, plan),
+      (userId) => requestCreateCheckoutSession(userId, plan, options.trial === true),
       "Unable to start the Stripe checkout flow.",
     );
+  }
+
+  async function handleCancelTrial() {
+    if (extension) { openWebsiteSettings("billing"); return; }
+    const userId = authUserIdRef.current;
+    if (!userId) return;
+    setBillingSubmitting(true);
+    setBillingError(null);
+    try {
+      const result = await requestCancelTrial(userId);
+      if (authUserIdRef.current !== userId) return;
+      if (result.user?.id === userId) {
+        rememberOfflineUser(result.user);
+        setAuthUser(result.user);
+      }
+      setBillingNotice({ kind: "success", message: "Your free trial is canceled and your card won't be charged. Your cloud vault is still there to download from Settings." });
+      await refreshBilling();
+    } catch (error) {
+      if (authUserIdRef.current === userId) setBillingError(getErrorText(error, "Unable to cancel your free trial. Nothing has changed."));
+    } finally {
+      if (authUserIdRef.current === userId) setBillingSubmitting(false);
+    }
   }
 
   async function handleUpgradeToPlus() {
@@ -653,6 +680,19 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
     );
   }
 
+  if (trialOffer && trialOffer.userId === authUser.id && authUser.billing.status === "inactive" && !extension) {
+    return (
+      <TrialOffer
+        trial={trialOffer.trial}
+        errorMessage={billingError}
+        isSubmitting={billingSubmitting}
+        onSkip={() => { setBillingError(null); setTrialOffer(null); }}
+        onStart={() => handleStartSubscription("plus", { trial: true })}
+        user={authUser}
+      />
+    );
+  }
+
   return (
     <Suspense fallback={<div className="app-shell" aria-busy="true" />}>
     {/* The extension's frame sits inside other sites, which must not get to grant or hold a microphone. */}
@@ -686,6 +726,7 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
       onManageBilling={handleManageBilling}
       onStartSubscription={handleStartSubscription}
       onUpgradeToPlus={handleUpgradeToPlus}
+      onCancelTrial={handleCancelTrial}
       onSetTheme={setTheme}
       onUpdateProfile={handleUpdateProfile}
       onChangePassword={handleChangePassword}

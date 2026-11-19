@@ -127,14 +127,23 @@ export interface BillingDashboardData {
   plan: { monthlyAmountMicros: number; currency: "usd"; rollover: boolean };
   /** Present when the server offers the Cloud plan. */
   cloudPlan?: { monthlyPriceCents: number; currency: "usd"; includesCreditMicros: number } | null;
+  /** Present when the server offers a card-backed free trial of Plus; eligible once per account. */
+  trial?: PlanTrial & { eligible: boolean } | null;
   user?: AuthenticatedUser;
 }
+
+/** The free trial of Plus: its length and the hosted AI credit it starts with (may be zero). */
+export interface PlanTrial { days: number; creditMicros: number }
 
 export interface CheckoutConfirmation {
   confirmed: boolean;
   status: string;
   purchaseKind: "subscription" | "hosted_credits";
   plan?: BillingPlan;
+  /** A free trial started: nothing was charged, and the first payment is due at trialEnd. */
+  trial?: boolean;
+  amountMicros?: number;
+  trialEnd?: string | null;
   user?: AuthenticatedUser;
 }
 

@@ -18,9 +18,10 @@ function fixture(user: any = { id: "owner", billing: { creditBalanceMicros: 0 } 
     runtimeConfig: { host: "localhost", port: 8787 },
     authService: { getAuthContext: async () => ({ user: current }) },
     billingService: {
-      createSubscriptionCheckoutSession: async (args: any) => { calls.push(["subscription", args.user.id, args.plan]); return { url: "https://checkout.stripe.com/subscription" }; },
+      createSubscriptionCheckoutSession: async (args: any) => { calls.push(["subscription", args.user.id, args.plan, ...(args.trial ? ["trial"] : [])]); return { url: "https://checkout.stripe.com/subscription" }; },
       createTopUpCheckoutSession: async (args: any) => { calls.push(["topup", args.user.id, args.amountCents]); return { url: "https://checkout.stripe.com/topup" }; },
       getBillingDashboard: async (userId: string) => { calls.push(["dashboard", userId]); return { balanceMicros: 20_000_000, reservedMicros: 0, transactions: [] }; },
+      cancelTrial: async ({ user }: any) => { calls.push(["cancel-trial", user.id]); current = { ...user, billing: { status: "canceled" } }; return { canceled: true }; },
       upgradeToPlus: async ({ user }: any) => { calls.push(["upgrade", user.id]); return { upgraded: true, plan: "plus", credited: true, amountMicros: 20_000_000 }; },
       confirmCheckout: async ({ sessionId, user }: any) => { calls.push(["confirm", user.id, sessionId]); current = { ...user, billing: { creditBalanceMicros: 20_000_000 } }; return { confirmed: true, status: "active", purchaseKind: "subscription" }; },
     },
@@ -34,18 +35,19 @@ function fixture(user: any = { id: "owner", billing: { creditBalanceMicros: 0 } 
 
 describe("billing account routes", () => {
   test("plans route says whether Cloud is configured, without signing in", async () => {
-    for (const [env, cloud] of [[{}, false], [{ STRIPE_CLOUD_PRICE_ID: "price_cloud" }, true]] as const) {
+    for (const [env, cloud, trial] of [[{}, false, null], [{ STRIPE_CLOUD_PRICE_ID: "price_cloud" }, true, null],
+      [{ STRIPE_TRIAL_DAYS: "7", STRIPE_TRIAL_CREDIT_CENTS: "200" }, false, { days: 7, creditMicros: 2_000_000 }]] as const) {
       const handler = createApiHandler({ runtimeConfig: { host: "localhost", port: 8787 }, env, authService: { getAuthContext: async () => { throw new Error("no auth needed"); } }, billingService: {} });
       const res = response();
       await handler(Object.assign(Readable.from([]), { method: "GET", url: "/api/billing/plans", headers: { host: "localhost" } }), res);
       expect(res.status).toBe(200);
-      expect(JSON.parse(res.body)).toEqual({ cloud });
+      expect(JSON.parse(res.body)).toEqual({ cloud, trial });
     }
   });
 
   test("blocks an old tab from paying for a different signed-in account", async () => {
     const f = fixture();
-    for (const [method, path] of [["GET", "dashboard"], ["POST", "checkout"], ["POST", "topup"], ["POST", "upgrade"], ["POST", "checkout/confirm"], ["POST", "portal"]]) {
+    for (const [method, path] of [["GET", "dashboard"], ["POST", "checkout"], ["POST", "topup"], ["POST", "upgrade"], ["POST", "trial/cancel"], ["POST", "checkout/confirm"], ["POST", "portal"]]) {
       const result = await f.request(method, `/api/billing/${path}`, { amountCents: 2000 }, { "x-margin-billing-user": "previous-user" });
       expect(result.status).toBe(409);
       expect(result.body.error).toContain("account changed");
@@ -72,6 +74,17 @@ describe("billing account routes", () => {
     expect(upgrade.status).toBe(200);
     expect(upgrade.body).toMatchObject({ upgraded: true, credited: true, user: { id: "owner" } });
     expect(f.calls).toEqual([["subscription", "owner", "cloud"], ["subscription", "owner", "plus"], ["upgrade", "owner"]]);
+  });
+
+  test("a trial checkout needs trial: true exactly; canceling a trial returns the fresh account", async () => {
+    const f = fixture();
+    expect((await f.request("POST", "/api/billing/checkout", { plan: "plus", trial: true })).status).toBe(200);
+    expect((await f.request("POST", "/api/billing/checkout", { plan: "plus", trial: "yes" })).status).toBe(200);
+    const canceled = await f.request("POST", "/api/billing/trial/cancel");
+    expect(canceled.status).toBe(200);
+    expect(canceled.headers["Cache-Control"]).toBe("no-store");
+    expect(canceled.body).toMatchObject({ canceled: true, user: { id: "owner", billing: { status: "canceled" } } });
+    expect(f.calls).toEqual([["subscription", "owner", "plus", "trial"], ["subscription", "owner", "plus"], ["cancel-trial", "owner"]]);
   });
 
   test("confirmation returns a freshly loaded account after payment credit is applied", async () => {

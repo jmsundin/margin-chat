@@ -550,8 +550,9 @@ interface WorkspaceAppProps {
   billingSubmitting: boolean;
   onLogout: () => void;
   onManageBilling: () => void | Promise<void>;
-  onStartSubscription: (plan?: BillingPlan) => void | Promise<void>;
+  onStartSubscription: (plan?: BillingPlan, options?: { trial?: boolean }) => void | Promise<void>;
   onUpgradeToPlus?: () => void | Promise<void>;
+  onCancelTrial?: () => void | Promise<void>;
   onSetTheme: Dispatch<SetStateAction<ThemeMode>>;
   onUpdateProfile: (args: {
     displayName: string;
@@ -793,6 +794,7 @@ function WorkspaceAppContent({
   onManageBilling,
   onStartSubscription,
   onUpgradeToPlus,
+  onCancelTrial,
   onSetTheme,
   onUpdateProfile,
   onChangePassword,
@@ -8310,6 +8312,7 @@ function WorkspaceAppContent({
             onDeleteAccount={onDeleteAccount}
             onStartSubscription={onStartSubscription}
             onUpgradeToPlus={onUpgradeToPlus}
+            onCancelTrial={onCancelTrial}
             onSave={handleSaveProfile}
             user={user}
             theme={theme}

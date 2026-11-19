@@ -13,6 +13,7 @@ import type {
   BillingDashboardData,
   BillingPlan,
   CheckoutConfirmation,
+  PlanTrial,
   ConversationDocument,
   Message,
 } from "../types";
@@ -1198,9 +1199,37 @@ export async function requestUpdateApiKeys(args: {
   return payload.apiKeys;
 }
 
-export async function requestCreateCheckoutSession(expectedUserId?: string, plan: BillingPlan = "plus"): Promise<string> {
+/** The free trial of Plus the server offers new accounts, or null when it offers none. */
+export async function requestPlanTrial(): Promise<PlanTrial | null> {
+  try {
+    const response = await apiFetch("/api/billing/plans");
+    const payload = await readJson<{ trial?: { days?: unknown; creditMicros?: unknown } | null }>(response);
+    const days = response.ok ? Number(payload?.trial?.days) : 0;
+    const creditMicros = Number(payload?.trial?.creditMicros);
+    if (!Number.isSafeInteger(days) || days <= 0) return null;
+    return { days, creditMicros: Number.isSafeInteger(creditMicros) && creditMicros > 0 ? creditMicros : 0 };
+  } catch { return null; }
+}
+
+/** Ends a free trial at once, so the card on file is never charged. */
+export async function requestCancelTrial(expectedUserId?: string): Promise<{ canceled: true; user?: AuthenticatedUser }> {
+  const response = await apiFetch("/api/billing/trial/cancel", {
+    credentials: "same-origin",
+    headers: expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : undefined,
+    method: "POST",
+  });
+  const payload = await readJson<{ canceled?: boolean; user?: AuthenticatedUser } & ErrorPayload>(response);
+  ensureOk(response, payload, "Unable to cancel your free trial. Nothing has changed.");
+  if (!payload || payload.canceled !== true) throw new Error("Backend returned an invalid cancellation response.");
+  if (expectedUserId && payload.user?.id !== expectedUserId) {
+    throw new ApiError(409, "Your signed-in account changed. Reload the page to view its billing information.");
+  }
+  return { canceled: true, user: payload.user };
+}
+
+export async function requestCreateCheckoutSession(expectedUserId?: string, plan: BillingPlan = "plus", trial = false): Promise<string> {
   const response = await apiFetch("/api/billing/checkout", {
-    body: JSON.stringify({ plan }),
+    body: JSON.stringify(trial ? { plan, trial: true } : { plan }),
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", ...(expectedUserId ? { "X-Margin-Billing-User": expectedUserId } : {}) },
     method: "POST",

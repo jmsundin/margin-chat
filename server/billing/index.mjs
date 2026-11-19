@@ -47,6 +47,20 @@ function subscriptionCancellation(subscription, periodEnd) {
   };
 }
 
+export const MAX_TRIAL_CREDIT_CENTS = 2_000;
+
+/**
+ * The card-backed free trial of Plus for an account's first subscription. STRIPE_TRIAL_DAYS
+ * (1-90) turns it on; unset, zero or invalid means no trial. STRIPE_TRIAL_CREDIT_CENTS (up to
+ * $20) is hosted AI credit granted when the trial starts, so the trial includes AI; it defaults to none.
+ */
+export function planTrial(env = process.env) {
+  const days = Number(env.STRIPE_TRIAL_DAYS?.trim());
+  if (!Number.isSafeInteger(days) || days < 1 || days > 90) return null;
+  const cents = Number(env.STRIPE_TRIAL_CREDIT_CENTS?.trim() || 0);
+  return { days, creditMicros: Number.isSafeInteger(cents) && cents > 0 && cents <= MAX_TRIAL_CREDIT_CENTS ? cents * 10_000 : 0 };
+}
+
 function getRequestOrigin(request, env) {
   const configuredOrigin =
     env.APP_URL ?? env.PUBLIC_APP_URL ?? env.NEXT_PUBLIC_APP_URL ?? null;
@@ -83,6 +97,9 @@ let stripeModule;
 export function createBillingService({ database, env, stripeClient = null }) {
   const configuredPriceId = env.STRIPE_PRICE_ID || null;
   const cloudPriceId = env.STRIPE_CLOUD_PRICE_ID?.trim() || null;
+  const planTrialOffer = planTrial(env);
+  // One trial per account: any earlier subscription, including a canceled trial, uses it up.
+  const trialEligible = (account) => Boolean(planTrialOffer && account && account.role !== "admin" && !account.stripeSubscriptionId);
   async function getClient() {
     if (stripeClient) return stripeClient;
     if (!env.STRIPE_SECRET_KEY) throw new HttpError(503, "Stripe billing is not configured. Add STRIPE_SECRET_KEY first.");
@@ -252,8 +269,10 @@ export function createBillingService({ database, env, stripeClient = null }) {
     return { subscription, account };
   }
 
-  async function createSubscriptionCheckoutSession({ request, user, plan = "plus" }) {
+  async function createSubscriptionCheckoutSession({ request, user, plan = "plus", trial = false }) {
     requireSubscriptionPlan(plan);
+    if (trial && plan !== "plus") throw new HttpError(400, "The free trial is for the Plus plan.");
+    if (trial && !planTrialOffer) throw new HttpError(409, "The free trial is not available right now.");
     if (user.role === "admin") throw new HttpError(409, "Admin accounts do not require a subscription.");
     const stripe = await getClient();
     let lineItem;
@@ -276,14 +295,20 @@ export function createBillingService({ database, env, stripeClient = null }) {
     const account = await database.getUserBillingAccount(user.id);
     if (!account) throw new HttpError(404, "User account not found.");
     if (billingStatusHasAccess(account.billingStatus)) throw new HttpError(409, "Your subscription is already active. Manage billing instead.");
+    if (trial && !trialEligible(account)) throw new HttpError(409, "This account has already used its free trial. You can still subscribe.");
     const { customerId } = await ensureCustomerForUser(user);
     const origin = getRequestOrigin(request, env);
     const planKey = plan === "cloud" ? CLOUD_PLAN_KEY : MONTHLY_PLAN_KEY;
     const session = await stripe.checkout.sessions.create({
       mode: "subscription", customer: customerId, client_reference_id: user.id,
       line_items: [lineItem], allow_promotion_codes: false, payment_method_types: ["card"],
-      metadata: { purchaseKind: "subscription", planKey, userId: user.id },
-      subscription_data: { metadata: { purchaseKind: "subscription", planKey, userId: user.id } },
+      metadata: { purchaseKind: "subscription", planKey, userId: user.id, ...(trial ? { trial: "true" } : {}) },
+      subscription_data: {
+        metadata: { purchaseKind: "subscription", planKey, userId: user.id },
+        // The card is collected up front and first charged when the trial ends; no card, no trial.
+        ...(trial ? { trial_period_days: planTrialOffer.days, trial_settings: { end_behavior: { missing_payment_method: "cancel" } } } : {}),
+      },
+      ...(trial ? { payment_method_collection: "always" } : {}),
       cancel_url: `${origin}/?checkout=subscription_canceled`,
       success_url: `${origin}/?checkout=subscription_success&session_id={CHECKOUT_SESSION_ID}`,
     });
@@ -346,6 +371,23 @@ export function createBillingService({ database, env, stripeClient = null }) {
       const plan = stripeId(subscription.customer) === customerId ? await subscriptionPlan(subscription) : null;
       if (!plan) {
         throw new HttpError(409, "This Checkout Session does not contain a Margin Chat monthly plan.");
+      }
+      if (plan === "plus" && subscription.status === "trialing" && session.metadata?.trial === "true"
+        && session.status === "complete" && ["paid", "no_payment_required"].includes(session.payment_status)) {
+        // A free trial has nothing to pay yet: Checkout completing with a card on file is the whole
+        // purchase. The first $20 arrives with the first paid invoice; until then the trial credit, if any.
+        const amountMicros = planTrialOffer?.creditMicros ?? 0;
+        const trialInvoiceId = stripeId(session.invoice);
+        const credited = amountMicros > 0 && await database.creditHostedBalance({
+          amountMicros, ledgerId: randomUUID(), userId: account.id, description: "Free trial credit",
+          ...(trialInvoiceId ? { stripeInvoiceId: trialInvoiceId } : { stripeCheckoutSessionId: session.id }),
+          // Lets the unused part be taken back if the trial ends without a payment.
+          metadata: { trialSubscriptionId: subscriptionId },
+        });
+        return {
+          confirmed: true, purchaseKind: "subscription", plan, trial: true, credited: Boolean(credited), amountMicros,
+          status: "trialing", trialEnd: subscriptionPeriodEnd(subscription)?.toISOString() ?? null,
+        };
       }
       if (session.status !== "complete" || session.payment_status !== "paid" || !stripeId(session.invoice)) {
         return { confirmed: false, status: normalizeBillingStatus(subscription.status) };
@@ -448,6 +490,41 @@ export function createBillingService({ database, env, stripeClient = null }) {
   }
 
   /**
+   * One click, effective at once: the trial subscription is canceled outright, so the card is
+   * never charged. Only a trial can be ended here; paid plans cancel through the Stripe portal.
+   */
+  async function cancelTrial({ user }) {
+    const account = await database.getUserBillingAccount(user.id);
+    if (!account) throw new HttpError(404, "User account not found.");
+    if (!account.stripeSubscriptionId) throw new HttpError(409, "You don't have a free trial to cancel.");
+    const stripe = await getClient();
+    const current = await stripe.subscriptions.retrieve(account.stripeSubscriptionId);
+    if (stripeId(current.customer) !== account.stripeCustomerId) throw new HttpError(403, "Subscription customer mismatch.");
+    if (current.status !== "trialing") {
+      await retrieveAndSyncSubscription(current.id, account.id);
+      throw new HttpError(409, "Your free trial has already ended. Manage your subscription in Stripe instead.");
+    }
+    await stripe.subscriptions.cancel(current.id);
+    await retrieveAndSyncSubscription(current.id, account.id);
+    await reclaimTrialCredit(current.id, account.id);
+    return { canceled: true };
+  }
+
+  /** A trial that ends without a payment gives back what's left of its credit; what was used stays used. */
+  async function reclaimTrialCredit(subscriptionId, userId) {
+    const credits = await database.findTrialCredits({ subscriptionId, userId });
+    for (const credit of credits) {
+      await database.reverseStripeCredit({ creditLedgerId: credit.id, targetMicros: credit.amountMicros, chargeId: null, reason: "trial_ended", ledgerId: randomUUID() });
+    }
+  }
+
+  /** Canceled during the trial or at its end (no card left to charge): the subscription never paid. */
+  function endedUnpaidTrial(subscription) {
+    return subscription?.status === "canceled" && Number.isFinite(subscription.trial_end)
+      && Number.isFinite(subscription.ended_at) && subscription.ended_at <= subscription.trial_end;
+  }
+
+  /**
    * Before an account is deleted: deleting its Stripe customer cancels every subscription at once,
    * so nothing renews. Stripe keeps the invoices and payments for the books.
    */
@@ -464,7 +541,11 @@ export function createBillingService({ database, env, stripeClient = null }) {
   async function getBillingDashboard(userId) {
     const dashboard = await database.getBillingDashboard(userId);
     if (!dashboard) throw new HttpError(404, "User account not found.");
-    return { ...dashboard, plan: BILLING_PLAN, cloudPlan: cloudPriceId ? CLOUD_PLAN : null };
+    const account = planTrialOffer ? await database.getUserBillingAccount(userId) : null;
+    return {
+      ...dashboard, plan: BILLING_PLAN, cloudPlan: cloudPriceId ? CLOUD_PLAN : null,
+      trial: planTrialOffer ? { ...planTrialOffer, eligible: trialEligible(account) } : null,
+    };
   }
 
   /**
@@ -510,7 +591,9 @@ export function createBillingService({ database, env, stripeClient = null }) {
       const session = await retrieveCheckout(object.id);
       if (session.mode === "subscription" || session.metadata?.purchaseKind === "hosted_credits") await fulfillCheckout(session);
     } else if (["customer.subscription.created", "customer.subscription.updated", "customer.subscription.deleted", "customer.subscription.paused", "customer.subscription.resumed"].includes(event.type)) {
-      await retrieveAndSyncSubscription(object.id);
+      const { subscription, account } = await retrieveAndSyncSubscription(object.id);
+      // Also covers a trial canceled in the Stripe portal or ended by Stripe for lack of a card.
+      if (account && endedUnpaidTrial(subscription)) await reclaimTrialCredit(subscription.id, account.id);
     } else if (["invoice.paid", "invoice.payment_succeeded"].includes(event.type)) {
       await creditPaidInvoice(object.id);
     } else if (event.type === "charge.refunded") {
@@ -529,7 +612,7 @@ export function createBillingService({ database, env, stripeClient = null }) {
   return {
     createBillingPortalSession, createSubscriptionCheckoutSession, createTopUpCheckoutSession,
     createCheckoutSession: createSubscriptionCheckoutSession,
-    confirmCheckout, confirmSubscriptionCheckout: confirmCheckout, upgradeToPlus, deleteCustomer,
+    confirmCheckout, confirmSubscriptionCheckout: confirmCheckout, upgradeToPlus, cancelTrial, deleteCustomer,
     handleWebhook, getBillingDashboard, getHostedUsageLimits,
     reserveHostedRequest, settleHostedRequest, refundHostedRequest,
   };

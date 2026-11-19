@@ -38,6 +38,7 @@ import { createWebSearchService } from "../webSearch/index.mjs";
 import { createDictationService, MAX_DICTATION_AUDIO_BYTES } from "../dictation/index.mjs";
 import { createDesktopDownloadService, describeDownloadRequest } from "../downloads/index.mjs";
 import { createTrialTopicsService } from "../trial/topics.mjs";
+import { planTrial } from "../billing/index.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
 import { MCP_BODY_LIMIT, createMcpService } from "../mcp/index.mjs";
 import {
@@ -282,7 +283,7 @@ export function createApiHandler({
 
       // Public: lets /pricing hide Cloud until its Stripe price is configured.
       if (route?.id === "billingPlans") {
-        sendJson(response, 200, { cloud: Boolean(env.STRIPE_CLOUD_PRICE_ID?.trim()) }, { "Cache-Control": "public, max-age=300" });
+        sendJson(response, 200, { cloud: Boolean(env.STRIPE_CLOUD_PRICE_ID?.trim()), trial: planTrial(env) }, { "Cache-Control": "public, max-age=300" });
         return;
       }
 
@@ -708,7 +709,7 @@ export function createApiHandler({
         return;
       }
 
-      if (["billingCheckout", "billingTopUp", "billingUpgrade", "billingDashboard", "billingConfirm", "billingPortal"].includes(route?.id)) {
+      if (["billingCheckout", "billingTopUp", "billingUpgrade", "billingTrialCancel", "billingDashboard", "billingConfirm", "billingPortal"].includes(route?.id)) {
         const expectedUser = request.headers["x-margin-billing-user"];
         if (expectedUser !== undefined && expectedUser !== String(authContext.user.id)) {
           throw new HttpError(409, "The signed-in account changed. Reload Margin Chat before continuing with billing.");
@@ -727,6 +728,7 @@ export function createApiHandler({
           request,
           user: authContext.user,
           plan: body?.plan ?? "plus",
+          trial: body?.trial === true,
         });
 
         sendJson(response, 200, result);
@@ -735,6 +737,13 @@ export function createApiHandler({
 
       if (route?.id === "billingUpgrade") {
         const result = await billingService.upgradeToPlus({ user: authContext.user });
+        const fresh = await authService.getAuthContext(request);
+        sendJson(response, 200, { ...result, user: fresh.user }, { "Cache-Control": "no-store" });
+        return;
+      }
+
+      if (route?.id === "billingTrialCancel") {
+        const result = await billingService.cancelTrial({ user: authContext.user });
         const fresh = await authService.getAuthContext(request);
         sendJson(response, 200, { ...result, user: fresh.user }, { "Cache-Control": "no-store" });
         return;

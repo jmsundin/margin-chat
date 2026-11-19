@@ -58,8 +58,9 @@ interface SettingsPageProps {
   onSaveApiKeys: (args: {
     keys: Partial<Record<ApiKeyProvider, string | null>>;
   }) => Promise<ApiKeySettings>;
-  onStartSubscription: (plan?: BillingPlan) => void | Promise<void>;
+  onStartSubscription: (plan?: BillingPlan, options?: { trial?: boolean }) => void | Promise<void>;
   onUpgradeToPlus?: () => void | Promise<void>;
+  onCancelTrial?: () => void | Promise<void>;
   onSave: (args: { displayName: string; email: string; currentPassword?: string }) => void | Promise<void>;
   user: AuthenticatedUser;
   theme?: ThemeMode;
@@ -203,6 +204,7 @@ export default function SettingsPage({
   onSaveApiKeys,
   onStartSubscription,
   onUpgradeToPlus,
+  onCancelTrial,
   onSave,
   onOpenWebsiteSettings,
   user,
@@ -595,7 +597,7 @@ export default function SettingsPage({
             {activeTab === "billing" ? (
               <BillingDashboard data={billingDashboard} loading={billingDashboardLoading} errorMessage={billingDashboardError}
                 checkoutErrorMessage={billingErrorMessage} isSubmitting={billingSubmitting} onRefresh={onRefreshBilling}
-                onAddMoney={onAddMoney} onStartSubscription={onStartSubscription} onUpgradeToPlus={onUpgradeToPlus} onManageBilling={onManageBilling} user={user} />
+                onAddMoney={onAddMoney} onStartSubscription={onStartSubscription} onUpgradeToPlus={onUpgradeToPlus} onCancelTrial={onCancelTrial} onManageBilling={onManageBilling} user={user} />
             ) : null}
 
             {activeTab === "api-keys" ? <>

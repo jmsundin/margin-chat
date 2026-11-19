@@ -282,6 +282,15 @@ export async function findStripeCredits(client, { paymentIntentId, invoiceIds = 
   return result.rows.map((row) => ({ id: row.id, userId: row.user_id, amountMicros: Number(row.amount_micros) }));
 }
 
+/** The credit a free trial granted, found by the trial's subscription. */
+export async function findTrialCredits(client, { subscriptionId, userId }) {
+  const result = await client.query(`select id, user_id, amount_micros from marginchat_billing_ledger
+    where user_id = $1 and entry_type in ('stripe_credit_purchase', 'stripe_subscription_credit')
+      and metadata->>'trialSubscriptionId' = $2
+    order by created_at, id`, [userId, subscriptionId]);
+  return result.rows.map((row) => ({ id: row.id, userId: row.user_id, amountMicros: Number(row.amount_micros) }));
+}
+
 /**
  * Take back up to `targetMicros` of one credit after its payment was refunded or disputed.
  * Repeated or partial notifications only take the difference. The balance can't go below
@@ -302,7 +311,7 @@ export async function reverseStripeCredit(client, { creditLedgerId, targetMicros
     const taken = Math.min(delta, balance);
     await client.query(`insert into marginchat_billing_ledger (id, user_id, amount_micros, entry_type, description, metadata)
       values ($1, $2, $3, 'stripe_payment_reversal', $4, $5::jsonb)`, [ledgerId, userId, -taken,
-      reason === "dispute" ? "Payment disputed" : "Payment refunded",
+      reason === "dispute" ? "Payment disputed" : reason === "trial_ended" ? "Unused free trial credit removed" : "Payment refunded",
       JSON.stringify({ creditLedgerId, chargeId, reason, reversedMicros: delta, unrecoveredMicros: delta - taken })]);
     if (taken) await client.query("update marginchat_users set hosted_credit_balance_micros = hosted_credit_balance_micros - $1, updated_at = now() where id = $2", [taken, userId]);
     return { reversedMicros: delta, takenMicros: taken, unrecoveredMicros: delta - taken, userId };

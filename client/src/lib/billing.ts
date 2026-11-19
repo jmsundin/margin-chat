@@ -5,7 +5,7 @@ export function getBillingStatusLabel(status: UserBilling["status"]) {
     case "active":
       return "Active";
     case "trialing":
-      return "Trialing";
+      return "Free trial";
     case "past_due":
       return "Past due";
     case "canceled":
@@ -26,7 +26,8 @@ export function getBillingStatusLabel(status: UserBilling["status"]) {
 export function getBillingDisplayLabel(billing: UserBilling) {
   if (billing.accessKind === "admin") return "Admin access";
   if ((billing.status === "active" || billing.status === "trialing") && billing.plan === "cloud") return "Cloud plan";
-  if (billing.status === "active" || billing.status === "trialing") return "Monthly prepaid plan";
+  if (billing.status === "trialing") return "Plus free trial";
+  if (billing.status === "active") return "Monthly prepaid plan";
   if (billing.creditBalanceMicros > 0) return `${formatCreditBalance(billing.creditBalanceMicros)} available`;
   return "Prepaid AI usage";
 }
@@ -58,6 +59,9 @@ export function getBillingStatusCopy(billing: UserBilling) {
   const periodEnd = formatBillingPeriodEnd(billing.currentPeriodEnd);
   const balance = formatCreditBalance(billing.creditBalanceMicros);
   if (billing.accessKind === "admin") return "This admin account has hosted model access. Personal provider keys are billed by their provider.";
+  if (billing.status === "trialing" && billing.plan !== "cloud" && !billing.cancelAtPeriodEnd) {
+    return `Your free trial of Plus is on${periodEnd ? ` until ${periodEnd}` : ""}. Nothing is charged before then; after that it's $20 per month, which adds $20 to your AI budget. You can cancel the trial in one click under Billing. Available balance: ${balance}.`;
+  }
   if ((billing.status === "active" || billing.status === "trialing") && billing.plan === "cloud") {
     const renewal = billing.cancelAtPeriodEnd
       ? `Your Cloud plan ends${periodEnd ? ` on ${periodEnd}` : " at the end of this period"}.`
@@ -108,6 +112,13 @@ export function getCheckoutConfirmationNotice(confirmation: CheckoutConfirmation
   if (!confirmation.confirmed) return {
     kind: "info", message: "Your payment is not confirmed yet. Refresh billing shortly to check your balance, or open Stripe for the payment status.",
   };
+  if (confirmation.trial) {
+    const trialEnd = formatBillingPeriodEnd(confirmation.trialEnd ?? null);
+    return {
+      kind: "success",
+      message: `Your free trial of Plus has started. Your vault now syncs to the cloud${confirmation.amountMicros ? `, ${formatCreditBalance(confirmation.amountMicros)} of AI credit is ready` : ""}, and nothing is charged${trialEnd ? ` before ${trialEnd}` : " during the trial"}. Cancel in one click under Billing.`,
+    };
+  }
   return {
     kind: "success",
     message: confirmation.purchaseKind === "subscription" && confirmation.plan === "cloud"

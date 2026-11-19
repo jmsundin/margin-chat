@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import NotificationToast from "./NotificationToast";
+import { trialLengthLabel } from "./TrialOffer";
 import type { AuthenticatedUser, BillingDashboardData, BillingNotice, BillingPlan } from "../types";
 import {
   formatBillingPeriodEnd, formatCreditBalance, formatUsageCost, getBillingStatusLabel,
@@ -15,15 +16,16 @@ interface BillingDashboardProps {
   isSubmitting: boolean;
   onRefresh: () => void | Promise<void>;
   onAddMoney: (amountCents: number) => void | Promise<void>;
-  onStartSubscription: (plan?: BillingPlan) => void | Promise<void>;
+  onStartSubscription: (plan?: BillingPlan, options?: { trial?: boolean }) => void | Promise<void>;
   onUpgradeToPlus?: () => void | Promise<void>;
+  onCancelTrial?: () => void | Promise<void>;
   onManageBilling: () => void | Promise<void>;
   user: AuthenticatedUser;
 }
 
 export default function BillingDashboard({
   data, loading, errorMessage, checkoutErrorMessage, notice, isSubmitting,
-  onRefresh, onAddMoney, onStartSubscription, onUpgradeToPlus, onManageBilling, user,
+  onRefresh, onAddMoney, onStartSubscription, onUpgradeToPlus, onCancelTrial, onManageBilling, user,
 }: BillingDashboardProps) {
   const [amount, setAmount] = useState("20.00");
   const [confirmingUpgrade, setConfirmingUpgrade] = useState(false);
@@ -60,7 +62,17 @@ export default function BillingDashboard({
   const periodEnd = formatBillingPeriodEnd(subscription.currentPeriodEnd);
   const onCloud = subscribed && user.billing.plan === "cloud";
   const cloudPrice = data?.cloudPlan ? formatCreditBalance(data.cloudPlan.monthlyPriceCents * 10_000) : null;
-  const statusLine = <p className="billing-plan-status">{getBillingStatusLabel(subscription.status)}{periodEnd ? ` · ${subscription.cancelAtPeriodEnd ? (onCloud ? "Plan ends" : "Funding ends") : "Current period ends"} ${periodEnd}` : ""}</p>;
+  const onTrial = subscription.status === "trialing" && !onCloud;
+  // Offered once per account, and only to someone who has never subscribed.
+  const trialOffer = !subscribed && data?.trial?.eligible ? data.trial : null;
+  const trialLength = trialOffer ? trialLengthLabel(trialOffer.days) : null;
+  const statusLine = <p className="billing-plan-status">{getBillingStatusLabel(subscription.status)}{periodEnd ? ` · ${subscription.cancelAtPeriodEnd ? (onCloud ? "Plan ends" : onTrial ? "Trial ends" : "Funding ends") : onTrial ? `First ${monthlyAmount} payment on` : "Current period ends"} ${periodEnd}` : ""}</p>;
+  const trialButton = trialOffer ? <>
+    <button className="thread-dialog-button is-primary" disabled={isSubmitting} onClick={() => void onStartSubscription("plus", { trial: true })} type="button">
+      {isSubmitting ? "Opening Stripe…" : `Start my ${trialLength} of Plus`}
+    </button>
+    <small>Stripe asks for a card to keep spam out. Nothing is charged during the trial{trialOffer.creditMicros ? `, which includes ${formatCreditBalance(trialOffer.creditMicros)} of AI credit` : ""}, and you can cancel here in one click.</small>
+  </> : null;
 
   return (
     <div className="billing-dashboard">
@@ -116,11 +128,16 @@ export default function BillingDashboard({
           <h3>{monthlyAmount}<span> / month</span></h3>
           <p>Each successful monthly payment adds {monthlyAmount} to your AI budget. Unused credits carry over.</p>
           {statusLine}
+          {onTrial && !subscription.cancelAtPeriodEnd ? <p>You're on a free trial. Nothing is charged until it ends; cancel before then and your card is never charged.</p> : null}
           {subscription.cancelAtPeriodEnd ? <p>Future monthly payments are canceled. Your remaining credits stay available.</p> : null}
-          <button className="thread-dialog-button is-primary" disabled={isSubmitting}
+          {trialButton}
+          <button className={trialButton ? "thread-dialog-button" : "thread-dialog-button is-primary"} disabled={isSubmitting}
             onClick={() => void (subscribed ? onManageBilling() : onStartSubscription("plus"))} type="button">
             {isSubmitting ? "Opening Stripe…" : subscribed ? "Manage subscription" : `Subscribe for ${monthlyAmount}/month`}
           </button>
+          {onTrial && onCancelTrial ? <button className="thread-dialog-button" disabled={isSubmitting} onClick={() => void onCancelTrial()} type="button">
+            {isSubmitting ? "Canceling…" : "Cancel free trial"}
+          </button> : null}
         </section> : <section className="billing-funding-card" aria-label="Choose a plan">
           <p className="eyebrow">Monthly plans</p>
           <div className="billing-plan-option">
@@ -133,7 +150,8 @@ export default function BillingDashboard({
           <div className="billing-plan-option">
             <h3>Plus <span>{monthlyAmount} / month</span></h3>
             <p>Everything in Cloud, plus {monthlyAmount} of hosted AI credit each month and the Chrome extension. Unused credits carry over.</p>
-            <button className="thread-dialog-button is-primary" disabled={isSubmitting} onClick={() => void onStartSubscription("plus")} type="button">
+            {trialButton}
+            <button className={trialButton ? "thread-dialog-button" : "thread-dialog-button is-primary"} disabled={isSubmitting} onClick={() => void onStartSubscription("plus")} type="button">
               {isSubmitting ? "Opening Stripe…" : `Subscribe to Plus for ${monthlyAmount}/month`}
             </button>
           </div>

@@ -6,6 +6,8 @@ import {
   getCheckoutReturn, getReceiptUrl, parseTopUpAmountCents,
 } from "../client/src/lib/billing";
 import { requestBillingDashboard, requestConfirmCheckoutSession, requestCreateTopUpSession, requestCreateCheckoutSession, requestCreateBillingPortalSession } from "../client/src/lib/api";
+import TrialOffer from "../client/src/components/TrialOffer";
+import { requestCancelTrial, requestPlanTrial } from "../client/src/lib/api";
 import { billingDashboard, billingUser } from "./helpers/billingFixture";
 
 const originalFetch = globalThis.fetch;
@@ -205,3 +207,52 @@ test("late billing responses cannot overwrite a newer balance or redirect a diff
   if (exitCode !== 0) throw new Error(`Billing account race failed:\n${stdout}\n${stderr}`);
   expect(JSON.parse(stdout.trim().split("\n").at(-1)!).result).toBe("pass");
 }, 15000);
+
+describe("Plus free trial", () => {
+  const trialing = { ...billingUser, billing: { ...billingUser.billing, status: "trialing" as const, plan: "plus" as const } };
+  const free = { ...billingUser, billing: { ...billingUser.billing, status: "inactive" as const, accessKind: "none" as const, hasCustomer: false } };
+
+  test("the signup screen says a card is next, that nothing is charged, how to cancel, and lets people skip", () => {
+    const html = renderToStaticMarkup(<TrialOffer trial={{ days: 7, creditMicros: 2_000_000 }} errorMessage={null} isSubmitting={false} onSkip={() => undefined} onStart={() => undefined} user={free} />);
+    for (const text of ["One more step", "Stripe asks for a card", "You won&#x27;t be charged during your free week", "$2.00 of AI", "Cancel in one click", "Start my free week", "Skip and use Margin Chat free"]) {
+      expect(html).toContain(text);
+    }
+    expect(renderToStaticMarkup(<TrialOffer trial={{ days: 14, creditMicros: 0 }} errorMessage="Stripe is unavailable." isSubmitting={false} onSkip={() => undefined} onStart={() => undefined} user={free} />))
+      .toContain("Start my 14 free days");
+  });
+
+  test("labels and copy for a running trial", () => {
+    expect(getBillingDisplayLabel(trialing.billing)).toBe("Plus free trial");
+    expect(getBillingStatusCopy(trialing.billing)).toContain("Nothing is charged before then");
+    expect(getCheckoutConfirmationNotice({ confirmed: true, status: "trialing", purchaseKind: "subscription", plan: "plus", trial: true, amountMicros: 2_000_000, trialEnd: "2026-11-25T12:00:00.000Z" }).message)
+      .toContain("$2.00 of AI credit is ready");
+  });
+
+  test("Billing offers the trial only to eligible accounts and shows one-click cancel during it", () => {
+    const render = (user: typeof billingUser, data: typeof billingDashboard) => renderToStaticMarkup(<BillingDashboard data={data} loading={false} errorMessage={null} checkoutErrorMessage={null}
+      isSubmitting={false} onRefresh={() => undefined} onAddMoney={() => undefined} onStartSubscription={() => undefined} onCancelTrial={() => undefined} onManageBilling={() => undefined} user={user} />);
+    const inactive = { ...billingDashboard, subscription: { ...billingDashboard.subscription, status: "inactive" as const } };
+    expect(render(free, { ...inactive, trial: { days: 7, creditMicros: 0, eligible: true } })).toContain("Start my free week of Plus");
+    expect(render(free, { ...inactive, trial: { days: 7, creditMicros: 0, eligible: false } })).not.toContain("free week");
+    expect(render(free, inactive)).not.toContain("free week");
+    const during = render(trialing, { ...billingDashboard, subscription: { ...billingDashboard.subscription, status: "trialing" }, trial: { days: 7, creditMicros: 0, eligible: false } });
+    expect(during).toContain("Cancel free trial");
+    expect(during).toContain("First $20.00 payment on");
+    expect(render(billingUser, billingDashboard)).not.toContain("Cancel free trial");
+  });
+
+  test("reads the offered trial from the plans endpoint and cancels with the account guard", async () => {
+    const calls: any[] = [];
+    globalThis.fetch = (async (url: any, init: any) => {
+      calls.push([String(url), init?.method ?? "GET", new Headers(init?.headers).get("X-Margin-Billing-User")]);
+      return String(url).endsWith("/api/billing/plans")
+        ? Response.json({ cloud: true, trial: { days: 7, creditMicros: 2_000_000 } })
+        : Response.json({ canceled: true, user: { ...billingUser, id: "billing-user" } });
+    }) as typeof fetch;
+    expect(await requestPlanTrial()).toEqual({ days: 7, creditMicros: 2_000_000 });
+    expect(await requestCancelTrial("billing-user")).toMatchObject({ canceled: true });
+    expect(calls[1]).toEqual([expect.stringContaining("/api/billing/trial/cancel"), "POST", "billing-user"]);
+    globalThis.fetch = (async () => Response.json({ cloud: true, trial: null })) as typeof fetch;
+    expect(await requestPlanTrial()).toBeNull();
+  });
+});

@@ -6798,6 +6798,64 @@ button {
   gap: 12px;
 }
 
+/* The "one more step" screen between signup and Stripe's card form. */
+.trial-offer {
+  margin: auto;
+  max-width: 560px;
+  width: 100%;
+}
+
+.trial-offer h3 {
+  font-size: 1.15rem;
+  margin: 22px 0 6px;
+}
+
+.trial-offer-steps {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 1fr 1fr;
+  list-style: none;
+  margin: 20px 0 18px;
+  padding: 0;
+}
+
+.trial-offer-steps li {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  color: var(--muted);
+  font-size: 0.9rem;
+  padding: 10px 14px;
+}
+
+.trial-offer-steps li.is-done::before {
+  content: "✓ ";
+}
+
+.trial-offer-steps li[aria-current="step"] {
+  color: inherit;
+  font-weight: 600;
+}
+
+.trial-offer-promise {
+  border: 1px solid var(--panel-border);
+  border-radius: 16px;
+  margin: 18px 0;
+  padding: 16px 18px;
+}
+
+.trial-offer-promise p {
+  color: var(--muted);
+  line-height: 1.6;
+  margin: 6px 0 0;
+}
+
+.trial-offer-footnote {
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.6;
+  margin: 16px 0 0;
+}
+
 .profile-billing-section {
   margin-bottom: 8px;
 }

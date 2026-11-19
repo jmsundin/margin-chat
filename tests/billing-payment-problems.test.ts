@@ -5,7 +5,7 @@ import { mapBillingRow } from "../server/billing/status.mjs";
 import { canUseCloudWorkspaceStorage } from "../server/routes/api.mjs";
 import { createCaptureTestDatabase } from "./helpers/captureDatabase.mjs";
 import {
-  chargeHostedRequest, creditHostedBalance, findStripeCredits, getBillingDashboard, getUserBillingAccount,
+  chargeHostedRequest, creditHostedBalance, findStripeCredits, findTrialCredits, getBillingDashboard, getUserBillingAccount,
   reverseStripeCredit, settleHostedRequest, STALE_HOLD_MINUTES,
 } from "../server/db/billingRepository.mjs";
 import { fixture, user } from "./helpers/stripeFixture";
@@ -133,6 +133,25 @@ async function ledger() {
 }
 
 describe("payment reversals in the ledger", () => {
+  test("an unpaid trial gives back only the unused part of its credit, once", async () => {
+    const { client, balance } = await ledger();
+    await creditHostedBalance(client, { amountMicros: 2_000_000, userId: "owner", ledgerId: randomUUID(), stripeInvoiceId: "in_trial", description: "Free trial credit", metadata: { trialSubscriptionId: "sub_trial" } });
+    await creditHostedBalance(client, { amountMicros: 5_000_000, userId: "owner", ledgerId: randomUUID(), stripeCheckoutSessionId: "cs_top", metadata: { paymentIntentId: "pi_top" } });
+    expect(await findTrialCredits(client, { subscriptionId: "sub_other", userId: "owner" })).toEqual([]);
+    expect(await findTrialCredits(client, { subscriptionId: "sub_trial", userId: "someone-else" })).toEqual([]);
+    const [trial] = await findTrialCredits(client, { subscriptionId: "sub_trial", userId: "owner" });
+    expect(trial).toMatchObject({ userId: "owner", amountMicros: 2_000_000 });
+    await chargeHostedRequest(client, { amountMicros: 500_000, requestId: "r1", userId: "owner" });
+    await settleHostedRequest(client, { amountMicros: 500_000, requestId: "r1", userId: "owner" });
+    const reclaim = () => reverseStripeCredit(client, { creditLedgerId: trial.id, targetMicros: trial.amountMicros, chargeId: null, reason: "trial_ended", ledgerId: randomUUID() });
+    expect(await reclaim()).toMatchObject({ reversedMicros: 2_000_000, takenMicros: 2_000_000 });
+    expect(await reclaim()).toMatchObject({ reversedMicros: 0 });
+    // $7 added, $0.50 used, the $2 trial credit taken back: the top-up money is what remains.
+    expect(await balance()).toBe(4_500_000);
+    const dashboard = await getBillingDashboard(client, "owner");
+    expect(dashboard.transactions.map((row: any) => row.description)).toContain("Unused free trial credit removed");
+  });
+
   test("refunds are idempotent, partial refunds add up, and spent credit is recorded as unrecovered", async () => {
     const { client, balance } = await ledger();
     await creditHostedBalance(client, { amountMicros: 20_000_000, userId: "owner", ledgerId: randomUUID(), stripeInvoiceId: "in_1", metadata: { paymentIntentIds: ["pi_sub"] } });
