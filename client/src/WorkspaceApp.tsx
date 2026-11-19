@@ -11,6 +11,9 @@ import { CaretActions } from "./components/CaretActions";
 import { MobileCreateMenu, type MobileCreateTarget } from "./components/MobileCreateMenu";
 import { caretBlockIn, caretParagraphIn } from "./components/LiveDocumentEditor";
 import { useMobileDockSlot } from "./lib/mobileDock";
+import { startVoiceTyping } from "./components/BackToTopButton";
+import { usePhoneHeaderTuck } from "./lib/usePhoneHeaderTuck";
+import { useDictationButton } from "./components/DictationButton";
 import type { DocumentCaretMenu } from "./components/DocumentPanel";
 import { isMarkdownHighlighted, toggleMarkdownHighlight } from "./lib/selectionHighlight";
 import { applySelectionFormat, hasSelectionFormat, type SelectionFormat } from "./lib/selectionFormat";
@@ -1309,6 +1312,8 @@ function WorkspaceAppContent({
     .join("|");
   const isTileView = mainViewMode === "tiles";
   const createSlot = useMobileDockSlot("create");
+  const voiceTypingShown = useDictationButton();
+  usePhoneHeaderTuck(activeConversation.id);
   const isGraphView = mainViewMode === "graph";
   const visibleDocumentIds = new Set([...visiblePinnedDocumentIds, ...scrollingDocuments.map((document) => document.id)]);
   // A margin note read beside its page (tapping its passage selects it) leaves the phone header on that page:
@@ -7962,9 +7967,11 @@ function WorkspaceAppContent({
             />
           ) : null}
 
-          {createSlot && mainViewMode === "chat" && !leftSidebarOpen ? <MobileCreateMenu slot={createSlot} prepare={prepareCreateMenu}
+          {/* Read and Language are for reading: no + over the text there (the sidebar still has New document). */}
+          {createSlot && mainViewMode === "chat" && !leftSidebarOpen && !(hasDocumentModes(headerConversation) && ["read", "language"].includes(documentModeFor(headerConversation))) ? <MobileCreateMenu slot={createSlot} prepare={prepareCreateMenu}
             onNewDocument={() => handleCreateMainConversation()} onNewBoard={features.boards ? () => handleCreateMainConversation("board") : undefined} onSideDocument={handleCreateMenuSideDocument} onMarginNote={handleCreateMenuNote}
-            onUpload={handleCreateMenuUpload} /> : null}
+            onUpload={handleCreateMenuUpload}
+            onVoiceTyping={voiceTypingShown ? () => startVoiceTyping(panelRefs.current[activeConversation.id]?.querySelector<HTMLElement>(".document-body") ?? null) : undefined} /> : null}
           {!isTileView && caretMenu && !selectionDraft ? <CaretActions menu={caretMenu} mobile={mobileKeyboard.mobile} onClose={closeCaretMenu}
             onNote={() => handleCreateSelectionNote(caretMenu.paragraph)}
             onSideDocument={() => handleCreateSelectionSideDocument(caretMenu.paragraph)}

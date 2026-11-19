@@ -32,7 +32,7 @@ import { BLOCK_SEPARATOR, blockIndexAt, blockSelection, isTableBlock, layoutBloc
 import { livePreviewInline, type LivePreviewMode } from "../lib/livePreviewMarkdown";
 import { readDocumentViewMode, saveDocumentViewMode, subscribeDocumentEditorPreference } from "../lib/documentEditorPreference";
 import { editorViewFor } from "../lib/documentModes";
-import { listenForEditorCommands, type EditorCommand } from "../lib/editorCommands";
+import { EDITOR_ACTIONS_ATTRIBUTE, listenForEditorCommands, type EditorCommand } from "../lib/editorCommands";
 import { findWikiLinkAround, findWikiLinkQuery, type WikiLinkDocument, type WikiLinkSuggestion } from "../lib/wikiLinkSuggestions";
 import WikiLinkMenu, { type WikiLinkMenuState } from "./WikiLinkMenu";
 import { LanguageLearningBar } from "./LanguageLookup";
@@ -502,6 +502,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   function sent(blocks: DocumentBlock[]) { if (latest.current.onChangeBlocks) latest.current = { ...latest.current, blocks }; }
   const mobileKeyboard = useMobileKeyboard();
   const micShown = useDictationButton();
+  const micShownRef = useRef(micShown);
+  micShownRef.current = micShown;
   /** Voice typing at the caret, from the mic beside Ask AI. */
   const talkHere = () => { const content = viewRef.current?.contentDOM; if (content) requestDictation(content); };
   const rootRef = useRef<HTMLDivElement>(null);
@@ -567,7 +569,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   /** The document's runnable code blocks in reading order: SQL cells build on the ones above, CSS styles the HTML above. */
   const codeCells = useMemo(() => visibleBlocks.flatMap((block) => findRunnableFences(block.content).map((fence) => ({ blockId: block.id, start: fence.start, language: fence.language, source: fence.source }))), [visibleBlocks]);
   const codeCellList = useMemo(() => codeCells.map(({ language, source }) => ({ language, source })), [codeCells]);
-  const placeholderText = props.onInvokeAI ? "Write here, or press Space for AI…" : "Write here…";
+  // "press Space" is a keyboard shortcut; phones have Ask AI in the keyboard bar instead.
+  const placeholderText = props.onInvokeAI && !mobileKeyboard.mobile ? "Write here, or press Space for AI…" : "Write here…";
 
   function emit(next: DocumentBlock[], edit?: DocumentEditOptions) {
     if (sameBlockList(latest.current.blocks, next)) return;
@@ -968,6 +971,14 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
 
   /** The phone keyboard bar's buttons: the same edits as typing `[[`, ⌘D, Tab and Shift+Tab. */
   function editorCommand(view: EditorView, command: EditorCommand) {
+    // Ask AI answers after the caret's paragraph, as the touch Ask AI under a block used to.
+    if (command === "ask-ai") {
+      const live = stateOf(view);
+      const block = live.layout[blockIndexAt(live.layout, view.state.selection.main.head)];
+      return view.state.selection.main.empty && block ? invoke(view, 0, block.id, true) : invoke(view);
+    }
+    if (command === "caret-menu") return openCaretMenu(view);
+    if (command === "dictate") { if (!micShownRef.current) return false; talkHere(); return true; }
     if (view.state.readOnly) return false;
     if (command === "indent") return indentMore(view);
     if (command === "outdent") return indentLess(view);
@@ -1217,6 +1228,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     return EditorView.contentAttributes.of({
       "aria-label": latest.current.ariaLabel ?? "Editable document", "aria-multiline": "true", role: "textbox",
       spellcheck: "true", "data-mobile-keyboard": "", inputmode: mobileKeyboard.inputMode,
+      // What the phone keyboard bar may offer here besides its writing keys.
+      [EDITOR_ACTIONS_ATTRIBUTE]: [latest.current.onInvokeAI && "ask-ai", latest.current.onCaretMenu && "caret-menu", micShownRef.current && "dictate"].filter(Boolean).join(" "),
     });
   }
 
@@ -1441,7 +1454,7 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (!view) return;
     view.dispatch({ effects: compartments.attributes.reconfigure(attributeExtensions()) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [props.ariaLabel, mobileKeyboard.inputMode]);
+  }, [props.ariaLabel, mobileKeyboard.inputMode, micShown, Boolean(props.onInvokeAI), Boolean(props.onCaretMenu)]);
 
   // Undo and redo, and lines moved with Alt+arrows, put the caret back where the change happened.
   const pendingHistoryFocus = useRef<DocumentEditFocus | null>(null);
@@ -1575,25 +1588,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     if (!block) return null;
     const readOnly = !editable || readOnlyIds.has(id) || mode === "reading";
     if (kind === "after") {
-      const touch = mobileKeyboard.mobile && editable && mode !== "reading" && focusedBlockId === id && !readOnlyIds.has(id);
+      // Phones used to get an "Ask AI · More · Talk" row under the caret's paragraph, which pushed the
+      // text down each time the caret moved. Those actions now sit in the keyboard bar while typing.
       return createPortal(<>
-        {touch && <div className="rich-document-touch-actions live-document-touch-actions">
-          {props.onInvokeAI && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Ask AI" data-label="✦ Ask AI" onClick={() => { const view = viewRef.current; if (view) invoke(view, 0, id, true); }} />}
-          {props.onCaretMenu && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="More actions here" data-label="⋯ More" onClick={() => {
-            const view = viewRef.current;
-            if (view) openCaretMenu(view, view.state.selection.main.empty && stateOf(view).layout[blockIndexAt(stateOf(view).layout, view.state.selection.main.head)]?.id === id ? undefined : id);
-          }} />}
-          {micShown && <button type="button" className="is-mic" onMouseDown={(event) => event.preventDefault()} aria-label="Voice typing here" data-label="" onClick={talkHere}>
-            <MicIcon size={16} /><span>Talk</span>
-          </button>}
-          {!props.onCaretMenu && block.content && <button type="button" onMouseDown={(event) => event.preventDefault()} aria-label="Select block" data-label="Select block" onClick={() => {
-            const view = viewRef.current;
-            const target = view?.state.field(liveField).layout.find((item) => item.id === id);
-            if (!view || !target) return;
-            view.dispatch({ selection: EditorSelection.range(target.from, visibleEnd(textOf(view.state.doc), target)) });
-            view.focus();
-          }} />}
-        </div>}
         {!isDraftBlockId(id) ? props.renderAfterBlock?.(block) : null}
       </>, element, key);
     }

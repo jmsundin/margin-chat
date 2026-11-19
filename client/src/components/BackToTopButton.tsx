@@ -50,6 +50,20 @@ function glideToTop(body: HTMLElement) {
 }
 
 /**
+ * Voice typing into a document from outside its text (the phone's + menu): what's said goes at
+ * the end of the document unless the caret is already in it.
+ */
+export function startVoiceTyping(body: HTMLElement | null) {
+  const target = editableText(body);
+  if (!target) return false;
+  const view = EditorView.findFromDOM(target);
+  if (view && !view.hasFocus) view.dispatch({ selection: EditorSelection.cursor(view.state.doc.length), scrollIntoView: true });
+  if (view) view.focus(); else target.focus();
+  requestDictation(target);
+  return true;
+}
+
+/**
  * The document's corner: a quiet "back to top" button once the reader is far down,
  * and above it a mic for voice typing while the text hasn't been clicked into.
  * Once it has, the mic beside Ask AI at the caret takes over, and this one keeps
@@ -59,6 +73,8 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
   const { mobile, overlayOpen } = useMobileKeyboard();
   const micShown = useDictationButton();
   const [far, setFar] = useState(false);
+  // Phones show Back to top only while the reader is heading up, so it doesn't sit over the text.
+  const [goingUp, setGoingUp] = useState(false);
   const [text, setText] = useState<{ editable: boolean; focused: boolean }>({ editable: false, focused: false });
   const touched = useRef(false);
   // On phones the mic lives in the screen's button stack, so a document kept mounted under
@@ -75,7 +91,12 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
   useEffect(() => {
     const body = scrollRef.current;
     if (!body) return;
-    const update = () => setFar(body.scrollTop > body.clientHeight * SHOW_AFTER_SCREENS);
+    let last = body.scrollTop;
+    const update = () => {
+      const top = body.scrollTop;
+      setFar(top > body.clientHeight * SHOW_AFTER_SCREENS);
+      if (Math.abs(top - last) > 4) { setGoingUp(top < last); last = top; }
+    };
     update();
     body.addEventListener("scroll", update, { passive: true });
     return () => body.removeEventListener("scroll", update);
@@ -107,10 +128,13 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
   // Phones show one document at a time; only the active one puts its buttons in the screen's button stack.
   const docked = mobile && active;
   const hidden = !onScreen || (mobile && (!active || overlayOpen));
-  const mic = micShown && text.editable && !hidden;
+  // On phones voice typing is in the keyboard bar while typing and in the + menu otherwise, so the
+  // corner holds at most the + button and, while scrolling up, Back to top.
+  const mic = micShown && text.editable && !hidden && !docked;
   const micSlot = useMobileDockSlot("mic");
   const topSlot = useMobileDockSlot("top");
-  if (hidden || (!far && !mic)) return null;
+  const top = far && (!docked || goingUp);
+  if (hidden || (!top && !mic)) return null;
 
   const toTop = () => { if (scrollRef.current) glideToTop(scrollRef.current); };
   const talk = () => {
@@ -131,7 +155,7 @@ export default function BackToTopButton({ scrollRef, active }: { scrollRef: RefO
     onPointerDown={(event) => event.preventDefault()} onMouseDown={(event) => event.preventDefault()} onClick={talk}>
     <MicIcon size={docked ? 22 : 18} />
   </button>;
-  const topButton = far && <button type="button" className={`back-to-top${docked ? " is-docked" : ""}`} aria-label="Back to top" title="Back to top"
+  const topButton = top && <button type="button" className={`back-to-top${docked ? " is-docked" : ""}`} aria-label="Back to top" title="Back to top"
     onPointerDown={(event) => event.preventDefault()} onClick={toTop}>
     <svg width={docked ? 22 : 18} height={docked ? 22 : 18} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M6 4h12M12 20V9m-5 5 5-5 5 5"/>

@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal, flushSync } from "react-dom";
-import { runEditorCommand, type EditorCommand } from "../lib/editorCommands";
+import { editorActionsOf, runEditorCommand, type EditorAction, type EditorCommand } from "../lib/editorCommands";
+import { MicIcon } from "./DictationButton";
 import { CODE_KEYS_ATTRIBUTE, codeKeyRows, sendCodeKey, type CodeKey } from "../lib/codeKeys";
 import { setMobileDockSlot } from "../lib/mobileDock";
 import { useVisualViewport } from "../lib/useVisualViewport";
@@ -121,6 +122,7 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
 
   // The writing bar rides on top of the software keyboard while a document is being typed in.
   const barShown = mobile && enabled && hasTarget && composerCount === 0;
+  const barActions = barShown ? editorActionsOf(target.current) : [];
   function runCommand(command: EditorCommand) {
     const field = target.current;
     if (!field?.isConnected) return;
@@ -186,6 +188,10 @@ export function MobileKeyboardProvider({ children }: { children: ReactNode }) {
     {barShown && createPortal(<div className="mobile-keyboard-bar" role="toolbar" aria-label="Writing tools" data-mobile-keyboard-bar
       style={{ top: viewport.top + viewport.height - KEYBOARD_BAR_HEIGHT, left: viewport.left, width: viewport.width, height: KEYBOARD_BAR_HEIGHT }}>
       {keyboardBarButtons.map((button) => <KeyboardBarButton key={button.command} {...button} onRun={runCommand} />)}
+      {/* Ask AI, the caret's ⋯ menu and voice typing, for editors that answer them: these used to be
+          a row of chips inside the page under the caret's paragraph. */}
+      {barActions.length ? <span className="mobile-keyboard-bar-spacer" /> : null}
+      {keyboardBarActions.filter((button) => barActions.includes(button.command)).map((button) => <KeyboardBarButton key={button.command} {...button} onRun={runCommand} />)}
     </div>, document.body)}
     {codeRows && createPortal(<div className="code-key-bar" role="toolbar" aria-label="Programming keys" data-code-key-bar
       style={{ top: viewport.top + viewport.height - codeBarHeight, left: viewport.left, width: viewport.width, height: codeBarHeight }}>
@@ -207,6 +213,12 @@ const keyboardBarButtons: { command: EditorCommand; label: string; icon: ReactNo
   { command: "date-time", label: "Insert date and time (Ctrl+D)", icon: <svg {...iconProps}><rect x="3" y="5" width="18" height="16" rx="2.5" /><path d="M3 10h18M8 3v4M16 3v4M8 14h2m4 0h2M8 17.5h2" /></svg> },
   { command: "outdent", label: "Outdent (Shift+Tab)", icon: <svg {...iconProps}><path d="M11 6h10M11 12h10M11 18h10M7 9l-3 3 3 3" /></svg> },
   { command: "indent", label: "Indent (Tab)", icon: <svg {...iconProps}><path d="M11 6h10M11 12h10M11 18h10M4 9l3 3-3 3" /></svg> },
+];
+
+const keyboardBarActions: { command: EditorAction; label: string; icon: ReactNode; className?: string }[] = [
+  { command: "ask-ai", label: "Ask AI here", className: "is-ask", icon: <span className="mobile-keyboard-bar-label" aria-hidden="true">✦ Ask AI</span> },
+  { command: "caret-menu", label: "More actions here", icon: <span className="mobile-keyboard-bar-text" aria-hidden="true">⋯</span> },
+  { command: "dictate", label: "Voice typing here", icon: <MicIcon size={20} /> },
 ];
 
 const CODE_KEY_ROW_HEIGHT = 48;
@@ -234,9 +246,9 @@ function CodeKeyButton({ className, label, onPress, children }: { className: str
 }
 
 /** Acts on touch end without taking focus, so the caret and keyboard stay where they are. */
-function KeyboardBarButton({ command, label, icon, onRun }: { command: EditorCommand; label: string; icon: ReactNode; onRun: (command: EditorCommand) => void }) {
+function KeyboardBarButton({ command, label, icon, className, onRun }: { command: EditorCommand; label: string; icon: ReactNode; className?: string; onRun: (command: EditorCommand) => void }) {
   const lastTouch = useRef(-Infinity);
-  return <button type="button" className="mobile-keyboard-bar-button" aria-label={label} title={label}
+  return <button type="button" className={`mobile-keyboard-bar-button${className ? ` ${className}` : ""}`} aria-label={label} title={label}
     onPointerDown={(event) => event.preventDefault()}
     onMouseDown={(event) => event.preventDefault()}
     onTouchEnd={(event) => { event.preventDefault(); lastTouch.current = event.timeStamp; onRun(command); }}
