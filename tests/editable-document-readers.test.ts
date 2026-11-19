@@ -136,3 +136,15 @@ describe("current editable document readers", () => {
     expect(grouped[0].headings).toEqual([]);
   });
 });
+
+describe("document previews", () => {
+  test("leave out a first heading that only repeats the title", async () => {
+    const { getDocumentPreview } = await import("../client/src/lib/documentSources");
+    let note = createStandaloneNoteConversation({ id: "sleep", noteId: "body" });
+    note.title = "Sleep and aging";
+    note = updateDocumentBlock(note, getEditableDocument(note).blocks[0].id, "# Sleep and aging\n\nSleep under six hours raises cortisol.");
+    expect(getDocumentPreview(note)).toBe("Sleep under six hours raises cortisol.");
+    note.title = "Other title";
+    expect(getDocumentPreview(note)).toBe("Sleep and aging Sleep under six hours raises cortisol.");
+  });
+});
