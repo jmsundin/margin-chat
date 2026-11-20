@@ -105,8 +105,8 @@ jobs:
       - name: Build client
         # Every installer bundles this same build; version.json records its commit.
         run: bun run build
-      - name: Build the app's vault sync
-        # The page's own sync code, bundled for the app's main process (it ships without node_modules).
+      - name: Build the app's vault sync and local server
+        # The page's own sync code and the server for local mode, bundled for the app's main process (it ships without node_modules).
         run: bun run desktop:engine
       - uses: actions/upload-artifact@v6
         with:
@@ -117,7 +117,10 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: desktop-engine
-          path: desktop/vaultSyncEngine.mjs
+          # Both under desktop/, so they download back to the same places (local mode's server too).
+          path: |
+            desktop/vaultSyncEngine.mjs
+            desktop/local-server
           if-no-files-found: error
           retention-days: 7
       - uses: actions/upload-artifact@v6

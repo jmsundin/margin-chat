@@ -1006,6 +1006,8 @@ function WorkspaceAppContent({
   useEffect(() => {
     if (!billingOpenRequest) return;
     if (user.billing.accessKind === "none") { setAIAccessOpen(true); return; }
+    // No account here, so nothing to bill: AI runs on the person's own keys.
+    if (user.billing.accessKind === "local") { setProfileInitialTab("api-keys"); setProfileModalOpen(true); return; }
     setProfileInitialTab("billing");
     setProfileModalOpen(true);
   }, [billingOpenRequest]);

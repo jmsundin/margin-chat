@@ -59,7 +59,9 @@ export type BillingAccessKind =
   | "credits"
   | "subscription"
   | "trial"
-  | "none";
+  | "none"
+  /** The desktop app running on its own, with no account (docs/desktop-local-mode.md). */
+  | "local";
 export type ApiKeyProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai" | "meta";
 export type ApiKeySettings = {
   byProvider: Record<

@@ -14,7 +14,7 @@ const plain = (value, maximum) => typeof value === "string"
   : "";
 
 export function canSearchWeb(user) {
-  return user?.role === "admin" || user?.billing?.hasAccess === true;
+  return user?.role === "admin" || user?.billing?.hasAccess === true || user?.billing?.accessKind === "local";
 }
 
 export function validateWebSearchRequest(body) {

@@ -83,7 +83,8 @@ export interface LocalDirectoryWorkspace {
 }
 
 export function canSyncWorkspaceToCloud(user: AuthenticatedUser) {
-  return user.role === "admin" || user.billing.accessKind === "subscription";
+  // In the desktop app's local mode the "cloud" is the app's own server on this computer.
+  return user.role === "admin" || user.billing.accessKind === "subscription" || user.billing.accessKind === "local";
 }
 
 export function isRecoverableCloudSyncError(error: unknown) {

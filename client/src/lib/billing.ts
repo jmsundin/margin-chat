@@ -25,6 +25,7 @@ export function getBillingStatusLabel(status: UserBilling["status"]) {
 
 export function getBillingDisplayLabel(billing: UserBilling) {
   if (billing.accessKind === "admin") return "Admin access";
+  if (billing.accessKind === "local") return "On this computer";
   if ((billing.status === "active" || billing.status === "trialing") && billing.plan === "cloud") return "Cloud plan";
   if (billing.status === "active" || billing.status === "trialing") return "Monthly prepaid plan";
   if (billing.creditBalanceMicros > 0) return `${formatCreditBalance(billing.creditBalanceMicros)} available`;
