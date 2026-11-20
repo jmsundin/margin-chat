@@ -6,7 +6,7 @@ for (const name of ["window", "document", "HTMLElement", "Element", "getComputed
   const value = name === "window" ? browser : (browser as any)[name];
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: name === "getComputedStyle" ? value.bind(browser) : value });
 }
-const { noteSheetRest } = await import("../client/src/components/DocumentMargin");
+const { noteSheetRest, keepsNoteOpen } = await import("../client/src/components/DocumentMargin");
 
 describe("phone note sheet: where a dragged handle comes to rest", () => {
   const screen = 844;
@@ -22,5 +22,19 @@ describe("phone note sheet: where a dragged handle comes to rest", () => {
     expect(noteSheetRest(screen * 0.55, screen, 1.2)).toBe(2);
     expect(noteSheetRest(screen * 0.5, screen, -1.2)).toBe(0);
     expect(noteSheetRest(screen * 0.28, screen, -1.2)).toBe("close");
+  });
+});
+
+describe("phone note sheet: taps that keep it open", () => {
+  test("the Ask AI prompt over the keyboard keeps the note open, a tap on the page closes it", () => {
+    const aside = document.createElement("aside");
+    const composer = document.createElement("div");
+    composer.setAttribute("data-mobile-composer", "");
+    const prompt = document.createElement("textarea");
+    composer.append(prompt);
+    const page = document.createElement("p");
+    document.body.append(aside, composer, page);
+    expect(keepsNoteOpen(aside as any, prompt as any)).toBe(true);
+    expect(keepsNoteOpen(aside as any, page as any)).toBe(false);
   });
 });

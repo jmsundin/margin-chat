@@ -134,13 +134,14 @@ function scrollsInside(target: EventTarget | null, stop: Element, deltaY: number
 
 /**
  * Whether a tap leaves the open note open: taps inside the margin, in a menu or dialog the note
- * opened, and on the phone's keyboard button and writing bar (which a note needs to be typed in).
+ * opened, on the phone's keyboard button and writing bar (which a note needs to be typed in), and in
+ * the phone's Ask AI prompt, which opens over the keyboard outside the note.
  */
-function keepsNoteOpen(aside: HTMLElement | null, target: EventTarget | null): boolean {
+export function keepsNoteOpen(aside: HTMLElement | null, target: EventTarget | null): boolean {
   const element = target instanceof Element ? target : null;
   if (!element) return true;
   return Boolean(aside?.contains(element)
-    || element.closest("[role=menu], [role=dialog], .selection-toolbar-row, [data-mobile-keyboard-toggle], [data-mobile-keyboard-bar], [data-note-sheet]"));
+    || element.closest("[role=menu], [role=dialog], .selection-toolbar-row, [data-mobile-keyboard-toggle], [data-mobile-keyboard-bar], [data-mobile-composer], [data-note-sheet]"));
 }
 
 /**
