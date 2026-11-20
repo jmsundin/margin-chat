@@ -104,6 +104,23 @@ function scrollsItself(aside: HTMLElement) {
   return getComputedStyle(aside).overflowY === "auto";
 }
 
+/** How far an open note can widen past the margin's right edge: up to the window's edge, but
+ *  never over another document open beside this one (a side document or a note opened beside). */
+export function freeRoomRight(aside: HTMLElement, gap = 16) {
+  const rect = aside.getBoundingClientRect();
+  let edge = window.innerWidth;
+  const own = aside.closest(".panel-slot");
+  if (own) {
+    for (const slot of document.querySelectorAll<HTMLElement>(".panel-slot")) {
+      if (slot === own || slot.contains(own) || own.contains(slot)) continue;
+      const box = slot.getBoundingClientRect();
+      if (box.width <= 0 || box.bottom <= rect.top || box.top >= rect.bottom) continue;
+      if (box.left >= rect.right - 1) edge = Math.min(edge, box.left);
+    }
+  }
+  return Math.max(0, edge - rect.right - gap);
+}
+
 /** Scrolling up or down inside a note that can still scroll belongs to that note. */
 function scrollsInside(target: EventTarget | null, stop: Element, deltaY: number) {
   for (let element = target instanceof Element ? target : null; element && element !== stop; element = element.parentElement) {
@@ -309,10 +326,19 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     const aside = asideRef.current;
     if (!expandedId || !aside || placements[expandedId]?.left !== undefined) { setExpandBy(0); return; }
     // A margin that scrolls by itself (beside an HTML page) clips sideways, so its note can't widen out.
-    const measure = () => setExpandBy(scrollsItself(aside) ? 0 : Math.max(0, Math.min(Math.round(width * 0.5), Math.floor(window.innerWidth - aside.getBoundingClientRect().right - 16))));
+    const measure = () => setExpandBy(scrollsItself(aside) ? 0 : Math.max(0, Math.min(Math.round(width * 0.5), Math.floor(freeRoomRight(aside)))));
     measure();
+    // A document opened, closed or resized beside this one changes the room, so watch the row too.
+    const row = aside.closest(".panel-slot")?.parentElement ?? null;
+    const resize = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    const mutate = typeof MutationObserver === "undefined" || !row ? null : new MutationObserver(() => {
+      resize?.disconnect();
+      for (const slot of row.children) resize?.observe(slot);
+      measure();
+    });
+    if (row) { for (const slot of row.children) resize?.observe(slot); mutate?.observe(row, { childList: true }); }
     window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
+    return () => { window.removeEventListener("resize", measure); resize?.disconnect(); mutate?.disconnect(); };
   }, [expandedId, width, placements[expandedId ?? ""]?.left]);
 
   // The passage of the note being read or pointed at stays lit in the text. The editor owns
