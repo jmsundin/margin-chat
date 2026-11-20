@@ -126,6 +126,7 @@ import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
 import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import VaultFolderGate from "./components/VaultFolderGate";
 import AIControls from "./components/AIControls";
+import StarterCards from "./components/StarterCards";
 import { applyPresetSettings, type AIPreset } from "./lib/aiPresets";
 import JevRelatedItems from "./components/JevRelatedItems";
 import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
@@ -181,7 +182,7 @@ import AIAccessDialog from "./components/AIAccessDialog";
 import GuidedTour, { DESKTOP_TOUR, PHONE_TOUR, TourPill } from "./components/GuidedTour";
 import { chatImportReminderDue, finishChatImportReminder } from "./lib/chatImportReminder";
 import { NEW_DEVICE_NOTICE, loggedInThisTab } from "./lib/newDeviceNotice";
-import { completedStarterTasks, isPristineWorkspace, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
+import { completedStarterTasks, isPristineWorkspace, madeByPerson, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
 import { loadOnboarding, saveOnboarding, type OnboardingRecord } from "./lib/onboarding";
 import { addExampleVault } from "./lib/exampleVault";
 import { addTrialTopics, loadTrialTopics } from "./lib/trialTopics";
@@ -1565,6 +1566,9 @@ function WorkspaceAppContent({
   }, [starterTasksKey]);
   // A vault this small belongs to someone new, so the views say what they are for.
   const newVault = guest || Object.keys(state.conversations).length <= 8;
+  /** Documents the person made, not the Start here page or the trial's examples. The starter cards go once there is one. */
+  const ownDocumentCount = useMemo(() => Object.values(state.conversations)
+    .filter((item) => !item.parentId && item.id !== state.rootId && madeByPerson(item.id)).length, [state.conversations, state.rootId]);
   const threadSummaries = useMemo(
     () => applyJevCategories(buildThreadSummaries(state.conversations), jev.categories).map((thread) => ({
         ...thread,
@@ -7917,6 +7921,11 @@ function WorkspaceAppContent({
                   </div> : null) : desktopHeaderOpen && !showSpaceStart && !quietHeader ? renderDocumentBreadcrumbs() : null}
                   </header>
                   {isMobileViewport && mobileHeaderOpen ? <div className="document-header-backdrop" aria-hidden="true" onClick={() => setMobileHeaderOpen(false)} /> : null}
+                  {newVault && ownDocumentCount === 0 && vault.ready && !inExtension && !showMapModal ? <StarterCards
+                    onBringNotes={() => { setProfileSaveError(null); setProfileInitialTab("storage"); setProfileModalOpen(true); }}
+                    onAddFiles={(files) => { void vault.uploadFiles(files); }}
+                    onBringChats={() => setHistoryImportOpen(true)}
+                    onNewDocument={() => handleCreateMainConversation()} /> : null}
                   <div className={`document-workspace-with-search${showMapModal ? ` is-sheet-${shownSheet.mode} is-sheet-edge-${sheetEdge}` : ""}${sheetDragging ? " is-sheet-dragging" : ""}`} ref={documentAreaRef}
                     style={sheetDocked ? (sheetEdge === "top" ? { paddingTop: shownSheet.size + 20 } : { paddingLeft: shownSheet.size })
                       : undefined}>
