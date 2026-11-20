@@ -6458,23 +6458,6 @@ function WorkspaceAppContent({
     showRoadmapOnMap(made.id);
   }
 
-  /** Lessons whose content AI was asked to write when they were first opened. */
-  const roadmapLessonsAsked = useRef(new Set<string>());
-  /** A lesson just opened from Learn: when it has nothing to read yet (a note the roadmap made), AI writes the lesson, once. */
-  const [lessonToWrite, setLessonToWrite] = useState<{ pathId: string; docId: string; context: string } | null>(null);
-  useEffect(() => {
-    if (!lessonToWrite) return;
-    const { pathId, docId, context } = lessonToWrite;
-    // Wait until the lesson is the open document, so writing into it can't pull the page back to the one before.
-    if (activeConversation.id !== docId) return;
-    setLessonToWrite(null);
-    const conversation = currentStateRef.current.conversations[docId];
-    if (!conversation || roadmapLessonsAsked.current.has(docId) || isHiddenFromAI(conversation) || pendingConversationIds[docId] || chatExecutions.has(docId)) return;
-    const editable = getEditableDocument(conversation);
-    if (editable.generations.length || plainPreview(editable.blocks.map((block) => block.content).join("\n\n")).length >= 600) return;
-    roadmapLessonsAsked.current.add(docId);
-    if (handleRoadmapStepAI(pathId, docId, "explain", context)) roadmapLessonsAsked.current.delete(docId);
-  }, [lessonToWrite, activeConversation.id]);
   /**
    * A roadmap stage opens as a document, like every other node: its index under the roadmap, made the
    * first time, with a link to each lesson. Lessons added since are linked at its end; the rest is the user's.
@@ -6524,9 +6507,8 @@ function WorkspaceAppContent({
     },
     onRevisePath: (pathId, request) => handleReviseRoadmap(pathId, request),
     onChange: handleRoadmapChange,
-    onStepAI: (pathId, docId, action) => handleRoadmapStepAI(pathId, docId, action),
+    onStepAI: (pathId, docId, action, context) => handleRoadmapStepAI(pathId, docId, action, context),
     // Handled after the lesson has opened, so it runs on the state that opened it.
-    onLessonOpened: (pathId, docId, context) => setLessonToWrite({ pathId, docId, context }),
     onOpenStage: handleOpenRoadmapStage,
     onDraftDecision: (pathId, messageId, proposalId, action) => handleAgentProposal(pathId, messageId, proposalId, action),
     onStopDraft: (pathId) => stopChatStream(pathId),
