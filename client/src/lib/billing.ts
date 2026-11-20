@@ -109,6 +109,13 @@ export function getCheckoutConfirmationNotice(confirmation: CheckoutConfirmation
   if (!confirmation.confirmed) return {
     kind: "info", message: "Your payment is not confirmed yet. Refresh billing shortly to check your balance, or open Stripe for the payment status.",
   };
+  if (confirmation.purchaseKind === "subscription" && confirmation.trial) return {
+    kind: "success",
+    message: confirmation.plan === "cloud"
+      ? "Your free trial of Cloud has started. Your card is charged $10 a month when the trial ends, unless you cancel before then."
+      : `Your free trial of Cloud + AI has started${confirmation.credited && confirmation.amountMicros
+        ? `, with ${formatTrialCredit(confirmation.amountMicros)} of AI to try` : ""}. Your card is charged $20 a month when the trial ends, and each payment adds $20 of AI credit.`,
+  };
   return {
     kind: "success",
     message: confirmation.purchaseKind === "subscription" && confirmation.plan === "cloud"
@@ -117,6 +124,10 @@ export function getCheckoutConfirmationNotice(confirmation: CheckoutConfirmation
       ? "Your subscription payment is confirmed. Your monthly credit is available, and unused credit carries over."
       : "Your payment is confirmed and the money has been added to your AI balance.",
   };
+}
+
+function formatTrialCredit(micros: number) {
+  return `$${(micros / 1_000_000).toFixed(2).replace(/\.00$/u, "")}`;
 }
 
 export function getReceiptUrl(value: string | null) {

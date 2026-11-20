@@ -114,6 +114,8 @@ export function createAuthService({
       // Signup does not prove ownership of the supplied email address. Admin
       // access is provisioned separately on a verified existing account.
       role: "member",
+      // The website is for paying accounts (a free trial with a card); the desktop app is free without one.
+      webPlanRequired: true,
     });
     const cookie = await createSessionForUser(user.id);
     await sendVerificationLink(user);

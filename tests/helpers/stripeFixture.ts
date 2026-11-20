@@ -4,7 +4,7 @@ import { CLOUD_PLAN_KEY, MONTHLY_PLAN_KEY } from "../../server/billing/plan.mjs"
 export const user = { id: "user-1", email: "ada@example.com", displayName: "Ada Lovelace", role: "member" };
 export const request = { headers: {} };
 
-export function fixture({ inline = false, cloud = false } = {}) {
+export function fixture({ inline = false, cloud = false, env: extraEnv = {} as Record<string, string> } = {}) {
   let account: any = { ...user, stripeCustomerId: "cus_1", stripeSubscriptionId: null, billingStatus: "inactive", billingRevision: 0 };
   const price: any = { id: "price_monthly", active: true, currency: "usd", unit_amount: 2000, type: "recurring", billing_scheme: "per_unit", recurring: { interval: "month", interval_count: 1, usage_type: "licensed" }, product: { id: "prod_monthly", metadata: { marginChatPlan: MONTHLY_PLAN_KEY } } };
   const cloudPrice: any = { id: "price_cloud", active: true, currency: "usd", unit_amount: 1000, type: "recurring", billing_scheme: "per_unit", recurring: { interval: "month", interval_count: 1, usage_type: "licensed" }, product: { id: "prod_cloud", metadata: { marginChatPlan: CLOUD_PLAN_KEY } } };
@@ -12,7 +12,8 @@ export function fixture({ inline = false, cloud = false } = {}) {
   const invoice: any = { id: "in_first", status: "paid", currency: "usd", billing_reason: "subscription_create", customer: "cus_1", parent: { subscription_details: { subscription: "sub_1" } }, amount_paid: 2000, amount_due: 2000, amount_remaining: 0, subtotal: 2000, total: 2000, starting_balance: 0, ending_balance: 0, lines: { has_more: false, data: [{ id: "il_1", currency: "usd", amount: 2000, quantity: 1, pricing: { price_details: { price: price.id } }, parent: { type: "subscription_item_details", subscription_item_details: { subscription: "sub_1", subscription_item: "si_1", proration: false } } }] }, payments: { has_more: false, data: [{ id: "inpay_1", invoice: "in_first", status: "paid", currency: "usd", amount_paid: 2000, payment: { type: "payment_intent", payment_intent: "pi_1" } }] } };
   const intent: any = { id: "pi_1", customer: "cus_1", status: "succeeded", currency: "usd", amount_received: 2000, latest_charge: { id: "ch_1", paid: true, captured: true, refunded: false, disputed: false, amount_refunded: 0, receipt_url: "https://pay.stripe.com/receipts/test" } };
   const session: any = { id: "cs_test_purchase", mode: "subscription", customer: "cus_1", client_reference_id: user.id, metadata: { userId: user.id, purchaseKind: "subscription" }, status: "complete", payment_status: "paid", subscription: "sub_1", invoice: "in_first" };
-  const calls = { updates: [] as any[], checkouts: [] as any[], customers: [] as any[], creates: [] as any[], syncs: [] as any[], credits: [] as any[], reserves: [] as any[], settlements: [] as any[], refunds: [] as any[] };
+  const calls = { updates: [] as any[], checkouts: [] as any[], customers: [] as any[], creates: [] as any[], syncs: [] as any[], credits: [] as any[], reserves: [] as any[], settlements: [] as any[], refunds: [] as any[], trialCredits: [] as any[] };
+  const trialCredited = new Set<string>();
   const credited = new Map<string, any>();
   const subscriptions = new Map<string, any>([[subscription.id, subscription]]);
   const customer: any = { id: "cus_1", email: user.email, metadata: { userId: user.id } };
@@ -21,6 +22,7 @@ export function fixture({ inline = false, cloud = false } = {}) {
     updateStripeCustomerId: async (args: any) => { calls.customers.push(args); account.stripeCustomerId = args.stripeCustomerId; },
     syncUserBillingById: async (args: any) => { calls.syncs.push(args); if (args.expectedStripeSubscriptionId !== account.stripeSubscriptionId || args.expectedBillingRevision !== account.billingRevision) return null; account = { ...account, ...args, billingRevision: account.billingRevision + 1 }; return { ...account }; },
     creditHostedBalance: async (args: any) => { calls.credits.push(args); const id = args.stripeInvoiceId ?? args.stripeCheckoutSessionId; if (credited.has(id)) return false; credited.set(id, args); return true; },
+    grantTrialCredit: async (args: any) => { calls.trialCredits.push(args); if (trialCredited.has(args.userId)) return false; trialCredited.add(args.userId); return true; },
     getBillingDashboard: async () => ({ balanceMicros: 20_000_000, reservedMicros: 3000, transactions: [], subscription: { status: "active" } }),
     chargeHostedRequest: async (args: any) => { calls.reserves.push(args); return 10_000_000 - args.amountMicros; },
     settleHostedRequest: async (args: any) => { calls.settlements.push(args); return 10_000_000 - args.amountMicros; },
@@ -46,7 +48,7 @@ export function fixture({ inline = false, cloud = false } = {}) {
     current.metadata = args.metadata;
     return { ...current, latest_invoice: invoice.id };
   };
-  const env = { APP_URL: "https://margin.chat", STRIPE_WEBHOOK_SECRET: "whsec_test", ...(inline ? {} : { STRIPE_PRICE_ID: price.id }), ...(cloud ? { STRIPE_CLOUD_PRICE_ID: cloudPrice.id } : {}) };
+  const env = { APP_URL: "https://margin.chat", STRIPE_WEBHOOK_SECRET: "whsec_test", ...(inline ? {} : { STRIPE_PRICE_ID: price.id }), ...(cloud ? { STRIPE_CLOUD_PRICE_ID: cloudPrice.id } : {}), ...extraEnv };
   const service = createBillingService({ database, env, stripeClient: stripe });
   const webhook = (type: string, object: any = invoice) => service.handleWebhook({ rawBody: JSON.stringify({ type, data: { object } }), signature: "valid" });
   const confirm = () => service.confirmCheckout({ sessionId: session.id, user });
@@ -55,5 +57,5 @@ export function fixture({ inline = false, cloud = false } = {}) {
     intent.amount_received = amountCents;
     intent.metadata = { ...session.metadata };
   }
-  return { account: () => account, setAccount: (value: any) => { account = { ...account, ...value }; }, price, cloudPrice, env, subscription, subscriptions, invoice, intent, session, customer, calls, credited, database, stripe, service, webhook, confirm, topup };
+  return { trialCredited, account: () => account, setAccount: (value: any) => { account = { ...account, ...value }; }, price, cloudPrice, env, subscription, subscriptions, invoice, intent, session, customer, calls, credited, database, stripe, service, webhook, confirm, topup };
 }

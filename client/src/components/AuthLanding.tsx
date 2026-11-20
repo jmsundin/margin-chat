@@ -294,7 +294,7 @@ export default function AuthLanding({
             <button className="primary-button auth-submit" disabled={isSubmitting || waitingForCheck} type="submit">
               {isSubmitting ? "Creating account..." : "Create account"}
             </button>
-            <p className="auth-signup-note">You start with a “Start here” document and a short tour. Writing, notes and the Map are free; AI uses your own API key or credit you add.</p>
+            <p className="auth-signup-note">Next, pick Cloud ($10/month) or Cloud + AI ($20/month), free for the trial. Stripe asks for a card and charges it when the trial ends. The <a href={`${SITE_ORIGIN}/download`} rel="noreferrer" target="_blank">desktop app</a> is free with no account.</p>
             <p className="auth-signup-note">By creating an account you agree to the <a href={`${SITE_ORIGIN}/terms`} rel="noreferrer" target="_blank">Terms</a> and <a href={`${SITE_ORIGIN}/privacy`} rel="noreferrer" target="_blank">Privacy Policy</a>, and confirm you are at least 16.</p>
             <p className="auth-switch">
               Already have an account?{" "}

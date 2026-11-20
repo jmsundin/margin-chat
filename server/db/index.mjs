@@ -28,6 +28,7 @@ import {
   settleHostedRequest,
   getBillingDashboard,
   creditHostedBalance,
+  grantTrialCredit,
   getUserBillingAccount,
   incrementTrialApiCallsUsed,
   refundHostedRequest,
@@ -325,6 +326,10 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     return withClient((client) => creditHostedBalance(client, args));
   }
 
+  async function grantTrialCreditRecord(args) {
+    return withClient((client) => grantTrialCredit(client, args));
+  }
+
   async function refundHostedRequestRecord(args) {
     return withClient((client) => refundHostedRequest(client, args));
   }
@@ -417,6 +422,7 @@ export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
     completeDocument: completeDocumentRecord,
     createDocument: createDocumentRecord,
     creditHostedBalance: creditHostedBalanceRecord,
+    grantTrialCredit: grantTrialCreditRecord,
     deleteAuthSession: deleteAuthSessionRecord,
     deleteUserApiKey: deleteUserApiKeyRecord,
     deleteDocument: deleteDocumentRecord,

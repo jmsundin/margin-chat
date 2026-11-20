@@ -13323,3 +13323,60 @@ body .live-markdown-editor {
 }
 .settings-page-signin:hover:not(:disabled), .settings-page-signin:focus-visible { background: var(--bg); }
 .settings-page-signin:disabled { display: none; }
+
+/* Picking a plan (a free trial with a card) before the website opens. */
+.auth-loading-card.plan-picker {
+  max-width: 720px;
+}
+
+.plan-picker h1 {
+  font-size: clamp(2rem, 3.2vw, 3.2rem);
+}
+
+.plan-picker-plans {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin: 20px 0;
+}
+
+.plan-picker-plan {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+}
+
+.plan-picker-plan h2 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+.plan-picker-price {
+  margin: 0;
+}
+
+.plan-picker-price strong {
+  font-size: 1.6rem;
+}
+
+.plan-picker-plan ul {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.plan-picker-free,
+.plan-picker-account {
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+
+.plan-picker a {
+  color: var(--accent);
+}

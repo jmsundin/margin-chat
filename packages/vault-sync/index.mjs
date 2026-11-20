@@ -128,7 +128,9 @@ export function createMemoryVaultFs(initial = {}, { name = "vault", now = () => 
 }
 
 /** Folders whose contents are never vault content or drop-ins. `.margin-chat` is the app's own. */
-const IGNORED_FOLDERS = new Set([".git", ".obsidian", ".trash", ".margin-chat", "node_modules", ".Trash", "$RECYCLE.BIN"]);
+const IGNORED_FOLDERS = new Set([".git", ".obsidian", ".trash", ".margin-chat", "node_modules", ".Trash", "$RECYCLE.BIN",
+  // Google Drive and Dropbox keep their transfers in progress here.
+  ".tmp.drivedownload", ".tmp.driveupload", ".dropbox.cache"]);
 /** Files other apps leave behind while they work, or that the system makes by itself. */
 const IGNORED_FILE = /^(?:\.DS_Store|Thumbs\.db|desktop\.ini|4913|\.~lock\..*#|~\$.*|\._.*|.*\.(?:tmp|temp|swp|swo|swx|crdownload|part|partial|download|icloud))$/iu;
 const TEMPORARY_WRITE = /^\.margin-write-[0-9a-f]{12}\.tmp$/u;
@@ -139,4 +141,20 @@ export function isIgnoredVaultPath(path) {
   const name = segments.at(-1) ?? "";
   if (segments.slice(0, -1).some((segment) => IGNORED_FOLDERS.has(segment))) return true;
   return IGNORED_FOLDERS.has(name) || IGNORED_FILE.test(name) || TEMPORARY_WRITE.test(name);
+}
+
+/**
+ * iCloud Drive before macOS Sonoma leaves a file it removed from this computer to save space ("Optimize Mac
+ * Storage") as `.<name>.icloud` beside where it was. The file is still in iCloud: it is not deleted.
+ * Returns the name of the file a placeholder stands for, or null for any other name.
+ */
+export function evictedFileName(name) {
+  const match = /^\.(.+)\.icloud$/u.exec(name);
+  return match ? match[1] : null;
+}
+
+/** Where iCloud leaves the placeholder for `path` while the file isn't on this computer. */
+export function evictedPlaceholderPath(path) {
+  const slash = path.lastIndexOf("/");
+  return `${path.slice(0, slash + 1)}.${path.slice(slash + 1)}.icloud`;
 }

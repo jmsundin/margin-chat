@@ -7758,7 +7758,7 @@ function WorkspaceAppContent({
                     onOpenExplorer={() => { setMapSidebarSection("explore"); setLeftSidebarOpen(true); }}
                     onFocusCanvas={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
                     urlMapAIOptions={{ serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai }}
-                    publicMapAccount={{ userId: user.id, canAsk: user.role === "admin" || user.billing.hasAccess, isAdmin: user.role === "admin",
+                    publicMapAccount={{ userId: user.id, canAsk: user.role === "admin" || user.billing.hasAccess || user.apiKeys.hasAny, isAdmin: user.role === "admin",
                       aiOptions: { serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai },
                       onBillingRefresh: () => { void onRefreshBilling(); }, onAuthExpired }}
                     onSavePublicTopic={handleSavePublicTopic}

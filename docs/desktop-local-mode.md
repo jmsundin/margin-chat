@@ -32,11 +32,32 @@ The app runs Margin Chat's own server inside its main process instead of sending
 
 The vault folder screen ("Open a folder / Create a new vault") comes before anything else. The "Start here" sample documents are added only after that choice, and only when the workspace is still empty. A folder that already holds notes therefore never gets them, while a new empty vault (or "Not now") does.
 
+## Your own keys for everything
+
+Settings → API keys has the AI model keys and, under **Other services**, keys for the features that call other services. With these, local mode (or any account) has every feature without a plan:
+
+- **Web search:** a Tavily key. The person's own key is used without billing here (`server/webSearch`).
+- **Translation in Language mode:** a DeepL or Google Cloud Translation key. Wiktionary and AI meanings work without one (`server/languageTerms/lookup.mjs`).
+- **Read-aloud voices:** an Azure Speech key saved as `region:key`. The device's own voice works without one (`server/languageTerms/speech.mjs`).
+- **Explore's Ask** and search by meaning use the person's own AI keys (an OpenAI key for embeddings), like every other AI request.
+
+The person's own keys have no daily caps, since their own account pays. Migration `0036_service_api_keys` allows the new providers. `hasAny` still means a model key, so a search key alone doesn't count as having AI.
+
+## iCloud Drive and Google Drive
+
+Sync between computers is left to the operating system: the vault folder can live in iCloud Drive, Google Drive or Dropbox. What their sync does to the folder must never read as the person deleting notes.
+
+- **iCloud before macOS Sonoma** ("Optimize Mac Storage") replaces a file with `.<name>.icloud`. A scan treats the file as still there, with the text it was last read with (`evictedFileName` in `packages/vault-sync`, `scanMarkdownDirectory` and the companion reads in `client/src/lib/workspaceStorage.ts`). A note never read on this computer is asked for (`brctl download`, `download` in `desktop/vaultFs.mjs`) and taken in once it arrives. Writing to such a file waits: the write asks for the file and stops with a conflict, which is retried shortly, so iCloud never ends up with two versions side by side. Leaving it alone writes nothing.
+- **iCloud on Sonoma and later, and Google Drive streaming** keep the name and download a file when it is read. A file unchanged since it was last read is never read again (its size and date match), so nothing is downloaded for it. A read that fails, such as offline, fails the whole pass, which is retried; it is never taken as a deletion or as empty text.
+- **Temporary transfers** (`.tmp.drivedownload`, `.tmp.driveupload`, `.dropbox.cache`, and `*.icloud`, `*.download`, `*.part` files) are ignored by the scan and the folder watcher alike.
+- **Conflict copies** ("Note 2.md" from iCloud, "Note (1).md" or "(conflicted copy)" from others) are ordinary notes and are taken in as their own documents, so neither version is lost.
+- A folder that suddenly looks empty or mostly gone (unmounted, signed out of the drive) still holds the deletions for the person to confirm, as before (`client/src/lib/folderDeletionGuard.ts`).
+
 ## Steps
 
 1. The app runs the server on the computer with no account (this note).
 2. First launch opens straight to "Open a folder / Create a new vault". Local mode is on by default for new installs. Signing in is optional, from Settings, for Cloud sync or hosted AI.
 3. The features that use keys only the hosted server has (embeddings, web search, voice, translation) use the person's own keys, or say which key they need.
-4. iCloud Drive and Google Drive folders: files that haven't downloaded yet, conflict copies, and temporary files.
-5. Web sign-up starts a free trial with a card, for Cloud ($10/mo) or Cloud + AI ($20/mo).
+4. iCloud Drive and Google Drive folders: files that haven't downloaded yet, conflict copies, and temporary files (above).
+5. Web sign-up starts a free trial with a card, for Cloud ($10/mo) or Cloud + AI ($20/mo) (`docs/billing.md`, "Free trial at web sign-up").
 6. A signed and notarized Mac download.

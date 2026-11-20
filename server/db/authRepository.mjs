@@ -4,7 +4,7 @@ import { CANONICAL_EMAIL_SQL } from "../auth/botProtection.mjs";
 
 export async function createUser(
   client,
-  { displayName, email, id, passwordHash, role },
+  { displayName, email, id, passwordHash, role, webPlanRequired = false },
 ) {
   try {
     const result = await client.query(
@@ -14,9 +14,10 @@ export async function createUser(
           email,
           password_hash,
           display_name,
-          role
+          role,
+          web_plan_required
         )
-        values ($1, $2, $3, $4, $5)
+        values ($1, $2, $3, $4, $5, $6)
         returning
           id,
           email,
@@ -30,9 +31,11 @@ export async function createUser(
           trial_api_calls_used,
           trial_api_calls_limit,
           hosted_credit_balance_micros,
+          web_plan_required,
+          stripe_subscription_id,
           email_verified_at
       `,
-      [id, email, passwordHash, displayName, role],
+      [id, email, passwordHash, displayName, role, webPlanRequired],
     );
 
     return mapUserRow(result.rows[0]);
@@ -226,6 +229,8 @@ export async function updateUserProfile(
           trial_api_calls_used,
           trial_api_calls_limit,
           hosted_credit_balance_micros,
+          web_plan_required,
+          stripe_subscription_id,
           email_verified_at
       `,
       [displayName, email, userId],
@@ -262,6 +267,8 @@ export async function findUserForLogin(client, email) {
         trial_api_calls_used,
         trial_api_calls_limit,
         hosted_credit_balance_micros,
+        web_plan_required,
+        stripe_subscription_id,
         email_verified_at
       from marginchat_users
       where email = $1
@@ -302,6 +309,8 @@ export async function getUserByAuthSession(client, sessionId) {
         marginchat_users.trial_api_calls_used,
         marginchat_users.trial_api_calls_limit,
         marginchat_users.hosted_credit_balance_micros,
+        marginchat_users.web_plan_required,
+        marginchat_users.stripe_subscription_id,
         marginchat_users.email_verified_at,
         marginchat_user_sessions.last_seen_at < now() - interval '${SESSION_TOUCH_INTERVAL}' as needs_touch
       from marginchat_user_sessions

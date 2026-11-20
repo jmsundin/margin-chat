@@ -26,6 +26,7 @@ import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from
 import { chatRunId, createChatRunService } from "../chat/runs.mjs";
 import { matchApiRoute } from "./registry.mjs";
 import { isLocalMode, isLocalUser } from "../local/mode.mjs";
+import { parseAzureSpeechKey } from "../apiKeys/index.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
 import { fetchPublicImage, normalizePublicPageUrl, readPublicPage } from "../urlMap/page.mjs";
 import { handleUrlMapRequest } from "./urlMap.mjs";
@@ -692,7 +693,7 @@ export function createApiHandler({
       }
 
       if (route?.id === "webSearch") {
-        await handleWebSearchRequest({ request, response, user: authContext.user, webSearch, workspaceCredential });
+        await handleWebSearchRequest({ request, response, user: authContext.user, webSearch, apiKeyService, workspaceCredential });
         return;
       }
 
@@ -935,6 +936,7 @@ export function createApiHandler({
           sendJson(response, 200, await languageLookup.lookup({
             userId: authContext.user.id, term: url.searchParams.get("term") ?? "", src: url.searchParams.get("src") ?? "", tgt: url.searchParams.get("tgt") ?? "",
             sentence: url.searchParams.get("sentence") ?? "", signal: scope.signal,
+            keys: apiKeyService ? await apiKeyService.getDecryptedKeys(authContext.user.id) : null,
           }), { "Cache-Control": "private, no-store" });
         } finally {
           scope.dispose();
@@ -945,9 +947,10 @@ export function createApiHandler({
       if (route?.id === "languageSpeech") {
         requireExpectedVaultAccount(request, authContext.user);
         if (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "Listen from Margin Chat.");
+        const ownSpeech = apiKeyService ? parseAzureSpeechKey((await apiKeyService.getDecryptedKeys(authContext.user.id)).azure_speech) : null;
         const { audio } = await languageSpeech.speak({
           userId: authContext.user.id, text: url.searchParams.get("text") ?? "", language: url.searchParams.get("language") ?? "",
-          slow: url.searchParams.get("slow") === "1",
+          slow: url.searchParams.get("slow") === "1", own: ownSpeech,
         });
         // The same sentence in the same voice never changes, so each device keeps its copy and pays for it once.
         response.writeHead(200, {

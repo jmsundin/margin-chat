@@ -271,6 +271,20 @@ export async function creditHostedBalance(client, {
   });
 }
 
+/** A free trial's hosted AI allowance: at most once per account (a unique index holds it to that). */
+export async function grantTrialCredit(client, { userId, amountMicros, ledgerId, description = null, metadata = {} }) {
+  requireMicros(amountMicros);
+  return transaction(client, async () => {
+    await lockAccount(client, userId);
+    const prior = await client.query("select 1 from marginchat_billing_ledger where user_id = $1 and entry_type = 'trial_credit'", [userId]);
+    if (prior.rowCount) return false;
+    await client.query(`insert into marginchat_billing_ledger (id, user_id, amount_micros, entry_type, description, metadata)
+      values ($1, $2, $3, 'trial_credit', $4, $5::jsonb)`, [ledgerId, userId, amountMicros, description, JSON.stringify(metadata)]);
+    await client.query("update marginchat_users set hosted_credit_balance_micros = hosted_credit_balance_micros + $1, updated_at = now() where id = $2", [amountMicros, userId]);
+    return true;
+  });
+}
+
 /** The Stripe credits a PaymentIntent paid for: top-ups record it directly, invoice credits in a list. */
 export async function findStripeCredits(client, { paymentIntentId, invoiceIds = [] }) {
   const result = await client.query(`select id, user_id, amount_micros from marginchat_billing_ledger
@@ -396,7 +410,7 @@ export async function getBillingDashboard(client, userId) {
         currentPeriodEnd: account.billingCurrentPeriodEnd instanceof Date ? account.billingCurrentPeriodEnd.toISOString() : account.billingCurrentPeriodEnd },
       transactions: history.rows.map((row) => ({ id: row.id, amountMicros: Number(row.amount_micros), type: row.entry_type,
         createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at,
-        description: row.description ?? ({ stripe_credit_purchase: "Credit top-up", stripe_subscription_credit: "Monthly subscription credit", hosted_request: "AI usage", hosted_request_refund: "Usage refund", stripe_payment_reversal: "Payment refunded" }[row.entry_type]),
+        description: row.description ?? ({ stripe_credit_purchase: "Credit top-up", stripe_subscription_credit: "Monthly subscription credit", hosted_request: "AI usage", hosted_request_refund: "Usage refund", stripe_payment_reversal: "Payment refunded", trial_credit: "Free trial AI allowance" }[row.entry_type]),
         receiptUrl: row.receipt_url, metadata: row.metadata,
       })),
     };

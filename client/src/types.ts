@@ -62,7 +62,11 @@ export type BillingAccessKind =
   | "none"
   /** The desktop app running on its own, with no account (docs/desktop-local-mode.md). */
   | "local";
-export type ApiKeyProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai" | "meta";
+/** Keys for AI models. */
+export type AIKeyProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai" | "meta";
+/** Keys for web search, translation and read-aloud voices. */
+export type ServiceKeyProvider = "tavily" | "deepl" | "google_translate" | "azure_speech";
+export type ApiKeyProvider = AIKeyProvider | ServiceKeyProvider;
 export type ApiKeySettings = {
   byProvider: Record<
     ApiKeyProvider,
@@ -103,6 +107,12 @@ export interface UserBilling {
   plan?: BillingPlan | null;
   priceId: string | null;
   status: BillingStatus;
+  /** An account made on the website that has no plan yet: it picks one (a free trial with a card) before the website opens. */
+  planRequired?: boolean;
+  /** Days free before the first charge if this account starts a plan now; 0 once it has had one. */
+  freeTrialDays?: number;
+  /** Whether the server sells the Cloud plan (its Stripe price is set). */
+  cloudPlanAvailable?: boolean;
   trialCallsLimit: number;
   trialCallsRemaining: number;
   trialCallsUsed: number;
@@ -137,6 +147,10 @@ export interface CheckoutConfirmation {
   status: string;
   purchaseKind: "subscription" | "hosted_credits";
   plan?: BillingPlan;
+  /** The plan started with a free trial: nothing has been charged yet. */
+  trial?: boolean;
+  credited?: boolean;
+  amountMicros?: number;
   user?: AuthenticatedUser;
 }
 

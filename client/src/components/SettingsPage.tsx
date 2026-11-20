@@ -4,7 +4,7 @@ import BillingDashboard from "./BillingDashboard";
 import PasswordChangeForm from "./PasswordChangeForm";
 import AccountDeletionForm from "./AccountDeletionForm";
 import type { useMarkdownVault } from "../lib/useMarkdownVault";
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AiFeatureSettings, AppearanceSettings, useVoiceTypingEnabled, VoiceTypingSettings, type ThemeMode } from "./AppSettingsSections";
 import { FeatureSettings } from "./FeatureSettings";
 import { FEATURES, useFeatures } from "../lib/features";
@@ -140,7 +140,13 @@ const API_KEY_FIELDS: Array<{
   },
   { label: "xAI", provider: "xai", placeholder: "xai-..." },
   { label: "Meta Muse", provider: "meta", placeholder: "Meta Model API key" },
+  // Other services some features use. With these, everything works on your own keys (docs/desktop-local-mode.md).
+  { label: "Web search (Tavily)", provider: "tavily", placeholder: "tvly-..." },
+  { label: "Translation (DeepL)", provider: "deepl", placeholder: "DeepL API key" },
+  { label: "Translation (Google Cloud)", provider: "google_translate", placeholder: "Google Cloud Translation API key" },
+  { label: "Read-aloud voices (Azure Speech)", provider: "azure_speech", placeholder: "region:key, such as eastus:0123…" },
 ];
+const FIRST_SERVICE_KEY: ApiKeyProvider = "tavily";
 
 const EMPTY_API_KEY_DRAFTS: Record<ApiKeyProvider, string> = {
   anthropic: "",
@@ -149,6 +155,10 @@ const EMPTY_API_KEY_DRAFTS: Record<ApiKeyProvider, string> = {
   meta: "",
   openai: "",
   xai: "",
+  tavily: "",
+  deepl: "",
+  google_translate: "",
+  azure_speech: "",
 };
 
 function formatByteCount(bytes: number) {
@@ -631,8 +641,13 @@ export default function SettingsPage({
                 {API_KEY_FIELDS.map(({ label, placeholder, provider }) => {
                   const summary = apiKeySettings.byProvider[provider] ?? { configured: false, hint: null };
 
-                  return (
-                    <div className="profile-api-key-row" key={provider}>
+                  return (<Fragment key={provider}>
+                    {provider === FIRST_SERVICE_KEY ? (
+                      <p className="thread-dialog-copy profile-api-key-group">
+                        <strong>Other services.</strong> Web search, translation in Language mode, and read-aloud voices use these keys. Each service bills you directly.
+                      </p>
+                    ) : null}
+                    <div className="profile-api-key-row">
                       <label className="thread-dialog-field">
                         <span className="thread-dialog-label">
                           {label}
@@ -678,7 +693,7 @@ export default function SettingsPage({
                         </button>
                       ) : null}
                     </div>
-                  );
+                  </Fragment>);
                 })}
               </div>
 
