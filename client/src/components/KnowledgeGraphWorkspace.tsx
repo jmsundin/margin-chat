@@ -21,7 +21,7 @@ import { getStandaloneNote } from "../lib/standaloneNotes";
 import TopicExplorer from "./TopicExplorer";
 import type { Conversation } from "../types";
 import { MapCourseEmpty, MapModeSwitch, MapRoadmapCourse } from "./MapRoadmapCourse";
-import { draftingLabel, lessonContext, MapPathBar, MapPathLayer, MapPathStepStrip, MapPathPickBanner, MapPathPicker, MapPathsMenu, MapRoadmapFlags, type MapPathActions } from "./MapPaths";
+import { draftingLabel, MapPathBar, MapPathLayer, MapPathStepStrip, MapPathPickBanner, MapPathPicker, MapPathsMenu, MapRoadmapFlags, type MapPathActions } from "./MapPaths";
 import { buildMapPath, isPathDocument, withDraftPreview, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
 import type { MapSpotlight } from "../lib/mapSpotlight";
 import { readExploreLayout, writeExploreLayout, type ExploreLayout } from "../lib/exploreLibrary";
@@ -712,8 +712,6 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
           onOpen={(id) => {
             if (conversations[id]?.nodeType === "roadmap") openedFromCourse.current = id;
             stepTo(id); personalProps.onOpenConversation(id);
-            const step = activePath.steps.find((item) => item.docId === id);
-            if (step) pathActions.onLessonOpened?.(activePath.id, id, lessonContext(activePath, step));
           }}
           onOpenStage={(stageId) => pathActions.onOpenStage?.(activePath.id, stageId)}
           titleMenu={<MapPathsMenu paths={pathSummaries} activeId={activePath ? activePathId : null} onShowAll={onShowAllRoadmaps}

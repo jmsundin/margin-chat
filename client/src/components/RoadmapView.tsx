@@ -537,20 +537,12 @@ function StepSheet({ node, graph, owner, conversations, pending, writing, order,
     return [stage ? `It is in the stage “${stage.title}”.` : "", before.length ? `I learn these first: ${before.join(", ")}.` : "",
       after.length ? `It leads on to: ${after.join(", ")}.` : ""].filter(Boolean).join(" ");
   };
-  // Opening a step whose document has nothing to read yet asks AI for the explanation, once.
+  // A step whose document has nothing to read yet offers the explanation; AI writes only when asked.
   const thin = useMemo(() => {
     if (!target || node.target.blockId) return false;
     const editable = getEditableDocument(target);
     return !editable.generations.length && plainPreview(editable.blocks.map((block) => block.content).join("\n\n")).length < 600;
   }, [target, node.target.blockId]);
-  const asked = useRef(false);
-  useEffect(() => {
-    if (asked.current || !thin || writing || pending || missing || !onExplain) return;
-    asked.current = true;
-    onExplain(context());
-    // context reads the same graph; asking once is the point.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thin, writing, pending, missing, onExplain]);
 
   const chips = (ids: string[], label: string, removable: boolean) => ids.length ? <div className="roadmap-strip-links">
     <span>{label}</span>
@@ -675,6 +667,12 @@ function StepSheet({ node, graph, owner, conversations, pending, writing, order,
         </div>
       </div>
       : node.target.blockId ? <SheetFallback conversation={target} blockId={node.target.blockId} onOpen={() => onOpen(node.target)} />
-      : renderDocument?.(node.target.docId) ?? <SheetFallback conversation={target} onOpen={() => onOpen(node.target)} />}
+      : <>
+        {thin && onExplain && !writing ? <div className="roadmap-sheet-offer">
+          <span>Nothing is written here yet. Write it yourself, or have AI explain this topic.</span>
+          <button type="button" className="roadmap-sheet-action" onClick={() => { onExplain(context()); }}>✦ Explain with AI</button>
+        </div> : null}
+        {renderDocument?.(node.target.docId) ?? <SheetFallback conversation={target} onOpen={() => onOpen(node.target)} />}
+      </>}
   </>;
 }

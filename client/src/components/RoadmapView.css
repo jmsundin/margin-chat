@@ -78,6 +78,7 @@
 .roadmap .roadmap-sheet-bar button { align-items: center; background: transparent; border: 0; border-radius: 7px; color: var(--muted); cursor: pointer; display: inline-flex; font-size: 16px; height: 28px; justify-content: center; width: 28px; }
 .roadmap .roadmap-sheet-bar button:hover, .roadmap .roadmap-sheet-bar button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); }
 .roadmap-sheet-bar svg { fill: none; height: 14px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.5; width: 14px; }
+.roadmap-sheet-offer { align-items: center; border-bottom: 1px solid var(--line); color: var(--muted); display: flex; flex: none; flex-wrap: wrap; font-size: .8rem; gap: 8px 12px; justify-content: space-between; padding: 8px 14px; }
 .roadmap-sheet-scroll { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .roadmap-sheet-scroll > .chat-panel { flex: 1 0 auto; min-height: 0; }
 .roadmap-strip { background: var(--bg); border-bottom: 1px solid var(--line); display: flex; flex: none; flex-direction: column; gap: 8px; padding: 10px 14px 12px; position: sticky; top: 0; z-index: 5; }
