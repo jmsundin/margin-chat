@@ -30,7 +30,7 @@ function mockReplies(calls: any[]) {
   }) as typeof fetch;
 }
 
-describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
+describe("GPT-6 Luna (low reasoning) chat orchestration", () => {
   test("runs once per enabled reply and never during billing preflight or title generation", async () => {
     const calls: any[] = []; mockReplies(calls); const analyses: any[] = [];
     const chat = service({ async analyzeChat(input: any) { analyses.push(input); return { task: "summary", routeKey: "gemini-api:gemini-3.8-flash" }; } });
@@ -44,8 +44,8 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
       expect.objectContaining({ key: "huggingface-api:zai-org/GLM-5.3", tasks: ["coding"] }),
     ]));
     expect(result.metadata.execution).toMatchObject({ task: "summary", provider: "gemini-api", model: "gemini-3.8-flash",
-      routing: { method: "astra", selectedModel: "gemini-3.8-flash" } });
-    expect(result.metadata.execution.reason).toContain("GPT-6 Astra (low reasoning) selected");
+      routing: { method: "luna", selectedModel: "gemini-3.8-flash" } });
+    expect(result.metadata.execution.reason).toContain("GPT-6 Luna (low reasoning) selected");
     expect(result.metadata.execution.reason).toContain("balanced profile assigns this model to summary tasks");
     expect(calls).toHaveLength(2);
   });
@@ -74,7 +74,7 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
     expect(personal.metadata).toMatchObject({ credentialSource: "personal", resolvedServiceId: "openai-api" });
     expect(personal.metadata.execution.task).toBe("general");
     expect(personal.metadata.execution.routing).toEqual({ method: "rules", selectedModel: "gpt-5.6" });
-    expect(personal.metadata.execution.reason).toContain("GPT-6 Astra (low reasoning) did not provide a usable routing decision");
+    expect(personal.metadata.execution.reason).toContain("GPT-6 Luna (low reasoning) did not provide a usable routing decision");
     await chat.requestReply(payload({ ai: { jevEnabled: true, allowedProviders: ["openai"] } }));
     expect(new Set(pools[1])).toEqual(new Set(["openai-api"]));
     expect(calls.map((call) => call.body.model)).toEqual(["gpt-5.6", "gpt-5.6"]);
@@ -106,7 +106,7 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
     expect(result.metadata.execution.truncated).toBe(true);
   });
 
-  test("conversation scope supplies no workspace candidates to GPT-6 Astra (low reasoning)", async () => {
+  test("conversation scope supplies no workspace candidates to GPT-6 Luna (low reasoning)", async () => {
     const calls: any[] = []; mockReplies(calls);
     const chat = service({ async analyzeChat({ chatRequest }: any) {
       expect(chatRequest.workspaceContext).toEqual([]);
@@ -122,8 +122,8 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
     const result = await unavailable.requestReply(payload());
     expect(result.metadata.execution).toMatchObject({ task: "general", provider: "openai-api",
       routing: { method: "rules", selectedModel: "gpt-5.6" } });
-    expect(result.metadata.execution.reason).toContain("GPT-6 Astra (low reasoning) was unavailable. Routing rules selected OpenAI");
-    expect(result.metadata.execution.warnings.join(" ")).toContain("GPT-6 Astra (low reasoning) is unavailable");
+    expect(result.metadata.execution.reason).toContain("GPT-6 Luna (low reasoning) was unavailable. Routing rules selected OpenAI");
+    expect(result.metadata.execution.warnings.join(" ")).toContain("GPT-6 Luna (low reasoning) is unavailable");
     expect(JSON.stringify(result)).not.toContain("PRIVATE PROVIDER RESPONSE");
     const controller = new AbortController();
     const cancelled = service({ async analyzeChat() { controller.abort(); throw new Error("cancelled"); } });
@@ -146,10 +146,10 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
     expect(urls[0]).toContain("googleapis");
     expect(urls[1]).toContain("openai");
     expect(result.metadata.execution).toMatchObject({ provider: "openai-api", model: "gpt-6.1-sol",
-      routing: { method: "astra-task", selectedModel: "gpt-6.1-sol" } });
+      routing: { method: "luna-task", selectedModel: "gpt-6.1-sol" } });
     expect(result.metadata.execution.reason).toContain("Gemini (gemini-3.8-flash) request failed");
     expect(result.metadata.execution.reason).toContain("Routing rules selected OpenAI");
-    expect(result.metadata.execution.reason).not.toContain("GPT-6 Astra (low reasoning) selected");
+    expect(result.metadata.execution.reason).not.toContain("GPT-6 Luna (low reasoning) selected");
     expect(result.metadata.execution.fallbacks).toEqual([expect.objectContaining({ provider: "gemini-api", model: "gemini-3.8-flash" })]);
   });
 
@@ -158,9 +158,9 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
     const chat = service({ async analyzeChat() { return { task: "summary" }; } });
     const result = await chat.requestReply(payload());
     expect(result.metadata.execution).toMatchObject({ provider: "gemini-api", task: "summary",
-      routing: { method: "astra-task", selectedModel: "gemini-3.8-flash" } });
-    expect(result.metadata.execution.reason).toContain("GPT-6 Astra (low reasoning) classified this request as summary. Routing rules selected Gemini");
-    expect(result.metadata.execution.reason).not.toContain("GPT-6 Astra (low reasoning) selected");
+      routing: { method: "luna-task", selectedModel: "gemini-3.8-flash" } });
+    expect(result.metadata.execution.reason).toContain("GPT-6 Luna (low reasoning) classified this request as summary. Routing rules selected Gemini");
+    expect(result.metadata.execution.reason).not.toContain("GPT-6 Luna (low reasoning) selected");
   });
 
   test("deferred decisions use rules independently of the Jev toggle", async () => {
@@ -168,10 +168,10 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
     const chat = service({ async analyzeChat() { analyses++; return { contextOrder: [], warnings: [] }; } });
     const deferred = await chat.requestReply(payload());
     expect(deferred.metadata.execution.routing.method).toBe("rules");
-    expect(deferred.metadata.execution.reason).toContain("GPT-6 Astra (low reasoning) did not provide a usable routing decision. Routing rules selected OpenAI");
+    expect(deferred.metadata.execution.reason).toContain("GPT-6 Luna (low reasoning) did not provide a usable routing decision. Routing rules selected OpenAI");
     const disabled = await chat.requestReply(payload({ ai: { jevEnabled: false } }));
     expect(disabled.metadata.execution.routing.method).toBe("rules");
-    expect(disabled.metadata.execution.reason).toContain("GPT-6 Astra (low reasoning)");
+    expect(disabled.metadata.execution.reason).toContain("GPT-6 Luna (low reasoning)");
     expect(analyses).toBe(2);
   });
 
@@ -181,8 +181,8 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
       return { task: "coding", routeKey: "openai-api:gpt-6.1-sol", reason: "PRIVATE GENERATED RATIONALE" };
     } });
     const result = await chat.requestReply(payload());
-    expect(result.metadata.execution).toMatchObject({ task: "coding", routing: { method: "astra", selectedModel: "gpt-6.1-sol" } });
-    expect(result.metadata.execution.reason).toContain("GPT-6 Astra (low reasoning) classified the request as coding");
+    expect(result.metadata.execution).toMatchObject({ task: "coding", routing: { method: "luna", selectedModel: "gpt-6.1-sol" } });
+    expect(result.metadata.execution.reason).toContain("GPT-6 Luna (low reasoning) classified the request as coding");
     expect(result.metadata.execution.reason).toContain("configured candidate in balanced mode");
     expect(result.metadata.execution.reason).not.toContain("assigns this model to coding");
     expect(JSON.stringify(result.metadata)).not.toContain("PRIVATE GENERATED RATIONALE");
@@ -198,15 +198,15 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
     const result = await chat.requestReplyStream(payload(), {}, { onReady: (metadata: any) => ready.push(metadata), onDelta: (delta: string) => deltas.push(delta) });
     expect(ready).toHaveLength(1);
     expect(ready[0].execution).toMatchObject({ status: "streaming", provider: "openai-api", model: "gpt-6.1-sol",
-      routing: { method: "astra", selectedModel: "gpt-6.1-sol" } });
+      routing: { method: "luna", selectedModel: "gpt-6.1-sol" } });
     expect(result.metadata.execution).toMatchObject({ status: "complete", provider: "openai-api", model: "gpt-5.6-terra-2026-09-19",
-      routing: { method: "astra", selectedModel: "gpt-6.1-sol" } });
+      routing: { method: "luna", selectedModel: "gpt-6.1-sol" } });
     expect(result.metadata.execution.reason).toBe(ready[0].execution.reason);
     expect(deltas).toEqual(["OK"]);
     expect(analyses).toBe(1);
   });
 
-  test("a failed GPT-6 Astra (low reasoning) choice without a classification falls back using rules in both receipts", async () => {
+  test("a failed GPT-6 Luna (low reasoning) choice without a classification falls back using rules in both receipts", async () => {
     const ready: any[] = []; let analyses = 0;
     globalThis.fetch = (async (input) => {
       if (String(input).includes("googleapis")) return Response.json({ error: { message: "Unavailable" } }, { status: 503 });
@@ -222,7 +222,7 @@ describe("GPT-6 Astra (low reasoning) chat orchestration", () => {
       expect(receipt).toMatchObject({ provider: "openai-api", task: "general", routing: { method: "rules", selectedModel: "gpt-5.6" } });
       expect(receipt.reason).toContain("Gemini (gemini-3.8-flash) request failed");
       expect(receipt.reason).toContain("Routing rules selected OpenAI");
-      expect(receipt.reason).not.toContain("GPT-6 Astra (low reasoning) selected");
+      expect(receipt.reason).not.toContain("GPT-6 Luna (low reasoning) selected");
     }
     expect(analyses).toBe(1);
   });

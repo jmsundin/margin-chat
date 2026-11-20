@@ -144,7 +144,7 @@ export interface AIExecutionRecord {
   profileVersion: string;
   /** Selection provenance; model may identify a different model after fallback. */
   routing?: {
-    method: "astra" | "astra-task" | "jev" | "jev-task" | "rules" | "manual";
+    method: "luna" | "luna-task" | "astra" | "astra-task" | "jev" | "jev-task" | "rules" | "manual";
     selectedModel: string;
   };
   sources: AIContextSource[];

@@ -166,7 +166,7 @@ export default function ServicePickerModal({
         <span className="picker-model-icon" aria-hidden="true">{isAuto ? "✦" : service.iconLabel}</span>
         <span className="picker-model-copy">
           <span className="picker-model-name">{choiceLabel(choice)}{isAuto ? <span className="picker-default-label">Default</span> : null}</span>
-          <span className="picker-model-detail">{isAuto ? "GPT-6 Astra chooses a model for each reply" : service.provider}{licenseLabel ? ` · ${licenseLabel}` : ""}</span>
+          <span className="picker-model-detail">{isAuto ? "GPT-6 Luna chooses a model for each reply" : service.provider}{licenseLabel ? ` · ${licenseLabel}` : ""}</span>
         </span>
         {isCurrent ? <span className="picker-selected"><span aria-hidden="true">✓</span><span className="picker-sr-only">Selected</span></span> : null}
       </button>

@@ -36,7 +36,7 @@ is pinned to `jev-1.13.0` so a moving alias does not silently change judgments.
 
 Jev reranks permitted workspace excerpts for replies with a manually selected model when assistance is enabled. It does not change that model. Source scope, personal margin-note exclusions, and context budgets remain enforced.
 
-Auto replies use GPT-6 Astra with low reasoning, independently of Jev assistance. That single pass classifies the task, chooses an eligible model, and orders permitted workspace excerpts. See [the model catalog](model-catalog.md) for routing credentials, billing, and fallback behavior.
+Auto replies use GPT-6 Luna with low reasoning, independently of Jev assistance. That single pass classifies the task, chooses an eligible model, and orders permitted workspace excerpts. See [the model catalog](model-catalog.md) for routing credentials, billing, and fallback behavior.
 
 Each reply retains its model and expandable **Why this model?** details. New Auto receipts use `astra` or `astra-task`; standard fallback uses `rules`, and exact manual choices use `manual`. `astra-task` means Astra classified the task and application rules selected the model. Historical `jev` and `jev-task` receipts retain their original labels and explanations. Streaming, persistence, and exports preserve these records.
 

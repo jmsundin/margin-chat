@@ -5,6 +5,9 @@ import "./AIResponseDetails.css";
 
 const providers: Record<string, string> = { "openai-api": "OpenAI", "openai-agent": "OpenAI", "anthropic-api": "Anthropic Claude", "gemini-api": "Google Gemini", "huggingface-api": "Hugging Face", "xai-api": "xAI", "meta-api": "Meta Muse" };
 const routingLabels = {
+  luna: "Auto · selected by GPT-6 Luna (low reasoning)",
+  "luna-task": "Auto · GPT-6 Luna task matching",
+  // Replies routed before Luna became the router keep the model that chose them.
   astra: "Auto · selected by GPT-6 Astra (low reasoning)",
   "astra-task": "Auto · GPT-6 Astra task matching",
   jev: "Auto · selected by Jev",
