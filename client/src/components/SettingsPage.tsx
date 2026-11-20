@@ -85,6 +85,8 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; description: string;
 
 /** Sections that only do something with an account. */
 const GUEST_HIDDEN_SECTIONS = new Set<SettingsSection>(["billing", "api-keys", "agents"]);
+/** The desktop app on its own has no account, so nothing to bill or sign in to. */
+const LOCAL_HIDDEN_SECTIONS = new Set<SettingsSection>(["billing", "account"]);
 
 const PHONE_QUERY = "(max-width: 720px)";
 
@@ -235,7 +237,9 @@ export default function SettingsPage({
   const [selectedTab, setActiveTab] = useState<SettingsSection | null>(initialTab ?? null);
   const [query, setQuery] = useState("");
   // Phones show the section list until a section is picked; computers always show one section.
-  const activeTab: SettingsSection = selectedTab && !(guest && GUEST_HIDDEN_SECTIONS.has(selectedTab)) ? selectedTab : "features";
+  const local = user.billing.accessKind === "local";
+  const hiddenSection = (section: SettingsSection) => (guest && GUEST_HIDDEN_SECTIONS.has(section)) || (local && LOCAL_HIDDEN_SECTIONS.has(section));
+  const activeTab: SettingsSection = selectedTab && !hiddenSection(selectedTab) ? selectedTab : "features";
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
   const [cloudBackupBusy, setCloudBackupBusy] = useState(false);
@@ -435,7 +439,7 @@ export default function SettingsPage({
     storage: cloudSyncEnabled ? "Cloud" : "This device",
   };
   const visibleSections = SECTIONS.filter((section) => section.id !== "voice" || dictationSupported())
-    .filter((section) => !guest || !GUEST_HIDDEN_SECTIONS.has(section.id))
+    .filter((section) => !hiddenSection(section.id))
     .filter((section) => matchesSettingsQuery(section, query));
   const found = SECTIONS.find((section) => section.id === activeTab)!;
   const current = guest && found.id === "account" ? { ...found, description: "You're trying Margin Chat without an account." } : found;
@@ -474,13 +478,13 @@ export default function SettingsPage({
             <span aria-hidden="true" className="profile-dialog-avatar settings-page-avatar">{getInitials(user.displayName)}</span>
             <span className="settings-page-me-copy">
               <strong>{user.displayName}</strong>
-              <span title={guest ? undefined : user.email}>{guest ? "Free trial" : user.email}</span>
+              <span title={guest || local ? undefined : user.email}>{guest ? "Free trial" : local ? "On this computer, no account" : user.email}</span>
             </span>
-            <button className={`settings-page-logout${guest ? " is-guest" : ""}`} disabled={isSaving || billingSubmitting || passwordChanging}
+            {local ? null : <button className={`settings-page-logout${guest ? " is-guest" : ""}`} disabled={isSaving || billingSubmitting || passwordChanging}
               onClick={() => { if (!passwordChangingRef.current) void onLogout(); }} title={guest ? undefined : "Log out"} type="button">
               {guest ? null : <SettingsIcon path="M10 4H5v16h5M14 8l4 4-4 4M18 12H9" />}
               <span className={guest ? undefined : "settings-page-visually-hidden"}>{guest ? "Sign up free" : "Log out"}</span>
-            </button>
+            </button>}
           </div>
           <label className="settings-page-search">
             <SettingsIcon path="M11 4.5a6.5 6.5 0 1 1 0 13 6.5 6.5 0 0 1 0-13ZM20 20l-4.2-4.2" />

@@ -25,7 +25,7 @@ function inputText(value, name, minimum, maximum) {
 }
 
 export function canAskPublicMap(user) {
-  return user?.role === "admin" || user?.billing?.hasAccess === true;
+  return user?.role === "admin" || user?.billing?.hasAccess === true || user?.billing?.accessKind === "local";
 }
 
 /** The client validates its own map shape; the server bounds size and version. */

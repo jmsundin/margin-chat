@@ -1,4 +1,6 @@
+import path from "node:path";
 import pg from "pg";
+import { createPglitePool } from "./pglitePool.mjs";
 import { assertMigrationsReady, loadMigrations, migrateDatabase } from "./migrations.mjs";
 import {
   changeUserPassword,
@@ -70,6 +72,8 @@ import { recordDesktopDownload } from "./downloadRepository.mjs";
 const { Pool } = pg;
 
 export function resolveSchemaMode(env, requestedMode) {
+  // The desktop app's own database lives beside it and is always brought up to date.
+  if (localDatabaseDir(env)) return requestedMode ?? "migrate";
   const production = env.NODE_ENV === "production" || Boolean(env.VERCEL);
   const host = getConnectionMetadata(env).host ?? buildConnectionOptions(env).host;
   const localDatabase = ["localhost", "127.0.0.1", "::1", "[::1]"].includes(host);
@@ -91,12 +95,18 @@ export function poolSize(env) {
   return env.VERCEL ? 5 : 10;
 }
 
+/** Where the desktop app keeps its in-process database (local mode), or null for a Postgres server. */
+export function localDatabaseDir(env) {
+  const dir = env.MARGIN_LOCAL_DATA_DIR?.trim();
+  return dir ? path.join(dir, "database") : null;
+}
+
 export function createAppDatabase(env, { schemaMode: requestedMode } = {}) {
   const schemaMode = resolveSchemaMode(env, requestedMode);
-  const connectionOptions = buildConnectionOptions(env);
-  const connectionMetadata = getConnectionMetadata(env);
-  const pool = new Pool({
-    ...connectionOptions,
+  const localDir = localDatabaseDir(env);
+  const connectionMetadata = localDir ? { configured: true, host: null, port: null } : getConnectionMetadata(env);
+  const pool = localDir ? createPglitePool({ dataDir: localDir }) : new Pool({
+    ...buildConnectionOptions(env),
     connectionTimeoutMillis: 10_000,
     max: poolSize(env),
   });

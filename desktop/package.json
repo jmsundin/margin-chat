@@ -38,6 +38,8 @@
       "vaultWatcher.mjs",
       "vaultSync.mjs",
       "vaultSyncEngine.mjs",
+      "localMode.mjs",
+      "local-server/**/*",
       "package.json",
       "!node_modules/**/*"
     ],
