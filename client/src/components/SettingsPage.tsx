@@ -22,6 +22,7 @@ import type { JevStatus } from "../lib/jevAssistance";
 import type { VaultPassageIndex } from "../lib/useVaultPassageIndex";
 import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
 import { requestEmailVerification, type StateUploadProgress } from "../lib/api";
+import { switchDesktopMode, useDesktopMode } from "../lib/desktopMode";
 
 export type SettingsSection = "features" | "account" | "billing" | "api-keys" | "agents" | "appearance" | "voice" | "storage";
 
@@ -86,7 +87,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; description: string;
 /** Sections that only do something with an account. */
 const GUEST_HIDDEN_SECTIONS = new Set<SettingsSection>(["billing", "api-keys", "agents"]);
 /** The desktop app on its own has no account, so nothing to bill or sign in to. */
-const LOCAL_HIDDEN_SECTIONS = new Set<SettingsSection>(["billing", "account"]);
+const LOCAL_HIDDEN_SECTIONS = new Set<SettingsSection>(["billing", "account", "agents"]);
 
 const PHONE_QUERY = "(max-width: 720px)";
 
@@ -238,6 +239,7 @@ export default function SettingsPage({
   const [query, setQuery] = useState("");
   // Phones show the section list until a section is picked; computers always show one section.
   const local = user.billing.accessKind === "local";
+  const desktopMode = useDesktopMode();
   const hiddenSection = (section: SettingsSection) => (guest && GUEST_HIDDEN_SECTIONS.has(section)) || (local && LOCAL_HIDDEN_SECTIONS.has(section));
   const activeTab: SettingsSection = selectedTab && !hiddenSection(selectedTab) ? selectedTab : "features";
   const [storageBusy, setStorageBusy] = useState(false);
@@ -436,7 +438,7 @@ export default function SettingsPage({
     "api-keys": configuredKeyCount ? `${configuredKeyCount} key${configuredKeyCount === 1 ? "" : "s"}` : undefined,
     appearance: theme ? (theme === "dark" ? "Dark" : "Light") : undefined,
     voice: dictationSupported() ? (voiceTypingOn ? "On" : "Off") : undefined,
-    storage: cloudSyncEnabled ? "Cloud" : "This device",
+    storage: local ? "This computer" : cloudSyncEnabled ? "Cloud" : "This device",
   };
   const visibleSections = SECTIONS.filter((section) => section.id !== "voice" || dictationSupported())
     .filter((section) => !hiddenSection(section.id))
@@ -480,7 +482,10 @@ export default function SettingsPage({
               <strong>{user.displayName}</strong>
               <span title={guest || local ? undefined : user.email}>{guest ? "Free trial" : local ? "On this computer, no account" : user.email}</span>
             </span>
-            {local ? null : <button className={`settings-page-logout${guest ? " is-guest" : ""}`} disabled={isSaving || billingSubmitting || passwordChanging}
+            {local ? (
+              <button className="settings-page-signin" disabled={desktopMode !== "local"} onClick={() => switchDesktopMode("account")}
+                title="Sign in for Cloud sync or AI included. Your notes on this computer stay here." type="button">Sign in</button>
+            ) : <button className={`settings-page-logout${guest ? " is-guest" : ""}`} disabled={isSaving || billingSubmitting || passwordChanging}
               onClick={() => { if (!passwordChangingRef.current) void onLogout(); }} title={guest ? undefined : "Log out"} type="button">
               {guest ? null : <SettingsIcon path="M10 4H5v16h5M14 8l4 4-4 4M18 12H9" />}
               <span className={guest ? undefined : "settings-page-visually-hidden"}>{guest ? "Sign up free" : "Log out"}</span>

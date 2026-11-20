@@ -1512,8 +1512,11 @@ function WorkspaceAppContent({
   // A brand-new, empty workspace becomes "Start here" and the tour begins, once per device.
   // Waiting for the cloud list keeps a new device from treating a full vault as empty.
   const vaultSettled = vault.ready && !vault.fetchStatus && !(vault.cloudDocuments?.length);
+  // The desktop app asks for a vault folder first: a folder that already holds notes must not get the
+  // sample documents written into it, so wait until one is open (or "Not now") before deciding.
+  const vaultFolderSettled = !vault.vaultFolderPrompt && !vaultFolderGateBusy;
   useEffect(() => {
-    if (!vaultSettled || inExtension || onboarding.checked) return;
+    if (!vaultSettled || !vaultFolderSettled || inExtension || onboarding.checked) return;
     if (isPristineWorkspace(state)) {
       setState((current) => seedStarterDocument(current));
       // A trial visitor starts working straight away; the trial bar's Tour button starts the tour.
@@ -1521,7 +1524,7 @@ function WorkspaceAppContent({
       // An existing Free account on an empty browser has its documents on another device.
       if (!canSyncWorkspaceToCloud(user) && loggedInThisTab(user.id)) setNewDeviceNotice(true);
     } else updateOnboarding({ checked: true });
-  }, [vaultSettled, inExtension, onboarding.checked]);
+  }, [vaultSettled, vaultFolderSettled, inExtension, onboarding.checked]);
   // A trial visitor also gets the example vault, once, so the Map and search have something to show.
   // Today's news topics come too when they arrive in time; without them the examples alone are enough.
   useEffect(() => {

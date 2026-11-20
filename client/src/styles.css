@@ -13083,7 +13083,7 @@ body .live-markdown-editor {
 
 .settings-page-logout.is-guest {
   border: 1px solid var(--line);
-  color: var(--text);
+  color: var(--ink);
   padding: 0 10px;
   white-space: nowrap;
 }
@@ -13305,3 +13305,21 @@ body .live-markdown-editor {
   cursor: default;
   opacity: 0.55;
 }
+
+/* The desktop app without an account offers sign-in here, in Log out's place (docs/desktop-local-mode.md). */
+.settings-page-signin {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.8rem;
+  height: 30px;
+  margin: -4px -4px 0 auto;
+  padding: 0 10px;
+}
+.settings-page-signin:hover:not(:disabled), .settings-page-signin:focus-visible { background: var(--bg); }
+.settings-page-signin:disabled { display: none; }
