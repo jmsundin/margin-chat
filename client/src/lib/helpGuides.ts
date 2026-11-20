@@ -378,7 +378,7 @@ export const HELP_GUIDES: HelpGuide[] = [
     steps: [
       { title: "Say what you want to learn", body: "Type a goal, or paste a link to a course outline for the roadmap to follow." },
       { title: "Read the draft", body: "Lessons are grouped in stages and ordered so each builds on the last." },
-      { title: "Open a lesson", body: "AI writes it as a document you can annotate, question and keep." },
+      { title: "Open a lesson", body: "It opens as a document of your own. Choose **✦ Explain with AI** to have the lesson written into it, or write it yourself." },
     ],
     notes: ["Progress is marked per lesson, so you can see what is done and what is next."],
     related: ["flashcards", "turn-on-features"],
