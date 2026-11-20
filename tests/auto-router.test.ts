@@ -22,14 +22,14 @@ function replies(calls: any[], decision: any = { task: "summary", routeKey: "ope
   }) as typeof fetch;
 }
 
-test("Auto uses Astra low reasoning without Jev consent and preserves exact manual choices", async () => {
+test("Auto uses Luna low reasoning without Jev consent and preserves exact manual choices", async () => {
   const calls: any[] = []; replies(calls);
   const chat = service();
   const result = await chat.requestReply(payload({ jevEnabled: false }), { apiKeys: { openai: "personal" } });
-  expect(calls[0].body).toMatchObject({ model: "gpt-6-astra", reasoning: { effort: "low" }, store: false });
+  expect(calls[0].body).toMatchObject({ model: "gpt-6-luna", reasoning: { effort: "low" }, store: false });
   expect(calls[0].headers.Authorization).toBe("Bearer personal");
   expect(calls[1].body.model).toBe("gpt-6.1-sol");
-  expect(result.metadata.execution.routing).toEqual({ method: "astra", selectedModel: "gpt-6.1-sol" });
+  expect(result.metadata.execution.routing).toEqual({ method: "luna", selectedModel: "gpt-6.1-sol" });
   const state = JSON.parse(calls[0].body.input);
   expect(state.routes.every((route: any) => route.serviceId === "openai-api")).toBe(true);
   await chat.requestReply({ ...payload(), serviceId: "openai-api", modelId: "gpt-6-luna" });
@@ -37,7 +37,7 @@ test("Auto uses Astra low reasoning without Jev consent and preserves exact manu
   expect(calls[2].body.model).toBe("gpt-6-luna");
 });
 
-test("excluded OpenAI and personal-only non-OpenAI credentials skip Astra without using hosted keys", async () => {
+test("excluded OpenAI and personal-only non-OpenAI credentials skip Luna without using hosted keys", async () => {
   const calls: any[] = []; replies(calls);
   const chat = service();
   for (const [ai, context] of [
@@ -47,7 +47,7 @@ test("excluded OpenAI and personal-only non-OpenAI credentials skip Astra withou
   ]) {
     const result = await chat.requestReply(payload(ai), context);
     expect(result.metadata.execution.routing.method).toBe("rules");
-    expect(result.metadata.execution.warnings.join(" ")).toContain("Astra");
+    expect(result.metadata.execution.warnings.join(" ")).toContain("Luna");
   }
   expect(calls).toHaveLength(3);
   expect(calls.every((call) => call.url.includes("googleapis"))).toBe(true);
@@ -62,7 +62,7 @@ test("invalid or unavailable routing falls back without exposing upstream errors
   }
   const calls: any[] = []; replies(calls);
   const result = await service({ autoRouter: async () => { throw new Error("PRIVATE PROVIDER ERROR"); } }).requestReply(payload());
-  expect(result.metadata.execution.reason).toContain("Astra");
+  expect(result.metadata.execution.reason).toContain("Luna");
   expect(JSON.stringify(result)).not.toContain("PRIVATE PROVIDER ERROR");
 });
 
@@ -70,7 +70,7 @@ test("hosted routing and generation both reserve and settle through the existing
   const calls: any[] = []; replies(calls);
   const events: any[] = [];
   const price = { inputMicrosPerMillionTokens: 1000000, outputMicrosPerMillionTokens: 2000000 };
-  const env = { OPENAI_API_KEY: "hosted", HOSTED_MODEL_PRICES_JSON: JSON.stringify({ "openai:gpt-6-astra": price, "openai:gpt-6.1-sol": price }) };
+  const env = { OPENAI_API_KEY: "hosted", HOSTED_MODEL_PRICES_JSON: JSON.stringify({ "openai:gpt-6-luna": price, "openai:gpt-6.1-sol": price }) };
   const usageMeter = createHostedUsageMeter({ env, userId: "u", requestId: "r", billingService: {
     async reserveHostedRequest(value: any) { events.push({ kind: "reserve", value }); },
     async settleHostedRequest(value: any) { events.push({ kind: "settle", value }); },

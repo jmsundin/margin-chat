@@ -7,7 +7,7 @@ export const DEFAULT_AGENT_BUDGET_MICROS = 1_000_000;
 /** Models Agent mode can run on when Auto picks the model: Muse Wonder (the default), Claude Opus or Grok. */
 export const AGENT_SERVICE_CHOICES = Object.freeze(["meta-api", "anthropic-api", "xai-api"]);
 const agentStopReasons = new Set(["answered", "budget", "round-limit", "time-limit", "question"]);
-const routingMethods = new Set(["astra", "astra-task", "jev", "jev-task", "rules", "manual"]);
+const routingMethods = new Set(["luna", "luna-task", "astra", "astra-task", "jev", "jev-task", "rules", "manual"]);
 const record = (value) => value !== null && typeof value === "object" && !Array.isArray(value);
 const text = (value, limit) => typeof value === "string" ? value.slice(0, limit) : "";
 

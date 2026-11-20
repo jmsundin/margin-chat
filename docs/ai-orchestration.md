@@ -45,7 +45,7 @@ reply uses another provider. Conversation and permitted note context still work.
 
 ## Routing policy and its evidence
 
-Auto uses `gpt-6-astra` with low reasoning through the Responses API to return a structured task, eligible model choice, and source order. This runs independently of Jev, once per reply, and is skipped for manual selections and titles. The routing request uses an allowed OpenAI credential in the same personal/hosted pool; personal replies cannot introduce hosted router charges. Hosted routing is reserved and settled separately using the existing usage meter. Missing credentials or pricing, timeout, and invalid routing output retain the standard rules below; cancellation and billing settlement errors stop execution. New receipts identify `astra` or `astra-task`, while historical Jev receipts remain readable.
+Auto uses `gpt-6-luna` with low reasoning through the Responses API to return a structured task, eligible model choice, and source order. This runs independently of Jev, once per reply, and is skipped for manual selections and titles. The routing request uses an allowed OpenAI credential in the same personal/hosted pool; personal replies cannot introduce hosted router charges. Hosted routing is reserved and settled separately using the existing usage meter. Missing credentials or pricing, timeout, and invalid routing output retain the standard rules below; cancellation and billing settlement errors stop execution. New receipts identify `luna` or `luna-task`; earlier `astra`, `astra-task` and Jev receipts remain readable.
 
 
 `server/chat/modelProfiles.mjs` contains versioned application preferences and
