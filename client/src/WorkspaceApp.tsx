@@ -126,6 +126,7 @@ import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
 import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import VaultFolderGate from "./components/VaultFolderGate";
 import AIControls from "./components/AIControls";
+import { collectAgentInbox, readDismissedAgentItems, saveDismissedAgentItems } from "./lib/agentInbox";
 import StarterCards from "./components/StarterCards";
 import { applyPresetSettings, type AIPreset } from "./lib/aiPresets";
 import JevRelatedItems from "./components/JevRelatedItems";
@@ -309,6 +310,7 @@ import type {
 
 // Map View pulls in the graph canvases and ELK layout; load it on first visit.
 const KnowledgeGraphWorkspace = lazy(() => import("./components/KnowledgeGraphWorkspace"));
+const AgentInbox = lazy(() => import("./components/AgentInbox"));
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 
@@ -943,6 +945,9 @@ function WorkspaceAppContent({
   const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
   const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
+  /** The agent inbox: questions, drafts to approve and runs that stopped early, across every document. */
+  const [agentInboxOpen, setAgentInboxOpen] = useState(false);
+  const [dismissedAgentItems, setDismissedAgentItems] = useState(readDismissedAgentItems);
   /** Hosted AI spending for the AI controls; absent for a guest or until billing has loaded. */
   const aiUsage = useMemo(() => guest || !billingDashboard ? null
     : { usedThisMonthMicros: billingDashboard.usageThisMonthMicros, balanceMicros: billingDashboard.balanceMicros }, [guest, billingDashboard]);
@@ -1566,6 +1571,7 @@ function WorkspaceAppContent({
   }, [starterTasksKey]);
   // A vault this small belongs to someone new, so the views say what they are for.
   const newVault = guest || Object.keys(state.conversations).length <= 8;
+  const agentInboxItems = useMemo(() => collectAgentInbox(state.conversations, dismissedAgentItems), [state.conversations, dismissedAgentItems]);
   /** Documents the person made, not the Start here page or the trial's examples. The starter cards go once there is one. */
   const ownDocumentCount = useMemo(() => Object.values(state.conversations)
     .filter((item) => !item.parentId && item.id !== state.rootId && madeByPerson(item.id)).length, [state.conversations, state.rootId]);
@@ -7644,6 +7650,8 @@ function WorkspaceAppContent({
               onNewNote={handleCreateStandaloneNote}
               onOpenInbox={guest ? undefined : () => setCaptureInboxOpen(true)}
               onImportChatHistory={() => setHistoryImportOpen(true)}
+              agentInboxCount={agentInboxItems.length}
+              onOpenAgentInbox={() => { setAgentInboxOpen(true); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onTakeTour={inExtension ? undefined : startTour}
               onOpenProfile={() => {
                 setProfileSaveError(null);
@@ -8306,6 +8314,11 @@ function WorkspaceAppContent({
             onOpenChat={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
             onClose={() => setHistoryImportOpen(false)}
           />}
+          {agentInboxOpen ? <Suspense fallback={null}><AgentInbox items={agentInboxItems}
+            onOpen={(id) => { setAgentInboxOpen(false); handleSelectConversation(id, { nextViewMode: "chat" }); }}
+            onProposal={(item, action) => handleAgentProposal(item.conversationId, item.messageId, item.proposal.id, action)}
+            onClear={(id) => setDismissedAgentItems((current) => { const next = new Set(current).add(id); saveDismissedAgentItems(next); return next; })}
+            onClose={() => setAgentInboxOpen(false)} /></Suspense> : null}
           <SettingsPage
             initialTab={profileInitialTab}
             onOpenWebsiteSettings={onOpenWebsiteSettings}
