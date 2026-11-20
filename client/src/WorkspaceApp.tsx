@@ -126,6 +126,7 @@ import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
 import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import VaultFolderGate from "./components/VaultFolderGate";
 import AIControls from "./components/AIControls";
+import { applyPresetSettings, type AIPreset } from "./lib/aiPresets";
 import JevRelatedItems from "./components/JevRelatedItems";
 import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
 import { useVaultPassageIndex } from "./lib/useVaultPassageIndex";
@@ -251,6 +252,7 @@ import { VaultMediaContext } from "./lib/vaultMedia";
 import {
   getBackendServiceLabel,
   getBackendServiceModel,
+  isBackendServiceId,
   resolveBackendServiceModelId,
   supportsAgentMode,
   type RecentBackendServiceSelection,
@@ -940,6 +942,9 @@ function WorkspaceAppContent({
   const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
   const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
+  /** Hosted AI spending for the AI controls; absent for a guest or until billing has loaded. */
+  const aiUsage = useMemo(() => guest || !billingDashboard ? null
+    : { usedThisMonthMicros: billingDashboard.usageThisMonthMicros, balanceMicros: billingDashboard.balanceMicros }, [guest, billingDashboard]);
   const [chatImportReminder, setChatImportReminder] = useState(false);
   // The next time the app opens, this picture of the workspace shows while it starts.
   // Days after the first visit, someone who never brought in old chats is offered it once.
@@ -3874,6 +3879,16 @@ function WorkspaceAppContent({
       if (!conversation) return current;
       return { ...current, conversations: { ...current.conversations, [conversationId]: { ...conversation, ai: normalizeAISettings(ai), updatedAt: new Date().toISOString() } } };
     });
+  }
+
+  /** A run preset sets the model and the AI settings together; a model this build no longer offers keeps the document's own. */
+  function handleApplyAIPreset(conversationId: string, preset: AIPreset) {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) return;
+    if (isBackendServiceId(preset.serviceId) && (preset.serviceId !== conversation.serviceId || (preset.modelId ?? "") !== (conversation.modelId ?? ""))) {
+      handleModelChange(conversationId, preset.serviceId, preset.modelId ?? "");
+    }
+    handleAISettingsChange(conversationId, applyPresetSettings(preset, conversation.ai));
   }
 
   function handleAgentModeChange(conversationId: string, next: { enabled: boolean; budgetMicros: number }) {
@@ -7142,7 +7157,8 @@ function WorkspaceAppContent({
       resolveWikiLink={(target) => resolveWikiLinkDocument(target, state.conversations, vault.cloudDocuments)}
       onOpenWikiLink={(document) => handleOpenWikiLink(conversation.id, document)}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
-      aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
+      aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)}
+        onApplyPreset={(preset) => handleApplyAIPreset(conversation.id, preset)} usage={aiUsage} />}
       agentMode={agentModeControls(conversation)} agentProgress={agentProgress[conversation.id]}
       hideAgentStatus={view === "chat" && conversation.nodeType === "roadmap" && Boolean(agentProgress[conversation.id])}
       recentModelSelections={recentModelSelections} theme={theme} anchors={documentAnchorLinks(conversation.id)}
@@ -8147,7 +8163,8 @@ function WorkspaceAppContent({
             onSelectModel={(serviceId, modelId) => handleModelChange(selectionConversation.id, serviceId, modelId)}
             contextControls={<AIControls conversation={selectionConversation} conversations={state.conversations}
               disabled={Boolean(pendingConversationIds[selectionConversation.id])}
-              onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)} />}
+              onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)}
+              onApplyPreset={(preset) => handleApplyAIPreset(selectionConversation.id, preset)} usage={aiUsage} />}
           /> : null}
 
           {versionHistory && state.conversations[versionHistory.id] ? (() => {

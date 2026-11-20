@@ -1,27 +1,71 @@
 import DismissibleDetails from "./DismissibleDetails";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { AI_PROVIDERS, normalizeAISettings } from "@margin-chat/workspace-contracts";
 import type { AISettings, Conversation } from "../types";
+import { addAIPreset, formatUsageMicros, matchingPreset, presetFromConversation, readAIPresets, saveAIPresets, subscribeAIPresets, MAX_PRESET_NAME, type AIPreset } from "../lib/aiPresets";
 
 const labels = { openai: "OpenAI", anthropic: "Anthropic Claude", gemini: "Google Gemini", huggingface: "Hugging Face", xai: "xAI", meta: "Meta Muse" };
 const scopes = { conversation: "This chat + branch", selected: "Selected material", workspace: "Search my workspace" };
 const agentScopes = { conversation: "this chat + branch", selected: "selected material", workspace: "all documents" };
 
-export default function AIControls({ conversation, conversations, disabled, onChange }: {
+/** Hosted AI spending shown beside the controls, so cost is seen before sending. */
+export interface AIUsageSummary {
+  usedThisMonthMicros: number;
+  balanceMicros: number;
+}
+
+export default function AIControls({ conversation, conversations, disabled, onChange, onApplyPreset, usage }: {
   conversation: Conversation;
   conversations: Record<string, Conversation>;
   disabled?: boolean;
   onChange: (settings: AISettings) => void;
+  /** Sets this document's model and AI settings to a saved preset. Absent where presets aren't offered. */
+  onApplyPreset?: (preset: AIPreset) => void;
+  /** Absent for a guest, or before billing has loaded. */
+  usage?: AIUsageSummary | null;
 }) {
   const settings = normalizeAISettings(conversation.ai);
   const [query, setQuery] = useState("");
+  const presets = useSyncExternalStore(subscribeAIPresets, readAIPresets, readAIPresets);
+  const [presetName, setPresetName] = useState<string | null>(null);
+  const [presetError, setPresetError] = useState<string | null>(null);
+  const activePreset = onApplyPreset ? matchingPreset(conversation, presets) : undefined;
+  function savePreset() {
+    const result = addAIPreset(presets, presetName ?? "", presetFromConversation(conversation), `preset-${Date.now().toString(36)}`);
+    if (!result.ok) { setPresetError(result.reason); return; }
+    saveAIPresets(result.presets);
+    setPresetName(null); setPresetError(null);
+  }
   const permitted = settings.allowedProviders ?? [...AI_PROVIDERS];
   const agentOn = settings.agent === true || conversation.serviceId === "openai-agent";
   const agentScope = settings.agentScope ?? "workspace";
   const choices = Object.values(conversations).filter((item) => item.id !== conversation.id && item.title.toLowerCase().includes(query.toLowerCase()));
   return <DismissibleDetails className="ai-controls">
-    <summary tabIndex={0}>{conversation.serviceId === "backend-services" ? `Auto · ${settings.mode[0].toUpperCase()}${settings.mode.slice(1)} · ` : "AI context · "}{scopes[settings.contextScope]}{agentOn ? ` · Agent: ${agentScopes[agentScope]}` : ""}</summary>
+    <summary tabIndex={0}>{activePreset ? `${activePreset.name} · ` : ""}{conversation.serviceId === "backend-services" ? `Auto · ${settings.mode[0].toUpperCase()}${settings.mode.slice(1)} · ` : "AI context · "}{scopes[settings.contextScope]}{agentOn ? ` · Agent: ${agentScopes[agentScope]}` : ""}</summary>
     <div className="ai-controls-body">
+      {onApplyPreset ? <div className="ai-presets">
+        <label>Preset
+          <select aria-label="Preset" disabled={disabled} value={activePreset?.id ?? ""} onChange={(event) => {
+            const preset = presets.find((item) => item.id === event.target.value);
+            if (preset) onApplyPreset(preset);
+          }}>
+            <option value="">{presets.length ? "Custom" : "No presets yet"}</option>
+            {presets.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+          </select>
+        </label>
+        {presetName === null ? <div className="ai-preset-actions">
+          <button type="button" disabled={disabled || Boolean(activePreset)} title={activePreset ? `These settings are already saved as “${activePreset.name}”.` : "Save this model and these settings to use on other documents"}
+            onClick={() => { setPresetName(""); setPresetError(null); }}>Save as preset…</button>
+          {activePreset ? <button type="button" disabled={disabled} onClick={() => saveAIPresets(presets.filter((preset) => preset.id !== activePreset.id))}>Delete “{activePreset.name}”</button> : null}
+        </div> : <form className="ai-preset-form" onSubmit={(event) => { event.preventDefault(); savePreset(); }}>
+          <input aria-label="Preset name" autoFocus maxLength={MAX_PRESET_NAME} placeholder="Name, such as Quick lookup" value={presetName}
+            onChange={(event) => { setPresetName(event.target.value); setPresetError(null); }} />
+          <button type="submit" disabled={!presetName.trim()}>Save</button>
+          <button type="button" onClick={() => { setPresetName(null); setPresetError(null); }}>Cancel</button>
+        </form>}
+        {presetError ? <p role="alert" className="ai-context-help">{presetError}</p> : null}
+      </div> : null}
+      {usage ? <p className="ai-usage" role="status">Hosted AI this month: <strong>{formatUsageMicros(usage.usedThisMonthMicros)}</strong> used · <strong>{formatUsageMicros(usage.balanceMicros)}</strong> credit left</p> : null}
       {conversation.serviceId === "backend-services" ? <label>Auto preference
         <select aria-label="Auto preference" disabled={disabled} value={settings.mode} onChange={(event) => onChange({ ...settings, mode: event.target.value as AISettings["mode"] })}>
           <option value="balanced">Balanced — match effort to the task</option>

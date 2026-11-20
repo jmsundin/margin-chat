@@ -12510,6 +12510,19 @@ body .live-markdown-editor {
 .ai-controls-body > label.ai-agent-auto { display: flex; align-items: flex-start; gap: 6px; font-weight: 400; }
 .ai-agent-auto input { margin-top: 2px; }
 .ai-context-picker { display: grid; gap: 7px; }
+.ai-presets { display: grid; gap: 7px; }
+.ai-presets > label { display: grid; gap: 5px; font-weight: 500; }
+.ai-preset-actions, .ai-preset-form { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-preset-actions button, .ai-preset-form button {
+  padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: transparent; font: inherit; cursor: pointer;
+}
+.ai-preset-actions button:disabled, .ai-preset-form button:disabled { cursor: default; opacity: .5; }
+.ai-preset-form input {
+  flex: 1; box-sizing: border-box; min-width: 120px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 8px;
+  color: var(--ink); background: var(--bg); font: inherit;
+}
+.ai-usage { margin: 0; font-variant-numeric: tabular-nums; }
+.ai-usage strong { color: var(--ink); font-weight: 600; }
 .ai-context-options { max-height: 180px; overflow-y: auto; display: grid; gap: 8px; }
 .ai-context-options small { margin-left: auto; }
 .ai-context-help { margin: 0; font-size: 11px; line-height: 1.5; }
