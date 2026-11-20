@@ -1,5 +1,5 @@
 import OpenBesideIcon from "./OpenBesideIcon";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import "./DocumentMargin.css";
 import { MobileKeyboardDirect } from "./MobileKeyboard";
@@ -143,6 +143,30 @@ function keepsNoteOpen(aside: HTMLElement | null, target: EventTarget | null): b
     || element.closest("[role=menu], [role=dialog], .selection-toolbar-row, [data-mobile-keyboard-toggle], [data-mobile-keyboard-bar], [data-note-sheet]"));
 }
 
+/**
+ * Where a note sheet comes to rest after its handle is dragged, as a share of the screen's height:
+ * a short peek, half (the default, so the passage stays in view above), or the whole screen.
+ * Dragged well below the peek, it closes. A quick flick goes one stop in the flick's direction.
+ */
+export const NOTE_SHEET_STOPS = [0.3, 0.52, 1] as const;
+export type NoteSheetStop = 0 | 1 | 2;
+export function noteSheetRest(height: number, viewport: number, velocity = 0): NoteSheetStop | "close" {
+  const share = viewport > 0 ? height / viewport : NOTE_SHEET_STOPS[1];
+  if (share < NOTE_SHEET_STOPS[0] * 0.6) return "close";
+  let nearest: NoteSheetStop = 0;
+  NOTE_SHEET_STOPS.forEach((stop, index) => {
+    if (Math.abs(stop - share) < Math.abs(NOTE_SHEET_STOPS[nearest] - share)) nearest = index as NoteSheetStop;
+  });
+  // velocity is px/ms, positive = growing taller.
+  if (Math.abs(velocity) > 0.5) {
+    const above = NOTE_SHEET_STOPS.findIndex((stop) => stop > share + 0.01);
+    if (velocity > 0) return (above === -1 ? 2 : above) as NoteSheetStop;
+    const below = [...NOTE_SHEET_STOPS].reverse().findIndex((stop) => stop < share - 0.01);
+    return below === -1 ? "close" : (NOTE_SHEET_STOPS.length - 1 - below) as NoteSheetStop;
+  }
+  return nearest;
+}
+
 /** Phones open a note as a sheet from the bottom of the screen, over the page, instead of beside its dot. */
 const NOTE_SHEET_QUERY = "(max-width: 900px)";
 function useNoteSheet(marks: boolean) {
@@ -177,9 +201,51 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const [openId, setOpenId] = useState<string | null>(null);
   /** On phones the open note is a sheet: half the screen, so its passage stays in view above it, or all of it. */
   const sheet = useNoteSheet(marks);
-  const [sheetFull, setSheetFull] = useState(false);
+  /** Which of NOTE_SHEET_STOPS the sheet rests at; dragging its handle moves it between them. */
+  const [sheetStop, setSheetStop] = useState<NoteSheetStop>(1);
+  const sheetFull = sheetStop === 2;
+  /** The sheet's height in px while its handle is being dragged. */
+  const [sheetDrag, setSheetDrag] = useState<number | null>(null);
+  const sheetDragStart = useRef<{ pointer: number; y: number; height: number; moved: boolean; samples: { y: number; t: number }[] } | null>(null);
+  /** Set when a drag ends, so the click the browser sends after it does not also toggle the sheet. */
+  const sheetDragged = useRef(false);
   const sheetRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (!openId) setSheetFull(false); }, [openId]);
+  useEffect(() => { if (!openId) { setSheetStop(1); setSheetDrag(null); } }, [openId]);
+  const sheetHandleDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    if (event.button !== 0 || !sheetRef.current) return;
+    sheetDragStart.current = { pointer: event.pointerId, y: event.clientY, height: sheetRef.current.getBoundingClientRect().height, moved: false, samples: [{ y: event.clientY, t: event.timeStamp }] };
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* the pointer may already be gone */ }
+  };
+  const sheetHandleMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const start = sheetDragStart.current;
+    if (!start || start.pointer !== event.pointerId) return;
+    const dy = event.clientY - start.y;
+    if (!start.moved && Math.abs(dy) < 6) return;
+    start.moved = true;
+    start.samples = [...start.samples.slice(-4), { y: event.clientY, t: event.timeStamp }];
+    event.preventDefault();
+    setSheetDrag(Math.max(48, Math.min(window.innerHeight, start.height - dy)));
+  };
+  const sheetHandleEnd = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const start = sheetDragStart.current;
+    if (!start || start.pointer !== event.pointerId) return;
+    sheetDragStart.current = null;
+    if (!start.moved) return; // a tap: the click toggles half and full screen
+    sheetDragged.current = true;
+    window.setTimeout(() => { sheetDragged.current = false; }, 400);
+    const first = start.samples[0], last = start.samples[start.samples.length - 1];
+    const velocity = last.t > first.t ? (first.y - last.y) / (last.t - first.t) : 0;
+    const height = Math.max(48, Math.min(window.innerHeight, start.height - (event.clientY - start.y)));
+    const rest = event.type === "pointercancel" ? sheetStop : noteSheetRest(height, window.innerHeight, velocity);
+    setSheetDrag(null);
+    if (rest === "close") setOpenId(null);
+    else setSheetStop(rest);
+  };
+  /** A drag ends without a click; only a plain tap toggles. */
+  const sheetHandleClick = (_event: ReactMouseEvent<HTMLButtonElement>) => {
+    if (sheetDragged.current) { sheetDragged.current = false; return; }
+    setSheetStop((stop) => stop === 2 ? 1 : 2);
+  };
   const frame = useRef(0);
   const itemKey = items.map((item) => `${item.id}:${item.anchored ? 1 : 0}`).join("|");
   // Clicking a note opens it a little wider, and only then is its line back to the passage drawn.
@@ -389,11 +455,14 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
             aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${item.label || "Margin note"}`} title={item.label}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
             onClick={() => setOpenId((current) => current === item.id ? null : item.id)} />
-          {open && sheet ? createPortal(<div className={`note-sheet${sheetFull ? " is-full" : ""}`} ref={sheetRef} data-note-sheet
+          {open && sheet ? createPortal(<div className={`note-sheet${sheetFull && sheetDrag === null ? " is-full" : ""}${sheetDrag !== null ? " is-dragging" : ""}`} ref={sheetRef} data-note-sheet
+            data-sheet-stop={["peek", "half", "full"][sheetStop]}
+            style={{ height: sheetDrag !== null ? `${sheetDrag}px` : sheetStop === 2 ? undefined : `${NOTE_SHEET_STOPS[sheetStop] * 100}dvh` }}
             data-margin-note-id={item.id} data-mobile-keyboard-direct role="dialog" aria-label={`Note: ${item.label || "Margin note"}`}>
             <button type="button" className="note-sheet-handle" aria-expanded={sheetFull}
-              aria-label={sheetFull ? "Show the page above the note" : "Make the note full screen"}
-              onClick={() => setSheetFull((full) => !full)}><span aria-hidden="true" /></button>
+              aria-label={sheetFull ? "Show the page above the note (or drag to resize)" : "Make the note full screen (or drag to resize)"}
+              onPointerDown={sheetHandleDown} onPointerMove={sheetHandleMove} onPointerUp={sheetHandleEnd} onPointerCancel={sheetHandleEnd}
+              onClick={sheetHandleClick}><span aria-hidden="true" /></button>
             {sheetFull ? <button type="button" className="note-sheet-back" onClick={() => setOpenId(null)}>‹ {label.replace(/^Notes for /, "")}</button>
               : item.anchored ? null : <span className="document-margin-label">About this document</span>}
             <div className="note-sheet-body"><MobileKeyboardDirect>{item.node}</MobileKeyboardDirect></div>

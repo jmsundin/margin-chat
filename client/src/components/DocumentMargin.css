@@ -80,7 +80,8 @@
 .document-margin-item .rich-document-editor { padding-inline: 0; }
 
 /* ---- Phones: an open note is a sheet from the bottom ----
-   Half the screen at first, so the passage stays in view above it; the handle makes it full screen.
+   Half the screen at first, so the passage stays in view above it. Dragging the handle resizes it and it
+   rests at a peek, half or full screen (dragged right down, it closes); a tap toggles half and full.
    It is the same editable note as in the margin: tap in it to type, with the usual menus. */
 .note-sheet {
   position: fixed; z-index: 60; left: 0; right: 0; bottom: 0; height: 52dvh; max-height: calc(100dvh - 56px);
@@ -88,10 +89,12 @@
   border-top: 1px solid var(--line); border-radius: 18px 18px 0 0; background: var(--panel-strong, var(--bg));
   box-shadow: 0 -12px 32px rgba(40, 32, 20, .16); transition: height .2s ease, border-radius .2s ease;
 }
+.note-sheet.is-dragging { transition: none; user-select: none; -webkit-user-select: none; }
 .note-sheet.is-full { height: 100dvh; max-height: none; border-radius: 0; border-top: 0; }
 .note-sheet-handle {
   flex: 0 0 auto; display: flex; justify-content: center; align-items: center; width: 100%; height: 30px;
-  padding: 0; border: 0; background: transparent; cursor: pointer; touch-action: manipulation;
+  padding: 0; border: 0; background: transparent; cursor: ns-resize; touch-action: none;
+  -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
 }
 .note-sheet-handle span { width: 40px; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--ink) 22%, transparent); }
 .note-sheet-handle:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: -4px; }
