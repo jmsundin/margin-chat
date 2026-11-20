@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import TurnstileCheck, { signupNeedsWebsite, turnstileOnThisPage } from "./TurnstileCheck";
 import { SUPPORT_EMAIL } from "../lib/siteRoutes";
 import "./AuthLanding.css";
+import { switchDesktopMode, useDesktopMode } from "../lib/desktopMode";
 
 // Absolute so the desktop app and the extension open the website, not their own app route.
 const SITE_ORIGIN = "https://www.marginchat.com";
@@ -155,6 +156,8 @@ export default function AuthLanding({
   const activeError = localError ?? (showParentError ? errorMessage : null);
 
   const isSignup = mode === "signup";
+  // In the desktop app an account is optional: everything also works on the computer alone.
+  const desktopMode = useDesktopMode();
   const themeLabel = theme === "dark" ? "Switch to light theme" : "Switch to dark theme";
   const themeButton = (
     <button aria-label={themeLabel} className="auth-theme-button" onClick={onToggleTheme} title={themeLabel} type="button">
@@ -209,6 +212,12 @@ export default function AuthLanding({
       )}
 
       <section className="auth-card" aria-label="Authentication">
+        {desktopMode === "account" ? (
+          <p className="auth-local-offer">
+            No account needed on this computer.{" "}
+            <button className="auth-switch-button" onClick={() => switchDesktopMode("local")} type="button">Use Margin Chat without an account</button>
+          </p>
+        ) : null}
         <div className="auth-card-head">
           <h2>
             {isSignup

@@ -18,14 +18,24 @@ The app runs Margin Chat's own server inside its main process instead of sending
 
 `bun run desktop:engine` builds both the vault sync engine and the local server. `scripts/build-desktop-server.mjs` bundles the server into `desktop/local-server/server.mjs` and copies beside it what it reads while it runs: the migrations and PGlite's `pglite.wasm`, `pglite.data`, `initdb.wasm` and `vector.tar.gz`. The folder is gitignored. The Desktop release workflow builds it and packs it with the app.
 
-## Turning it on
+## Which mode the app is in
 
-Local mode is off by default until it has been tried on real computers. Start the app with `MARGIN_DESKTOP_LOCAL=1`. Local mode also turns on native vault folder access. Its data lives in `<userData>/local/`, separate from the signed-in app's data.
+`desktop/appMode.mjs` keeps the mode in `<userData>/app-mode.json`. A new install starts in local mode. An install that was already used signed in (it has a cookie jar from before local mode existed) stays signed in. `MARGIN_DESKTOP_LOCAL=1` or `0` picks a mode for development.
+
+- In local mode, Settings shows **Sign in** where Log out was. It opens `/__margin/use-account`: the app saves the mode, restarts, and opens on the sign-in form.
+- When the app is signed out, the sign-in page offers **Use Margin Chat without an account**, which opens `/__margin/use-local`.
+- A page checks `/__margin/capabilities` before offering either one. An older app answers that path with the page itself, so the offer stays hidden there.
+- Nothing is deleted when switching. Each mode keeps its own data: local mode under `<userData>/local/`, its folder choice and sync state under the local person's id, and the account's under the account's id. Switching forgets only the person remembered for opening offline.
+- Local mode also turns on native vault folder access. Its data lives in `<userData>/local/`.
+
+## First launch
+
+The vault folder screen ("Open a folder / Create a new vault") comes before anything else. The "Start here" sample documents are added only after that choice, and only when the workspace is still empty. A folder that already holds notes therefore never gets them, while a new empty vault (or "Not now") does.
 
 ## Steps
 
 1. The app runs the server on the computer with no account (this note).
-2. First launch opens straight to "Open a folder / Create a new vault". Local mode is on by default. Sign-in becomes optional in Settings, for Cloud sync or hosted AI.
+2. First launch opens straight to "Open a folder / Create a new vault". Local mode is on by default for new installs. Signing in is optional, from Settings, for Cloud sync or hosted AI.
 3. The features that use keys only the hosted server has (embeddings, web search, voice, translation) use the person's own keys, or say which key they need.
 4. iCloud Drive and Google Drive folders: files that haven't downloaded yet, conflict copies, and temporary files.
 5. Web sign-up starts a free trial with a card, for Cloud ($10/mo) or Cloud + AI ($20/mo).
