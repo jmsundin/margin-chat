@@ -8,10 +8,10 @@ const render = (cloudPlanAvailable: boolean) => renderToStaticMarkup(
 
 test("/pricing offers Cloud only when the server has its Stripe price", () => {
   const on = render(true);
-  expect(on).toContain("Start with Cloud");
+  expect(on).toContain("Start with Cloud, free trial");
   expect(on).not.toContain("Coming soon");
   const off = render(false);
-  expect(off).not.toContain("Start with Cloud");
+  expect(off).not.toContain("Start with Cloud, free trial");
   expect(off).toContain("Coming soon");
   expect(off).toContain("is-unavailable");
 });

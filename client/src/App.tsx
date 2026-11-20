@@ -6,6 +6,7 @@ import type { BrowserCaptureRequest, BrowserThreadRequest } from "./lib/browserW
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import AuthLanding from "./components/AuthLanding";
 import OAuthConsent from "./components/OAuthConsent";
+import PlanPicker from "./components/PlanPicker";
 import { AUTH_PATHS, resolveSiteRoute, type SiteRoute } from "./lib/siteRoutes";
 import { loadRichDocumentEditor } from "./components/LazyRichDocumentEditor";
 import {
@@ -561,7 +562,9 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
       }
       setBillingNotice({
         kind: "success",
-        message: result.credited
+        message: result.trial
+          ? "You're on Cloud + AI for the rest of your free trial. Your card is charged $20 a month when the trial ends."
+          : result.credited
           ? "You're on Plus. $20 of AI credit has been added, and your next renewal is a month from today."
           : "You're on Plus. Your $20 of credit appears as soon as Stripe confirms the payment.",
       });
@@ -637,6 +640,27 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
             onSignup={handleSignup}
             onToggleTheme={() => setTheme((current) => getNextTheme(current))}
             theme={theme}
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // An account made on the website picks a plan (a free trial with a card) before the website opens.
+  // The desktop app is free without one, so it never asks.
+  if (authUser.billing?.planRequired && !extension && window.location.protocol !== "margin:") {
+    return (
+      <div className="app-shell">
+        <div className="app-chrome auth-chrome">
+          <PlanPicker
+            user={authUser}
+            confirming={Boolean(checkoutReturn && checkoutReturn.kind !== "canceled")}
+            submitting={billingSubmitting}
+            errorMessage={billingError}
+            notice={billingNotice}
+            onStart={handleStartSubscription}
+            onLogout={() => { void handleLogout(); }}
+            onCheckAgain={() => { void refreshBilling(); }}
           />
         </div>
       </div>

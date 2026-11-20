@@ -10,7 +10,7 @@ Hosted model use requires explicit pricing through `HOSTED_MODEL_PRICES_JSON`. U
 
 | Plan | Price | Cloud vault + sync | Hosted AI credit | Chrome extension / Cloud Inbox |
 |---|---|---|---|---|
-| Free | $0 | No | Top-ups only | No |
+| Free (desktop app, no account) | $0 | No (folder sync with iCloud or Google Drive) | Own API keys | No |
 | Cloud | $10/month | Yes | Top-ups only (own API keys) | No |
 | Plus | $20/month | Yes | $20 per paid invoice, rolls over | Yes |
 
@@ -19,6 +19,16 @@ The Cloud plan grants no credit: its invoices never pass the $20 grant checks. C
 Cloud exists only when `STRIPE_CLOUD_PRICE_ID` is set. Without it, Checkout refuses `plan: "cloud"` with 503 and Billing offers only Plus. Keep the pricing page and this variable in step: set the variable before releasing a build whose `/pricing` shows Cloud.
 
 **Upgrading Cloud → Plus** (`POST /api/billing/upgrade`, button in Billing) swaps the subscription item to `STRIPE_PRICE_ID` with `billing_cycle_anchor: "now"`, `proration_behavior: "none"` and `payment_behavior: "error_if_incomplete"`. Stripe immediately bills a full, unprorated $20 `subscription_update` invoice, which grants $20 like a renewal; the remaining Cloud days are not refunded, and the Billing confirmation says so before charging. Upgrading requires `STRIPE_PRICE_ID` (the inline fallback price cannot be used on a subscription update). A card that needs 3-D Secure fails the upgrade with no change; the user updates their card in the portal and retries. **Downgrading** Plus → Cloud is not offered in the app: cancel Plus in the portal, then subscribe to Cloud after it ends. Do not enable plan switching in the Customer Portal: prorated switch invoices grant nothing.
+
+## Free trial at web sign-up
+
+The website is for paying accounts; the desktop app is free with no account (`docs/desktop-local-mode.md`).
+
+- **Who is asked.** A new account made on the website (`web_plan_required`, migration `0037_web_free_trial`) picks Cloud or Cloud + AI (the $20 plan, "Plus" in code) before its workspace opens (`PlanPicker`). Accounts made before this, admins, accounts on a plan (including `trialing` and `past_due`) and the desktop app are never asked. The check is in the website, so the server routes behave as before for an account without a plan.
+- **The trial.** An account's first Checkout adds `trial_period_days` (`STRIPE_TRIAL_DAYS`, default 14, 0 turns trials off), `payment_method_collection: "always"`, and `trial_settings.end_behavior.missing_payment_method: "cancel"`. Stripe takes the card and charges nothing. A trial that ends without a card cancels instead of running unpaid. An account that ever had a subscription (`stripe_subscription_id`) pays from the start, so there is one trial per account.
+- **Confirming.** The trial's Checkout completes with `payment_status: "no_payment_required"` and a `trialing` subscription, and is confirmed as `{ trial: true }`. Its $0 invoice grants nothing. The first real $20 `subscription_cycle` invoice when the trial ends grants $20 like any renewal.
+- **AI during a Cloud + AI trial.** The trial grants a hosted AI allowance once per account: `STRIPE_TRIAL_AI_CREDIT_CENTS` (default 200, $2; 0 gives none). It is a `trial_credit` ledger entry, and a unique index allows only one per account. It is not counted as purchased, and no refund or dispute reverses it.
+- **Cloud → Cloud + AI during the trial** changes the price with no charge and no new billing period, keeps the trial, and grants the trial allowance. After the trial, upgrading works as before.
 
 ## Configure Stripe
 

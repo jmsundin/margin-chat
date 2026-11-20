@@ -180,6 +180,11 @@
       "id": "0036_service_api_keys",
       "file": "0036_service_api_keys.sql",
       "transaction": true
+    },
+    {
+      "id": "0037_web_free_trial",
+      "file": "0037_web_free_trial.sql",
+      "transaction": true
     }
   ]
 }

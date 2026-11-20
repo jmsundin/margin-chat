@@ -59,5 +59,5 @@ Sync between computers is left to the operating system: the vault folder can liv
 2. First launch opens straight to "Open a folder / Create a new vault". Local mode is on by default for new installs. Signing in is optional, from Settings, for Cloud sync or hosted AI.
 3. The features that use keys only the hosted server has (embeddings, web search, voice, translation) use the person's own keys, or say which key they need.
 4. iCloud Drive and Google Drive folders: files that haven't downloaded yet, conflict copies, and temporary files (above).
-5. Web sign-up starts a free trial with a card, for Cloud ($10/mo) or Cloud + AI ($20/mo).
+5. Web sign-up starts a free trial with a card, for Cloud ($10/mo) or Cloud + AI ($20/mo) (`docs/billing.md`, "Free trial at web sign-up").
 6. A signed and notarized Mac download.

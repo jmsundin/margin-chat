@@ -62,6 +62,10 @@ describe("public signup privileges", () => {
     expect(result.status).toBe(201);
     expect(result.body.user.role).toBe("member");
     expect(result.body.user.billing.hasAccess).toBe(false);
+    // The website asks a new account to pick a plan (a free trial with a card) before its workspace opens.
+    expect(result.body.user.billing).toMatchObject({ planRequired: true, freeTrialDays: 14 });
+    const session = await request("/api/auth/session", undefined, result.headers["Set-Cookie"].split(";")[0]);
+    expect(session.body.user.billing.planRequired).toBe(true);
   });
 
   test("an explicitly provisioned administrator retains their stored role on login and session reads", async () => {
@@ -77,5 +81,6 @@ describe("public signup privileges", () => {
     const session = await request("/api/auth/session", undefined, login.headers["Set-Cookie"].split(";")[0]);
     expect(session.body.user.role).toBe("admin");
     expect(session.body.user.billing.hasAccess).toBe(true);
+    expect(session.body.user.billing.planRequired).toBe(false);
   });
 });
