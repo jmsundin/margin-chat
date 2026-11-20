@@ -127,6 +127,7 @@ import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import VaultFolderGate from "./components/VaultFolderGate";
 import AIControls from "./components/AIControls";
 import { collectAgentInbox, readDismissedAgentItems, saveDismissedAgentItems } from "./lib/agentInbox";
+import { dueHeldMessages, readHeldMessages, saveHeldMessages, MAX_HELD_MESSAGES, type HeldMessage } from "./lib/heldMessages";
 import StarterCards from "./components/StarterCards";
 import { applyPresetSettings, type AIPreset } from "./lib/aiPresets";
 import JevRelatedItems from "./components/JevRelatedItems";
@@ -1040,6 +1041,29 @@ function WorkspaceAppContent({
     const request = source && createCaptureAIRequest(source, prompt);
     if (request) handleDocumentSubmit(conversationId, request);
   });
+  /** Send when…: questions held until a condition is met, then asked once. Kept on this device. */
+  const [heldMessages, setHeldMessages] = useState<HeldMessage[]>(() => readHeldMessages(storageUserId));
+  const updateHeldMessages = (next: HeldMessage[]) => { setHeldMessages(next); saveHeldMessages(storageUserId, next); };
+  const releaseHeldMessages = useEffectEvent(() => {
+    if (!heldMessages.length || !vault.ready) return;
+    const conversations = currentStateRef.current.conversations;
+    const { send, orphaned, keep } = dueHeldMessages(heldMessages, {
+      now: Date.now(),
+      hasDocument: (id) => Boolean(conversations[id]),
+      isBusy: (id) => Boolean(pendingConversationIds[id]) || chatExecutions.has(id),
+      synced: cloudSyncEnabled ? cloudBackupMatchesLocal : null,
+    });
+    if (!send.length && !orphaned.length) return;
+    // Forgotten before it is asked: a message that is sent can never be sent a second time.
+    updateHeldMessages(keep);
+    for (const message of send) submitCaptureAI(message.conversationId, message.prompt);
+  });
+  useEffect(() => {
+    if (!heldMessages.length) return;
+    releaseHeldMessages();
+    const timer = window.setInterval(releaseHeldMessages, 15_000);
+    return () => window.clearInterval(timer);
+  }, [heldMessages, pendingConversationIds, cloudBackupMatchesLocal, vault.ready]);
   useEffect(() => {
     if (!captureAIRequest || !state.conversations[captureAIRequest.conversationId]) return;
     setCaptureAIRequest(null);
@@ -8317,6 +8341,15 @@ function WorkspaceAppContent({
           {agentInboxOpen ? <Suspense fallback={null}><AgentInbox items={agentInboxItems}
             onOpen={(id) => { setAgentInboxOpen(false); handleSelectConversation(id, { nextViewMode: "chat" }); }}
             onProposal={(item, action) => handleAgentProposal(item.conversationId, item.messageId, item.proposal.id, action)}
+            held={{
+              messages: heldMessages,
+              titleOf: (id) => state.conversations[id]?.title || "Untitled",
+              target: activeConversation.vaultFile || isHiddenFromAI(activeConversation) ? null : { id: activeConversation.id, title: activeConversation.title || "Untitled" },
+              canWaitForSync: cloudSyncEnabled,
+              onHold: (prompt, condition) => updateHeldMessages([...heldMessages, { id: createId("held"), conversationId: activeConversation.id, prompt, condition,
+                createdAt: new Date().toISOString() }].slice(-MAX_HELD_MESSAGES)),
+              onCancel: (id) => updateHeldMessages(heldMessages.filter((message) => message.id !== id)),
+            }}
             onClear={(id) => setDismissedAgentItems((current) => { const next = new Set(current).add(id); saveDismissedAgentItems(next); return next; })}
             onClose={() => setAgentInboxOpen(false)} /></Suspense> : null}
           <SettingsPage

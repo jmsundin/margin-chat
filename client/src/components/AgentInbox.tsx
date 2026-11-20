@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { STOPPED_LABELS, proposalAction, type AgentInboxItem, type AgentReceipt } from "../lib/agentInbox";
 import { formatUsageMicros } from "../lib/aiPresets";
+import { describeHold, MAX_HELD_PROMPT, type HeldMessage, type HoldCondition } from "../lib/heldMessages";
 import "./AgentInbox.css";
 
 interface Props {
@@ -11,7 +12,24 @@ interface Props {
   onProposal: (item: Extract<AgentInboxItem, { kind: "proposal" }>, action: "approve" | "dismiss") => string | null;
   /** Clears a stopped-run notice. */
   onClear: (id: string) => void;
+  /** Send when…: questions held until a condition is met. Absent where holding isn't offered. */
+  held?: {
+    messages: HeldMessage[];
+    titleOf: (conversationId: string) => string;
+    /** The open document, which a new held message is for; null when it can't be asked about. */
+    target: { id: string; title: string } | null;
+    /** False when this vault doesn't sync, so "when sync finishes" isn't offered. */
+    canWaitForSync: boolean;
+    onHold: (prompt: string, condition: HoldCondition) => void;
+    onCancel: (id: string) => void;
+  };
   onClose: () => void;
+}
+
+/** A datetime-local value an hour from now, in this device's time zone. */
+function inAnHour(): string {
+  const date = new Date(Date.now() + 60 * 60 * 1000);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
 function receiptLine(receipt: AgentReceipt): string {
@@ -26,8 +44,18 @@ function when(at: string): string {
 }
 
 /** Everything an agent is waiting on the person for, across all documents. */
-export default function AgentInbox({ items, onOpen, onProposal, onClear, onClose }: Props) {
+export default function AgentInbox({ items, onOpen, onProposal, onClear, held, onClose }: Props) {
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [prompt, setPrompt] = useState("");
+  const [holdKind, setHoldKind] = useState<HoldCondition["kind"]>("idle");
+  const [holdAt, setHoldAt] = useState(inAnHour);
+  const holdTime = holdKind === "time" ? new Date(holdAt) : null;
+  const canHold = Boolean(held?.target && prompt.trim() && (!holdTime || !Number.isNaN(holdTime.getTime())));
+  function hold() {
+    if (!held || !canHold) return;
+    held.onHold(prompt.trim(), holdTime ? { kind: "time", at: holdTime.toISOString() } : { kind: holdKind as "idle" | "synced" });
+    setPrompt("");
+  }
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") { event.preventDefault(); onClose(); } };
     window.addEventListener("keydown", onKey);
@@ -75,6 +103,35 @@ export default function AgentInbox({ items, onOpen, onProposal, onClear, onClose
           <p className="agent-inbox-receipt">{receiptLine(item.receipt)}</p>
         </li>)}
       </ol> : <p className="agent-inbox-empty">Nothing is waiting for you. Questions an agent asks, changes it drafts for your approval, and runs that stop early are listed here.</p>}
+      {held ? <section className="agent-inbox-held" aria-label="Send when">
+        <h3>Send when…</h3>
+        {held.messages.length ? <ul className="agent-inbox-list">
+          {held.messages.map((message) => <li key={message.id} className="agent-inbox-item">
+            <div className="agent-inbox-item-head">
+              <span className="agent-inbox-kind">Held</span>
+              <button type="button" className="agent-inbox-doc" onClick={() => onOpen(message.conversationId)} title="Open this document">{held.titleOf(message.conversationId)}</button>
+              <span className="agent-inbox-when">{describeHold(message.condition)}</span>
+            </div>
+            <p className="agent-inbox-text">{message.prompt}</p>
+            <div className="agent-inbox-actions"><button type="button" onClick={() => held.onCancel(message.id)}>Cancel</button></div>
+          </li>)}
+        </ul> : null}
+        {held.target ? <form className="agent-inbox-hold" onSubmit={(event) => { event.preventDefault(); hold(); }}>
+          <label htmlFor="agent-inbox-hold-prompt">Ask AI in “{held.target.title}” later</label>
+          <textarea id="agent-inbox-hold-prompt" rows={2} maxLength={MAX_HELD_PROMPT} value={prompt} placeholder="What should it be asked?"
+            onChange={(event) => setPrompt(event.target.value)} />
+          <div className="agent-inbox-hold-row">
+            <select aria-label="When to send" value={holdKind} onChange={(event) => setHoldKind(event.target.value as HoldCondition["kind"])}>
+              <option value="idle">When AI finishes in this document</option>
+              {held.canWaitForSync ? <option value="synced">When sync finishes</option> : null}
+              <option value="time">At a time</option>
+            </select>
+            {holdKind === "time" ? <input type="datetime-local" aria-label="Time to send" value={holdAt} onChange={(event) => setHoldAt(event.target.value)} /> : null}
+            <button type="submit" className="is-primary" disabled={!canHold}>Hold</button>
+          </div>
+          <p className="agent-inbox-receipt">Held messages are kept on this device and sent while Margin Chat is open. The answer opens as a side document.</p>
+        </form> : <p className="agent-inbox-receipt">Open a document that AI can read to hold a question for it.</p>}
+      </section> : null}
     </section>
   </div>;
 }

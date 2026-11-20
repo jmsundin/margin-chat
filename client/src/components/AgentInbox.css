@@ -22,3 +22,16 @@
 .agent-inbox-actions button { background: transparent; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); cursor: pointer; font-size: .8rem; padding: 6px 12px; }
 .agent-inbox-actions button.is-primary { background: var(--ink); border-color: var(--ink); color: var(--bg, #0b1115); font-weight: 600; }
 .agent-inbox-error { background: var(--accent-soft); border-radius: 8px; font-size: .8rem; margin: 0; padding: 6px 10px; }
+.agent-inbox-held { border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 8px; padding-top: 10px; }
+.agent-inbox-held h3 { font-size: .86rem; font-weight: 600; margin: 0; }
+.agent-inbox-when { color: var(--muted); margin-left: auto; white-space: nowrap; }
+.agent-inbox-hold { display: flex; flex-direction: column; gap: 6px; }
+.agent-inbox-hold label { font-size: .8rem; font-weight: 500; }
+.agent-inbox-hold textarea, .agent-inbox-hold select, .agent-inbox-hold input {
+  background: var(--bg); border: 1px solid var(--line-strong); border-radius: 8px; box-sizing: border-box; color: var(--ink); font: inherit; font-size: .84rem; padding: 6px 8px;
+}
+.agent-inbox-hold textarea { resize: vertical; width: 100%; }
+.agent-inbox-hold-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.agent-inbox-hold-row select { flex: 1; min-width: 160px; }
+.agent-inbox-hold-row button { background: var(--ink); border: 0; border-radius: 8px; color: var(--bg, #0b1115); cursor: pointer; font-size: .8rem; font-weight: 600; padding: 6px 14px; }
+.agent-inbox-hold-row button:disabled { cursor: default; opacity: .5; }
