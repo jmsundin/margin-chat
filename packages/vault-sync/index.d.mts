@@ -65,6 +65,11 @@ export interface VaultFs {
    * or null when this adapter can't watch (the caller polls instead).
    */
   watch?(onChange: VaultFsChangeListener): (() => void) | null;
+  /**
+   * Asks the system to bring a file that is kept only in the cloud (an iCloud placeholder) back to this
+   * computer. Resolves once asked, not once it arrives; does nothing where there is nothing to ask.
+   */
+  download?(path: string): Promise<void>;
 }
 
 export function vaultFsError(name: VaultFsErrorName, message?: string): Error;
@@ -92,3 +97,7 @@ export function createMemoryVaultFs(initial?: Record<string, Uint8Array | string
 
 /** Noise in a vault folder (system files, editor swap and lock files, partial downloads, .git, .obsidian, the app's own .margin-chat): never taken in or synced. */
 export function isIgnoredVaultPath(path: string): boolean;
+/** For iCloud's `.<name>.icloud` placeholder of a file kept only in iCloud, that file's name; otherwise null. */
+export function evictedFileName(name: string): string | null;
+/** Where iCloud leaves the placeholder for `path` while the file isn't on this computer. */
+export function evictedPlaceholderPath(path: string): string;

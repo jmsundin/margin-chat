@@ -3,6 +3,7 @@
 // and no symbolic links followed on the way, so a link inside the vault can't reach files
 // outside it. Writes go to a temporary file beside the target, are flushed to disk, then
 // renamed over it, so a crash mid-write leaves the previous file whole.
+import { execFile } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { lstat, mkdir, open, readdir, rename, stat, unlink } from "node:fs/promises";
 import path from "node:path";
@@ -58,6 +59,7 @@ export function isVaultFsPath(relativePath, platform = process.platform) {
  */
 export function nodeVaultFs(root, {
   name = path.basename(root), platform = process.platform, recentChangeMs = RECENT_CHANGE_MS, stableReadMs = STABLE_READ_MS, now = () => Date.now(),
+  runCommand = runQuietly,
 } = {}) {
   if (!path.isAbsolute(root)) throw new TypeError("The vault folder must be an absolute path.");
   const base = path.resolve(root);
@@ -246,7 +248,20 @@ export function nodeVaultFs(root, {
         return "missing";
       }
     },
+    /**
+     * Asks iCloud to bring back a file it keeps only in the cloud (macOS before Sonoma leaves `.<name>.icloud`
+     * in its place). Newer macOS and Google Drive download a file when it is read, so there is nothing to ask.
+     */
+    async download(relativePath) {
+      if (platform !== "darwin") return;
+      await runCommand("/usr/bin/brctl", ["download", await resolve(check(relativePath), relativePath)]);
+    },
     /** Whether `stat` (null: no file) is what this app itself last left at `relativePath`. */
     isOwnChange: isOwn,
   };
+}
+
+/** Runs a command and waits for it, ignoring its output and any failure. */
+function runQuietly(command, args) {
+  return new Promise((done) => { execFile(command, args, { timeout: 10_000 }, () => done()); });
 }

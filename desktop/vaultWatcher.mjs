@@ -19,7 +19,9 @@ export const MISSING_FOLDER_CHECK_MS = 5_000;
 export const MAX_WATCHED_FOLDERS = 10_000;
 
 /** Folders whose contents are never vault content or drop-ins. `.margin-chat` is the app's own. */
-const IGNORED_FOLDERS = new Set([".git", ".obsidian", ".trash", ".margin-chat", "node_modules", ".Trash", "$RECYCLE.BIN"]);
+const IGNORED_FOLDERS = new Set([".git", ".obsidian", ".trash", ".margin-chat", "node_modules", ".Trash", "$RECYCLE.BIN",
+  // Google Drive and Dropbox keep their transfers in progress here.
+  ".tmp.drivedownload", ".tmp.driveupload", ".dropbox.cache"]);
 /** Files other apps leave behind while they work, or that the system makes by itself. */
 const IGNORED_FILE = /^(?:\.DS_Store|Thumbs\.db|desktop\.ini|4913|\.~lock\..*#|~\$.*|\._.*|.*\.(?:tmp|temp|swp|swo|swx|crdownload|part|partial|download|icloud))$/iu;
 
