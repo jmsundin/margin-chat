@@ -26,13 +26,13 @@ export interface FeatureInfo {
 
 export const FEATURES: readonly FeatureInfo[] = [
   { id: "roadmaps", group: "Think", name: "Roadmaps", description: "Learning paths drawn over your map, with AI drafts and Dive deeper.",
-    adds: "Roadmaps on the map, flags where roadmaps start, “Make a roadmap from this…” in a document's ⋯ menu", keywords: ["roadmap", "learning path", "path", "dive deeper", "plan"] },
+    adds: "Roadmaps on the map, flags where roadmaps start, “Roadmap…” under Make in a document's ⋮ More menu", keywords: ["roadmap", "learning path", "path", "dive deeper", "plan"] },
   { id: "claims", group: "Think", name: "Claim checking", description: "Find the claims a document makes and check each against your other notes.",
-    adds: "“Check claims…” in a document's ⋯ menu", keywords: ["claim", "fact check", "check claims", "ratchet", "evidence"] },
+    adds: "“Check claims…” under AI in a document's ⋮ More menu", keywords: ["claim", "fact check", "check claims", "ratchet", "evidence"] },
   { id: "boards", group: "Think", name: "Boards", description: "A full-page canvas to draw and think on.",
     adds: "“New board” in the sidebar's ⋯ and + menus, Board in a document's mode button", keywords: ["board", "canvas", "whiteboard", "draw", "drawing"] },
   { id: "flashcards", group: "Learn", name: "Flashcards and quiz", description: "Lines like “Question :: Answer” become cards you review with spaced repetition.",
-    adds: "Quiz on the selection menu, “Make flashcards…” in a document's ⋯ menu, Review in its mode button and the sidebar", keywords: ["flashcard", "cards", "quiz", "review", "spaced repetition", "anki", "study"] },
+    adds: "Quiz on the selection menu, “Flashcards…” under Make in a document's ⋮ More menu, Review in its mode button and the sidebar", keywords: ["flashcard", "cards", "quiz", "review", "spaced repetition", "anki", "study"] },
   { id: "language", group: "Learn", name: "Language learning", description: "Read a document in another language: tap a word to see, save and rate what it means.",
     adds: "Language in a document's mode button", keywords: ["language", "translate", "translation", "vocabulary", "words", "spanish", "lingq", "foreign"] },
   { id: "voice", group: "Capture", name: "Voice typing", description: "Talk instead of typing in any text field.",
