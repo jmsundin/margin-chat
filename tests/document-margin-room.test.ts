@@ -4,7 +4,7 @@ import { Window } from "happy-dom";
 const browser = new Window({ url: "http://document-margin-room.test", width: 1440, height: 900 });
 for (const name of ["window", "document", "HTMLElement", "Element", "getComputedStyle"]) {
   const value = name === "window" ? browser : (browser as any)[name];
-  Object.defineProperty(globalThis, name, { configurable: true, value: name === "getComputedStyle" ? value.bind(browser) : value });
+  Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: name === "getComputedStyle" ? value.bind(browser) : value });
 }
 const { freeRoomRight } = await import("../client/src/components/DocumentMargin");
 
