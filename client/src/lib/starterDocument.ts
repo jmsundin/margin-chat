@@ -15,7 +15,8 @@ export const STARTER_SIDE_DOCUMENT_ID = "starter-side-document";
 const ID_PREFIX = "starter-";
 /** The trial's example vault and news topics (lib/exampleVault.ts, lib/trialTopics.ts) aren't the person's own work either. */
 const NOT_THEIRS = [ID_PREFIX, "example-", "topic-"];
-const madeByPerson = (id: string) => !NOT_THEIRS.some((prefix) => id.startsWith(prefix));
+/** False for the starter page's own notes and the trial's examples. */
+export const madeByPerson = (id: string) => !NOT_THEIRS.some((prefix) => id.startsWith(prefix));
 /** Images ship with the website, so the document reads the same on every device and in other apps. */
 const ASSET_ORIGIN = "https://www.marginchat.com";
 
