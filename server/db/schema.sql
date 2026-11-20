@@ -1997,3 +1997,12 @@ alter table marginchat_language_terms add column if not exists fragment text not
 alter table marginchat_language_terms add column if not exists srs jsonb;
 alter table marginchat_language_terms add column if not exists srs_due_at timestamptz;
 create index if not exists marginchat_language_terms_due_idx on marginchat_language_terms(user_id, language, srs_due_at) where srs_due_at is not null;
+
+-- People can bring their own keys for web search, translation and read-aloud voices too,
+-- so the desktop app without an account (and any plan) has every feature.
+alter table marginchat_user_api_keys
+  drop constraint if exists marginchat_user_api_keys_provider_check;
+alter table marginchat_user_api_keys
+  add constraint marginchat_user_api_keys_provider_check check (
+    provider in ('openai', 'anthropic', 'gemini', 'huggingface', 'xai', 'meta', 'tavily', 'deepl', 'google_translate', 'azure_speech')
+  );

@@ -306,3 +306,14 @@ describe("the AI's meaning in context", () => {
     expect(wiktionaryFrameUrl("Frühstück", "de")).toBe("https://en.wiktionary.org/wiki/Fr%C3%BChst%C3%BCck?useskin=minerva#German");
   });
 });
+
+describe("looking a word up with the person's own translation key", () => {
+  test("a server with no translator uses the person's Google key, and no daily cap applies", async () => {
+    const net = outside();
+    const service = createLanguageLookupService({ database: memoryCache(), env: {}, fetchImpl: net.fetchImpl });
+    const without = await service.lookup({ userId: "u1", term: "und", src: "de", tgt: "en" });
+    expect(without.machineAvailable).toBe(false);
+    const own = await service.lookup({ userId: "u1", term: "Frühstück", src: "de", tgt: "en", keys: { google_translate: "own-key-123" } });
+    expect(own).toMatchObject({ machineAvailable: true, machine: { provider: "google", term: "EN(Frühstück)" } });
+  });
+});

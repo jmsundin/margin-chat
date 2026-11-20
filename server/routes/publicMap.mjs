@@ -11,12 +11,13 @@ function requireWorkspaceJson(request, workspaceCredential) {
   }
 }
 
-export async function handleWebSearchRequest({ request, response, user, webSearch, workspaceCredential = false }) {
+export async function handleWebSearchRequest({ request, response, user, webSearch, apiKeyService = null, workspaceCredential = false }) {
   requireWorkspaceJson(request, workspaceCredential);
   const scope = createRequestAbortScope(request, response);
   try {
     const payload = await readJsonBody(request, 4096);
-    sendJson(response, 200, await webSearch.search({ user, payload, signal: scope.signal }), noStore);
+    const apiKey = apiKeyService && user?.id ? (await apiKeyService.getDecryptedKeys(user.id)).tavily ?? null : null;
+    sendJson(response, 200, await webSearch.search({ user, payload, signal: scope.signal, apiKey }), noStore);
   } catch (error) {
     if (!scope.signal.aborted) throw error;
   } finally { scope.dispose(); }

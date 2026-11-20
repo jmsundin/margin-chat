@@ -51,7 +51,7 @@ describe("desktop local mode", () => {
       }
 
       const saved = await call(server.url, "/api/settings/api-keys", {
-        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keys: { openai: "sk-test-local-1234567890" } }),
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ keys: { openai: "sk-test-local-1234567890", tavily: "tvly-local-1234567890" } }),
       });
       expect(saved.status).toBe(200);
 
@@ -66,6 +66,7 @@ describe("desktop local mode", () => {
       const again = await call(server.url, "/api/auth/session");
       expect(again.body.user.id).toBe(userId);
       expect(again.body.user.apiKeys.byProvider.openai.configured).toBe(true);
+      expect(again.body.user.apiKeys.byProvider.tavily.configured).toBe(true);
       const vault = await call(server.url, "/api/vault");
       expect(JSON.stringify(vault.body)).toContain("Notes/hello.md");
     } finally {

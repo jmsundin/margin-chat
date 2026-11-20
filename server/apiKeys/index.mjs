@@ -1,7 +1,21 @@
 import { HttpError } from "../lib/errors.mjs";
 import { decryptSecret, encryptSecret } from "./crypto.mjs";
 
-export const API_KEY_PROVIDERS = ["openai", "anthropic", "gemini", "huggingface", "xai", "meta"];
+/** Keys for AI models. */
+export const AI_KEY_PROVIDERS = ["openai", "anthropic", "gemini", "huggingface", "xai", "meta"];
+/** Keys for the other services some features use: web search, translation and read-aloud voices. */
+export const SERVICE_KEY_PROVIDERS = ["tavily", "deepl", "google_translate", "azure_speech"];
+export const API_KEY_PROVIDERS = [...AI_KEY_PROVIDERS, ...SERVICE_KEY_PROVIDERS];
+const AI_KEY_PROVIDER_SET = new Set(AI_KEY_PROVIDERS);
+/** Azure's voices need the key's region too: "region:key", such as "eastus:0123…". */
+const AZURE_SPEECH_VALUE = /^[a-z0-9]{2,40}:[A-Za-z0-9]{16,200}$/u;
+
+/** The Azure region and key saved together as one value, or null. */
+export function parseAzureSpeechKey(value) {
+  if (typeof value !== "string" || !AZURE_SPEECH_VALUE.test(value.trim())) return null;
+  const [region, key] = value.trim().split(":");
+  return { region, key };
+}
 const API_KEY_PROVIDER_SET = new Set(API_KEY_PROVIDERS);
 
 function normalizeMutations(payload) {
@@ -40,6 +54,10 @@ function normalizeMutations(payload) {
       );
     }
 
+    if (provider === "azure_speech" && !parseAzureSpeechKey(apiKey)) {
+      throw new HttpError(400, "Enter the Azure Speech region and key as region:key, such as eastus:0123abcd….");
+    }
+
     mutations.push({ apiKey, provider });
   }
 
@@ -69,7 +87,8 @@ function serializeSummaries(rows) {
 
   return {
     byProvider,
-    hasAny: Object.values(byProvider).some(({ configured }) => configured),
+    // "Any" means AI: a web search or voice key alone doesn't let anyone ask a model.
+    hasAny: Object.entries(byProvider).some(([provider, { configured }]) => configured && AI_KEY_PROVIDER_SET.has(provider)),
   };
 }
 

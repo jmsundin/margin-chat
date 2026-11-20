@@ -32,6 +32,17 @@ The app runs Margin Chat's own server inside its main process instead of sending
 
 The vault folder screen ("Open a folder / Create a new vault") comes before anything else. The "Start here" sample documents are added only after that choice, and only when the workspace is still empty. A folder that already holds notes therefore never gets them, while a new empty vault (or "Not now") does.
 
+## Your own keys for everything
+
+Settings → API keys has the AI model keys and, under **Other services**, keys for the features that call other services. With these, local mode (or any account) has every feature without a plan:
+
+- **Web search:** a Tavily key. The person's own key is used without billing here (`server/webSearch`).
+- **Translation in Language mode:** a DeepL or Google Cloud Translation key. Wiktionary and AI meanings work without one (`server/languageTerms/lookup.mjs`).
+- **Read-aloud voices:** an Azure Speech key saved as `region:key`. The device's own voice works without one (`server/languageTerms/speech.mjs`).
+- **Explore's Ask** and search by meaning use the person's own AI keys (an OpenAI key for embeddings), like every other AI request.
+
+The person's own keys have no daily caps, since their own account pays. Migration `0036_service_api_keys` allows the new providers. `hasAny` still means a model key, so a search key alone doesn't count as having AI.
+
 ## Steps
 
 1. The app runs the server on the computer with no account (this note).

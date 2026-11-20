@@ -62,7 +62,11 @@ export type BillingAccessKind =
   | "none"
   /** The desktop app running on its own, with no account (docs/desktop-local-mode.md). */
   | "local";
-export type ApiKeyProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai" | "meta";
+/** Keys for AI models. */
+export type AIKeyProvider = "openai" | "anthropic" | "gemini" | "huggingface" | "xai" | "meta";
+/** Keys for web search, translation and read-aloud voices. */
+export type ServiceKeyProvider = "tavily" | "deepl" | "google_translate" | "azure_speech";
+export type ApiKeyProvider = AIKeyProvider | ServiceKeyProvider;
 export type ApiKeySettings = {
   byProvider: Record<
     ApiKeyProvider,
