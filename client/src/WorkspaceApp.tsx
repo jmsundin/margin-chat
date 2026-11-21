@@ -64,7 +64,7 @@ import DocumentNewButtons, { SideDocumentIcon } from "./components/DocumentNewBu
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpaceTiles, type SpaceMenuActions } from "./components/Spaces";
 import DocumentTabs from "./components/DocumentTabs";
-import { DocumentCompass, DocumentKeepReading, DocumentMapButton, DocumentSheetPill, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
+import { DocumentCompass, DocumentKeepReading, DocumentMapButton, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { PAGE_SHEET, SHEET_NARROW_MAP, fitDocumentSheet, getDefaultDocumentSheet, getDocumentSheetEdge, getDocumentSheetMapBox, loadLastDocumentSheet, saveLastDocumentSheet, settleDocumentSheet, type DocumentSheet, type DocumentSheetEdge } from "./lib/documentSheet";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
@@ -7890,8 +7890,6 @@ function WorkspaceAppContent({
                     : { left: sheetArea.left + (sheetDocked ? shownSheet.size : 0), top: sheetArea.top, height: sheetArea.height }}
                   onPointerDown={handleDragSheet}
                   onDoubleClick={sheetDocked && sheetEdge === "left" ? () => restSheet(getDefaultDocumentSheet(sheetEdge, sheetArea.width, sheetArea.height)) : undefined} /> : null}
-              {showMapModal && shownSheet.mode === "map" && sheetArea ? <DocumentSheetPill title={activeConversation.title || "Untitled document"}
-                style={{ top: sheetArea.top + sheetArea.height - 66, left: sheetArea.left + sheetArea.width / 2 }} onRestore={handleExpandSheet} /> : null}
               <WorkspaceView mode="graph" active={isGraphView || showMapModal}
                 modal={showMapModal ? { label: "Map around this document", style: mapModalBounds ?? undefined, docked: true, narrow: sheetNarrowMap } : undefined}>
                 {isGraphView && newVault ? <ViewIntro id="map" className="is-map" title="What Map View shows">

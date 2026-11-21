@@ -86,14 +86,6 @@ export function DocumentMapButton({ open, onToggle }: { open: boolean; onToggle:
   </button>;
 }
 
-/** Put away, the document waits as a pill at the foot of the map. */
-export function DocumentSheetPill({ title, style, onRestore }: { title: string; style: CSSProperties; onRestore: () => void }) {
-  return <button type="button" className="document-sheet-pill" style={style} onClick={onRestore} title="Bring the document back (Esc)">
-    <span className="document-sheet-pill-dot" aria-hidden="true" />
-    <span className="document-sheet-pill-label">Open {title}</span>
-  </button>;
-}
-
 /** G: the family as an outline beside the documents, with links underneath. */
 export function DocumentTopicOutline({ neighbors, onOpen }: { neighbors: DocumentNeighbors; onOpen: (id: string) => void }) {
   const { focused, childrenByParent, linked } = neighbors;
