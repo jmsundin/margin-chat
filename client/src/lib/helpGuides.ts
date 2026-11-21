@@ -256,8 +256,10 @@ export const HELP_GUIDES: HelpGuide[] = [
     steps: [
       { title: "Open documents as tabs", body: "Each document you open joins the tab row. On a phone, tap the title to switch." },
       { title: "Make a space", body: "Use the space button at the left of the tabs and name the space." },
-      { title: "Come back to it", body: "Switch spaces from the same button. Each one reopens the documents you added to it." },
+      { title: "Add documents", body: "In the left panel, open a document's **⋯** menu and tick a space under **Spaces**." },
+      { title: "Come back to it", body: "Switch spaces from the same button, or from the **Spaces** tab in Tile view. Each one reopens the documents you added to it." },
     ],
+    notes: ["A space is not a group. A group is a label, like a tag, that sorts documents by topic. A space is a workspace you're actively working in."],
     related: ["turn-on-features", "first-document"],
     keywords: "workspace session project group organize organise",
   },

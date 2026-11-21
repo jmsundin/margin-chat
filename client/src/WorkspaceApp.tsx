@@ -61,7 +61,7 @@ import { resolveWikiLinkDocument, wikiLinkSuggestions, type WikiLinkDocument } f
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import OpenBesideIcon from "./components/OpenBesideIcon";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
-import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpacesPanel, type SpaceMenuActions } from "./components/Spaces";
+import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpaceTiles, type SpaceMenuActions } from "./components/Spaces";
 import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapButton, DocumentSheetPill, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { PAGE_SHEET, SHEET_NARROW_MAP, fitDocumentSheet, getDefaultDocumentSheet, getDocumentSheetEdge, getDocumentSheetMapBox, loadLastDocumentSheet, saveLastDocumentSheet, settleDocumentSheet, type DocumentSheet, type DocumentSheetEdge } from "./lib/documentSheet";
@@ -1631,7 +1631,6 @@ function WorkspaceAppContent({
   );
   const sessions = state.sessions;
   const orderedSpaces = useMemo(() => orderSpaces(sessions), [sessions]);
-  const [sessionsRequest, setSessionsRequest] = useState(0);
   useSessionAutoNames({ userId: user.id, enabled: jevEnabled, sessions, conversations: state.conversations,
     onName: (sessionId, nameKey, name) => setState((current) => applySessionAutoName(current, sessionId, nameKey, name)) });
   const [navigationStyle, setNavigationStyle] = useState<DocumentNavigationStyle>(loadDocumentNavigationStyle);
@@ -6838,7 +6837,7 @@ function WorkspaceAppContent({
       onSwitch={(id) => { if (inline) setMobileHeaderOpen(false); handleSwitchSession(id); }}
       onNew={(name) => { if (inline) setMobileHeaderOpen(false); handleCreateSession(name); }}
       onNewFromTabs={() => { if (inline) setMobileHeaderOpen(false); handleCreateSession(undefined, openRootIds); }}
-      onManage={() => { setMobileHeaderOpen(false); setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }}
+      onManage={() => { setMobileHeaderOpen(false); setTileTab("spaces"); handleSetMainViewMode("tiles"); }}
       onDropDocument={handleKeepInSpace} />;
   }
 
@@ -7648,16 +7647,6 @@ function WorkspaceAppContent({
                 onOpenSettings={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }} />}
               documentOrder={documentOrder}
               groupsEnabled={features.groups} outlineEnabled={features.outline} onMoreFeatures={openFeatureSettings}
-              sessionsPanel={!features.spaces ? undefined : <SpacesPanel spaces={orderedSpaces} activeId={sessions?.activeId ?? null}
-                conversations={state.conversations} focusedDocumentId={activeConversation.id}
-                onOpen={handleSwitchSession}
-                onRename={(sessionId, name) => setState((current) => renameSession(current, sessionId, name))}
-                onDuplicate={(sessionId) => setState((current) => duplicateSession(current, sessionId))}
-                onDelete={handleDeleteSession} onNew={(name) => handleCreateSession(name)}
-                onOpenDocument={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
-                showIntro={newVault}
-                onRemoveDocument={handleToggleSpaceDocument} />}
-              sessionsRequest={sessionsRequest}
               documentSort={documentSort}
               onDocumentSortChange={(sort) => { setDocumentSort(sort); saveSidebarDocumentSort(storageUserId, sort); }}
               mapExplorerRef={setGraphExplorerContainer}
@@ -7743,6 +7732,12 @@ function WorkspaceAppContent({
                     {features.roadmaps && tileTab === "roadmaps" ? <>
                       <h2>Your roadmaps</h2>
                       <p className="canvas-hint">Every roadmap as a card. Open one to learn it in order, or start a new one.</p>
+                    </> : features.groups && tileTab === "groups" ? <>
+                      <h2>Your groups</h2>
+                      <p className="canvas-hint">A group is a label, like a tag: it sorts documents by topic, and each document sits in one group. Nothing opens or closes when you use one.</p>
+                    </> : features.spaces && tileTab === "spaces" ? <>
+                      <h2>Your spaces</h2>
+                      <p className="canvas-hint">A space is a workspace you&apos;re actively working in: it keeps one project&apos;s documents open as tabs, so you can switch to it and pick up where you left off.</p>
                     </> : <>
                       <h2>Your documents</h2>
                       <p className="canvas-hint">
@@ -7750,7 +7745,7 @@ function WorkspaceAppContent({
                       </p>
                     </>}
                     {newVault ? <ViewIntro id="tiles" className="is-tiles" title="What Tiles shows">
-                      Each main document gets a card here, with its side documents and notes counted on it. Make a group to keep a project&apos;s documents together.
+                      Each main document gets a card here, with its side documents and notes counted on it.
                     </ViewIntro> : null}
                   </div>
                   {renderRelatedItems()}
@@ -7766,7 +7761,23 @@ function WorkspaceAppContent({
                   onOpenThread={handleSelectConversation}
                   onToggleGroup={handleToggleConversationGroup}
                   threads={threadSummaries}
-                  roadmaps={features.roadmaps ? { tiles: roadmapTiles, tab: tileTab, onTab: setTileTab, onOpen: handleOpenRoadmapFromTiles,
+                  tab={tileTab} onTab={setTileTab}
+                  groupsEnabled={features.groups}
+                  spaces={!features.spaces ? undefined : { count: orderedSpaces.length, content: <SpaceTiles spaces={orderedSpaces}
+                    activeId={sessions?.activeId ?? null} conversations={state.conversations}
+                    onOpen={(sessionId) => {
+                      if ((currentStateRef.current.sessions?.activeId ?? null) === sessionId) setMainViewMode("chat");
+                      else handleSwitchSession(sessionId);
+                    }}
+                    onRename={(sessionId, name) => setState((current) => renameSession(current, sessionId, name))}
+                    onDuplicate={(sessionId) => setState((current) => duplicateSession(current, sessionId))}
+                    onDelete={handleDeleteSession} onNew={(name) => handleCreateSession(name)}
+                    onOpenDocument={(sessionId, documentId) => {
+                      if ((currentStateRef.current.sessions?.activeId ?? null) !== sessionId) handleSwitchSession(sessionId);
+                      handleSelectConversation(documentId, { nextViewMode: "chat" });
+                    }}
+                    onRemoveDocument={handleToggleSpaceDocument} /> }}
+                  roadmaps={features.roadmaps ? { tiles: roadmapTiles, onOpen: handleOpenRoadmapFromTiles,
                     onDraft: (goal) => {
                       const made = mapPathActions.onDraftPath(goal);
                       if ("error" in made) return made.error;
