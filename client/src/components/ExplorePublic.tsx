@@ -151,8 +151,10 @@ export default function ExplorePublic({ source, layout, leading, sourceMenu, act
 
 const OPEN_LABEL: Record<BrowseNode["kind"], string> = { root: "Open", section: "Open", shelf: "Open the shelf", article: "Show what's inside", group: "Open", topic: "Show sub-topics" };
 
-function NodeMenu({ node, x, y, bounds, sourceKind, actions, onOpen, onClose }: {
-  node: BrowseNode; x: number; y: number; bounds: HTMLElement | null; sourceKind: ExploreSource["kind"]; actions: ExplorePublicActions; onOpen: () => void; onClose: () => void;
+export function NodeMenu({ node, x, y, bounds, sourceKind, actions, onOpen, onClose }: {
+  node: BrowseNode; x: number; y: number; bounds: HTMLElement | null; sourceKind: ExploreSource["kind"]; actions: ExplorePublicActions;
+  /** Walks into the topic; left out where there is nowhere to walk (around a note, a topic is read or kept). */
+  onOpen?: () => void; onClose: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [extract, setExtract] = useState<string | null>(null);
@@ -197,7 +199,7 @@ function NodeMenu({ node, x, y, bounds, sourceKind, actions, onOpen, onClose }: 
       <strong>{node.label}</strong>
       {about ? <span>{about.length > 150 ? `${about.slice(0, 149).replace(/\s+\S*$/u, "")}…` : about}</span> : null}
     </div>
-    <button type="button" role="menuitem" onClick={onOpen}>{opensWithAi && node.kind !== "section" ? "Show sub-topics" : OPEN_LABEL[node.kind]}</button>
+    {onOpen ? <button type="button" role="menuitem" onClick={onOpen}>{opensWithAi && node.kind !== "section" ? "Show sub-topics" : OPEN_LABEL[node.kind]}</button> : null}
     <button type="button" role="menuitem" onClick={() => { actions.onDetails(node); onClose(); }}>Topic details</button>
     {node.article ? <button type="button" role="menuitem" onClick={() => { actions.onRead(node.article!); onClose(); }}>Wikipedia article</button> : null}
     <button type="button" role="menuitem" onClick={() => {
@@ -228,7 +230,7 @@ function phoneScreen() {
 
 const KIND_HINT: Record<BrowseNode["kind"], string> = { root: "", section: "", shelf: "Articles", article: "Article", group: "Part of the article", topic: "Topic" };
 /** Where a click happened, or the middle of the element for a key press. */
-function pointOf(event: { clientX: number; clientY: number; currentTarget: Element; detail?: number }) {
+export function pointOf(event: { clientX: number; clientY: number; currentTarget: Element; detail?: number }) {
   if (event.detail !== 0 && (event.clientX || event.clientY)) return { x: event.clientX, y: event.clientY };
   const box = event.currentTarget.getBoundingClientRect();
   return { x: box.left + Math.min(box.width / 2, 120), y: box.top + Math.min(box.height / 2, 60) };

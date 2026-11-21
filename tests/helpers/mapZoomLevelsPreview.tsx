@@ -6,6 +6,8 @@ import TopicDetailsPane from "../../client/src/components/TopicDetailsPane";
 import ExploreSourceMenu from "../../client/src/components/ExploreSourceMenu";
 import ExplorePublic from "../../client/src/components/ExplorePublic";
 import ConversationGraphView from "../../client/src/components/ConversationGraphView";
+import AroundRings from "../../client/src/components/AroundRings";
+import type { AroundLayout } from "../../client/src/lib/aroundRings";
 import { createMainConversation } from "../../client/src/initialState";
 import type { Conversation } from "../../client/src/types";
 import { SAMPLE_VAULT, type SampleGroup } from "./mapZoomLevelsVault";
@@ -53,6 +55,9 @@ for (const doc of docs) {
     content: `${doc.title}: working notes for ${topicNames[doc.topic].toLowerCase()}. What the evidence says so far, open questions, and what to read next.` }];
   conversations[conversation.id] = conversation;
 }
+
+// The first note links to a few others, so Around shows linked notes as well as similar ones.
+conversations.d0.linkedConversationIds = ["d1", "d5", "d9", "d14"].filter((id) => conversations[id]);
 
 // Each document's vector mixes its theme, topic and block with a part of its own: documents in one
 // block score about 0.62, in one topic 0.42, in one theme 0.2.
@@ -105,9 +110,17 @@ function Preview() {
   const [layout, setLayout] = useState<ExploreLayout | undefined>(startLayout);
   const [source, setSource] = useState<ExploreSource>(() => parseExploreSource(params.get("source")));
   const [details, setDetails] = useState<BrowseNode | null>(null);
+  // ?around=1 opens the map around the first note; ?around=canvas draws it as the Canvas instead of Rings.
+  const [around, setAround] = useState<AroundLayout>(params.get("around") === "canvas" ? "canvas" : "rings");
+  const [scopeRequest] = useState(() => params.get("around") ? { choice: "around" as const, requestId: 1 } : undefined);
   const menu = (onTop: () => void) => <ExploreSourceMenu value={source} canAsk onChange={setSource} onTop={onTop} />;
   return <main style={{ height: "100dvh", display: "flex", background: "var(--bg)" }}>
   <ConversationGraphView exploreLayout={layout} onExploreLayoutChange={layout ? setLayout : undefined} exploreSourceMenu={menu}
+    aroundLayout={around} onAroundLayoutChange={setAround} scopeRequest={scopeRequest}
+    renderAround={({ centerId, neighbours, leading, select }) => <AroundRings center={{ id: centerId, title: conversations[centerId].title }} neighbours={neighbours}
+      titleOf={(id) => conversations[id]?.title ?? "Untitled"} textOf={() => ""} leading={leading} onSelect={select}
+      actions={{ noteFor: () => null, onOpenNote: () => {}, onRead: () => {}, onDetails: setDetails, onNewNote: () => null, onKeep: async () => ({ id: "d0" }) }}
+      reader={details ? <TopicDetailsPane node={details} onClose={() => setDetails(null)} onSave={() => null} /> : undefined} />}
     renderPublicExplore={source.kind === "notes" ? undefined : (shown, leading) => <ExplorePublic source={source} layout={shown} leading={leading} sourceMenu={menu}
       actions={{ ask: async (label) => { await new Promise((done) => setTimeout(done, 300)); return fakeTopics(label); },
         noteFor: (label) => /^(health|senolytic|longevity)$/i.test(label) ? "d0" : null, onOpenNote: () => {}, onRead: () => {},

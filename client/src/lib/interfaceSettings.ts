@@ -24,7 +24,7 @@ export const SYNCED_SETTINGS = [
   "margin-chat:language-reader:look",
   "margin-chat:language-reader:auto-known",
   "margin-chat:language-reader:auto-known-explained",
-  "margin-chat:explore-layout", "margin-chat:explore-source",
+  "margin-chat:explore-layout", "margin-chat:explore-source", "margin-chat:explore-around-layout",
   "margin-chat:ai-presets",
 ] as const;
 export type SyncedSetting = (typeof SYNCED_SETTINGS)[number];

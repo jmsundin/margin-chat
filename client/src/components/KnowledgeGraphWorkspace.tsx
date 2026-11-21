@@ -25,6 +25,9 @@ import { draftingLabel, MapPathBar, MapPathLayer, MapPathStepStrip, MapPathPickB
 import { buildMapPath, isPathDocument, withDraftPreview, listMapPaths, readActivePath, readPathLayout, rememberActivePath, rememberPathLayout } from "../lib/mapPaths";
 import type { MapSpotlight } from "../lib/mapSpotlight";
 import { readExploreLayout, writeExploreLayout, type ExploreLayout } from "../lib/exploreLibrary";
+import { readAroundLayout, writeAroundLayout, type AroundLayout } from "../lib/aroundRings";
+import { getCurrentDocumentText } from "../lib/documentSources";
+import AroundRings from "./AroundRings";
 import { readExploreSource, writeExploreSource, type BrowseNode, type ExploreSource } from "../lib/exploreSources";
 import ExploreSourceMenu from "./ExploreSourceMenu";
 import ExplorePublic from "./ExplorePublic";
@@ -240,6 +243,14 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
     window.addEventListener("storage", changed);
     return () => window.removeEventListener("storage", changed);
   }, []);
+  // Around one note: Rings (the note in the middle) or the Canvas. Follows the account too.
+  const [aroundLayout, setAroundLayoutState] = useState<AroundLayout>(readAroundLayout);
+  useEffect(() => {
+    const changed = (event: StorageEvent) => { if (event.key === null || event.key === "margin-chat:explore-around-layout") setAroundLayoutState(readAroundLayout()); };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, []);
+  function chooseAroundLayout(layout: AroundLayout) { setAroundLayoutState(layout); writeAroundLayout(layout); setSidePane(null); }
   // Where Explore starts: your notes, Wikipedia, or a topic AI splits up. Follows the account too.
   const [exploreSource, setExploreSourceState] = useState<ExploreSource>(readExploreSource);
   useEffect(() => {
@@ -322,6 +333,9 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   }
   const newPublicNote = (node: BrowseNode) => notePublic(node.label,
     node.article ? `Source: [${node.article} on Wikipedia](${wikipediaArticleUrl(node.article)})\n\n` : "");
+  const publicActions = { ask: askSubtopics, noteFor, onOpenNote: (id: string) => personalProps.onOpenConversation(id), onRead: setReaderTitle, onKeep: keepPublic,
+    onDetails: (node: BrowseNode) => setSidePane({ kind: "details", node }), onNewNote: newPublicNote,
+    ...(pathActions ? { onRoadmap: roadmapFor } : {}) };
   function roadmapFor(node: BrowseNode): string | null {
     if (!pathActions) return "Roadmaps are off. Turn them on in Settings → Features.";
     const goal = node.article ? `Learn ${node.label}: ${wikipediaArticleUrl(node.article)}` : `Learn ${node.label}`;
@@ -608,6 +622,19 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   </>;
   void addActions;
 
+  // Beside Explore: a Wikipedia article, Topic details, or a note you made from a topic.
+  const readerPane = sidePane?.kind === "wikipedia" ? <WikipediaPane title={sidePane.title} account={publicMapAccount} notes={passageNotes} onNotesChange={setPassageNotes}
+            onNavigate={setReaderTitle} onClose={() => setSidePane(null)}
+            onCreateDocument={(title, content) => Boolean(onCreateExploreDocument?.({ title, content }))}
+            onExplore={(text) => { if (publicMapAccount?.canAsk) chooseExploreSource({ kind: "ai", topic: text.replace(/\s+/gu, " ").trim().slice(0, 200) }); }}
+            onAddTopics={(_answer, article) => { setExploringFrom(article); setExploring(true); }} />
+            : sidePane?.kind === "details" ? <TopicDetailsPane node={sidePane.node} ask={askDetails} onSave={notePublic} onRead={setReaderTitle} onClose={() => setSidePane(null)} />
+            : sidePane?.kind === "document" ? <aside className="topic-explorer-pane is-document" aria-label="Note beside Explore">
+              {conversations[sidePane.id] && personalProps.renderDockedConversation ? <div className="conversation-graph-dock-body">
+                {personalProps.renderDockedConversation(sidePane.id, undefined, { leading: null, pinned: false, onTogglePin: () => undefined,
+                  onClose: () => setSidePane(null), onOpenDocument: (id) => setSidePane({ kind: "document", id }) })}
+              </div> : <p className="topic-explorer-pane-message" role="status">Opening your note…</p>}
+            </aside> : undefined;
   return <section ref={sectionRef} className="knowledge-graph-workspace" aria-label="Knowledge maps"
     onDragOver={(event) => { if (!event.defaultPrevented && event.dataTransfer.types.includes("text/uri-list")) { event.preventDefault(); event.dataTransfer.dropEffect = "link"; } }}
     onDrop={(event) => { if (event.defaultPrevented) return; const url = droppedLink(event); if (!url) return; event.preventDefault(); setSearchRequest({ query: url, requestId: ++counter.current }); }}>
@@ -664,23 +691,15 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         // Picking notes for a roadmap, or a roadmap lit on the map, needs the map itself.
         exploreLayout={picking || activePath ? "canvas" : exploreLayout} onExploreLayoutChange={picking || activePath ? undefined : chooseExploreLayout}
         exploreSourceMenu={renderSourceMenu}
+        aroundLayout={aroundLayout} onAroundLayoutChange={chooseAroundLayout}
+        renderAround={({ centerId, neighbours, leading, select }) => <AroundRings center={{ id: centerId, title: conversations[centerId]?.title?.trim() || "Untitled" }}
+          neighbours={neighbours} titleOf={(id) => conversations[id]?.title?.trim() || "Untitled"}
+          textOf={(id) => conversations[id] ? getCurrentDocumentText(conversations[id]).slice(0, 20000) : ""}
+          leading={leading} actions={publicActions} reader={readerPane} onSelect={(id) => { setSidePane(null); select(id); }} />}
         renderPublicExplore={exploreSource.kind === "notes" ? undefined : (layout, leading) => <ExplorePublic source={exploreSource} layout={layout} leading={leading} sourceMenu={renderSourceMenu}
           onPlace={(place) => { publicPlace.current = place; }}
-          actions={{ ask: askSubtopics, noteFor, onOpenNote: (id) => personalProps.onOpenConversation(id), onRead: setReaderTitle, onKeep: keepPublic,
-            onDetails: (node) => setSidePane({ kind: "details", node }), onNewNote: newPublicNote,
-            ...(pathActions ? { onRoadmap: roadmapFor } : {}) }}
-          reader={sidePane?.kind === "wikipedia" ? <WikipediaPane title={sidePane.title} account={publicMapAccount} notes={passageNotes} onNotesChange={setPassageNotes}
-            onNavigate={setReaderTitle} onClose={() => setSidePane(null)}
-            onCreateDocument={(title, content) => Boolean(onCreateExploreDocument?.({ title, content }))}
-            onExplore={(text) => { if (publicMapAccount?.canAsk) chooseExploreSource({ kind: "ai", topic: text.replace(/\s+/gu, " ").trim().slice(0, 200) }); }}
-            onAddTopics={(_answer, article) => { setExploringFrom(article); setExploring(true); }} />
-            : sidePane?.kind === "details" ? <TopicDetailsPane node={sidePane.node} ask={askDetails} onSave={notePublic} onRead={setReaderTitle} onClose={() => setSidePane(null)} />
-            : sidePane?.kind === "document" ? <aside className="topic-explorer-pane is-document" aria-label="Note beside Explore">
-              {conversations[sidePane.id] && personalProps.renderDockedConversation ? <div className="conversation-graph-dock-body">
-                {personalProps.renderDockedConversation(sidePane.id, undefined, { leading: null, pinned: false, onTogglePin: () => undefined,
-                  onClose: () => setSidePane(null), onOpenDocument: (id) => setSidePane({ kind: "document", id }) })}
-              </div> : <p className="topic-explorer-pane-message" role="status">Opening your note…</p>}
-            </aside> : undefined} />}
+          actions={publicActions}
+          reader={readerPane} />}
         // Roadmaps are reached from Tile view's Roadmaps tab and Learn; Learn's header names the roadmap on screen, as a menu.
         menuItems={menuActions} menuFooter={moreFeatures} scopeRequest={scopeRequest}
         focusRequest={personalProps.focusRequest ?? personalFocus}
