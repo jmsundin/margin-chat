@@ -72,6 +72,8 @@ interface ThreadSidebarProps {
   onOpenAgentInbox?: () => void;
   /** Start the guided tour from the beginning. */
   onTakeTour?: () => void;
+  /** Opens Help: guides to using Margin Chat. */
+  onOpenHelp?: () => void;
   /** Opens Settings → Features, where the tools beyond the essentials are switched on. */
   onMoreFeatures?: () => void;
   onOpenProfile: () => void;
@@ -389,6 +391,7 @@ export default function ThreadSidebar({
   agentInboxCount = 0,
   onOpenAgentInbox,
   onTakeTour,
+  onOpenHelp,
   onMoreFeatures,
   onOpenProfile,
   onOpenSearch,
@@ -1110,6 +1113,9 @@ export default function ThreadSidebar({
               {onTakeTour ? <button type="button" className="sidebar-workspace-action" onClick={() => {
                 closeWorkspaceActions(); onTakeTour();
               }}><span>Take the tour</span></button> : null}
+              {onOpenHelp ? <button type="button" className="sidebar-workspace-action" aria-keyshortcuts="F1" onClick={() => {
+                closeWorkspaceActions(); onOpenHelp();
+              }}><span>Help and guides</span></button> : null}
               {onOpenInbox ? (
                 <button
                   className="sidebar-workspace-action"
