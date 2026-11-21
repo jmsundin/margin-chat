@@ -25,6 +25,8 @@ import { MAX_VAULT_FILE_BYTES, vaultQuotaFor } from "../vault/index.mjs";
 import { createRequestAbortScope, handleChatRequest, writeChatStreamEvent } from "./chat.mjs";
 import { chatRunId, createChatRunService } from "../chat/runs.mjs";
 import { matchApiRoute } from "./registry.mjs";
+import { isLocalMode, isLocalUser } from "../local/mode.mjs";
+import { parseAzureSpeechKey } from "../apiKeys/index.mjs";
 import { createUrlMapService } from "../urlMap/index.mjs";
 import { fetchPublicImage, normalizePublicPageUrl, readPublicPage } from "../urlMap/page.mjs";
 import { handleUrlMapRequest } from "./urlMap.mjs";
@@ -63,9 +65,21 @@ export const VAULT_READ_ONLY_ROUTES = new Set(["vaultStatus", "vaultFileRead"]);
 
 export function canUseCloudWorkspaceStorage(user) {
   return (
-    user?.role === "admin" || user?.billing?.accessKind === "subscription"
+    user?.role === "admin" || user?.billing?.accessKind === "subscription" || isLocalUser(user)
   );
 }
+
+/**
+ * Account, billing and connector routes have nothing to do in the desktop app's local mode:
+ * there is no account, and nothing here can be reached from another computer.
+ */
+export const LOCAL_MODE_UNAVAILABLE_ROUTES = new Set([
+  "billingWebhook", "billingCheckout", "billingUpgrade", "billingTopUp", "billingDashboard", "billingConfirm", "billingPortal",
+  "authSignup", "authLogin", "passwordResetRequest", "passwordResetConfirm", "emailVerify", "authLogout",
+  "passwordChange", "emailVerificationRequest", "accountDelete",
+  "extensionSession", "captureCreate", "captureToken", "captureList", "captureGet",
+  "oauthProtectedResource", "oauthRegister", "oauthAuthorization", "mcp", "mcpTokens",
+]);
 
 const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
 // Failed-login budgets are per client address and per account email; signup and
@@ -160,6 +174,7 @@ export function createApiHandler({
   errorReporter = createErrorReporter({ env }),
 }) {
   const fallbackHost = `${runtimeConfig.host}:${runtimeConfig.port}`;
+  const localMode = isLocalMode(env);
 
   const executeChatReply = createChatExecutionService({ apiKeyService, billingService, chatService, database });
   const chatRuns = chatRunService ?? (typeof database?.saveChatRun === "function" ? createChatRunService({ database }) : null);
@@ -259,6 +274,9 @@ export function createApiHandler({
 
       // Vercel rewrites /.well-known/* to /api/well-known/*; the local server receives it as is.
       const route = matchApiRoute(request.method, url.pathname.replace(/^\/\.well-known\//u, "/api/well-known/"));
+      if (localMode && LOCAL_MODE_UNAVAILABLE_ROUTES.has(route?.id)) {
+        throw new HttpError(404, "This copy of Margin Chat runs on your computer without an account.");
+      }
 
       if (route?.id === "health") {
         try {
@@ -675,7 +693,7 @@ export function createApiHandler({
       }
 
       if (route?.id === "webSearch") {
-        await handleWebSearchRequest({ request, response, user: authContext.user, webSearch, workspaceCredential });
+        await handleWebSearchRequest({ request, response, user: authContext.user, webSearch, apiKeyService, workspaceCredential });
         return;
       }
 
@@ -918,6 +936,7 @@ export function createApiHandler({
           sendJson(response, 200, await languageLookup.lookup({
             userId: authContext.user.id, term: url.searchParams.get("term") ?? "", src: url.searchParams.get("src") ?? "", tgt: url.searchParams.get("tgt") ?? "",
             sentence: url.searchParams.get("sentence") ?? "", signal: scope.signal,
+            keys: apiKeyService ? await apiKeyService.getDecryptedKeys(authContext.user.id) : null,
           }), { "Cache-Control": "private, no-store" });
         } finally {
           scope.dispose();
@@ -928,9 +947,10 @@ export function createApiHandler({
       if (route?.id === "languageSpeech") {
         requireExpectedVaultAccount(request, authContext.user);
         if (!workspaceCredential && request.headers["sec-fetch-site"] === "cross-site") throw new HttpError(403, "Listen from Margin Chat.");
+        const ownSpeech = apiKeyService ? parseAzureSpeechKey((await apiKeyService.getDecryptedKeys(authContext.user.id)).azure_speech) : null;
         const { audio } = await languageSpeech.speak({
           userId: authContext.user.id, text: url.searchParams.get("text") ?? "", language: url.searchParams.get("language") ?? "",
-          slow: url.searchParams.get("slow") === "1",
+          slow: url.searchParams.get("slow") === "1", own: ownSpeech,
         });
         // The same sentence in the same voice never changes, so each device keeps its copy and pays for it once.
         response.writeHead(200, {

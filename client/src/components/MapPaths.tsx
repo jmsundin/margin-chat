@@ -19,9 +19,8 @@ export interface MapPathActions {
   /** One edit to a path; returns why it was refused, or null. */
   onChange(pathId: string, change: RoadmapChange): string | null;
   /** Explain a step with AI, or Dive deeper (the step becomes a path of its own); returns why it couldn't start, or null. */
-  onStepAI(pathId: string, docId: string, action: "explain" | "deeper"): string | null;
-  /** A lesson was opened from Learn: one with nothing to read yet gets its lesson written by AI. */
-  onLessonOpened?(pathId: string, docId: string, context: string): void;
+  /** `context` says where an explained lesson sits in its roadmap. AI writes only when asked here: opening a lesson never starts it. */
+  onStepAI(pathId: string, docId: string, action: "explain" | "deeper", context?: string): string | null;
   /** A stage opens as a document: its index of lessons, under the roadmap. */
   onOpenStage?(pathId: string, stageId: string): void;
   /** Keep or discard the path AI drafted; returns why it couldn't, or null. Drafts are kept on their own, so this is for older callers. */
@@ -287,7 +286,7 @@ export function MapPathStepStrip({ path, step, conversations, actions, docked = 
   const run = (reason: string | null) => onMessage(reason);
   const stepActions = <div className="map-path-actions">
     {docked ? null : <button type="button" onClick={() => onOpenStep(step.docId)}>Open</button>}
-    <button type="button" disabled={writing} onClick={() => run(actions.onStepAI(path.id, step.docId, "explain"))}>{writing ? "AI is writing…" : "✦ Explain"}</button>
+    <button type="button" disabled={writing} onClick={() => run(actions.onStepAI(path.id, step.docId, "explain", lessonContext(path, step)))}>{writing ? "AI is writing…" : "✦ Explain"}</button>
     {stepIsPath ? <button type="button" onClick={() => onGoIn(step.docId)}>Go into its path ›</button>
       : <button type="button" onClick={() => { const reason = actions.onStepAI(path.id, step.docId, "deeper"); run(reason ?? "AI is breaking this step into a path of its own. When it's done, Go into its path."); }}>↘ Dive deeper</button>}
   </div>;
@@ -315,7 +314,7 @@ export function MapPathStepStrip({ path, step, conversations, actions, docked = 
 }
 
 /** Where a lesson sits in its roadmap, for the AI writing it: its stage, what comes before and what it leads to. */
-export function lessonContext(path: MapPath, step: MapPathStep): string {
+function lessonContext(path: MapPath, step: MapPathStep): string {
   const title = (docId: string) => path.steps.find((item) => item.docId === docId)?.title ?? "";
   const before = step.needs.map(title).filter(Boolean), after = step.unlocks.map(title).filter(Boolean);
   return [`It is in the stage \u201c${step.stageTitle}\u201d.`, before.length ? `I learn these first: ${before.join(", ")}.` : "",

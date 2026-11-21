@@ -1,3 +1,5 @@
+import { trialDays } from "./plan.mjs";
+
 const KNOWN_BILLING_STATUSES = new Set([
   "active",
   "canceled",
@@ -101,6 +103,11 @@ export function mapBillingRow(row, env = process.env) {
       ? row.billing_price_id
       : null;
 
+  // Accounts made on the web pick a plan (a free trial with a card) before using the website.
+  const planRequired = Boolean(row?.web_plan_required) && accessKind !== "admin" && accessKind !== "subscription";
+  // One trial per account: an account that ever had a subscription pays from the start.
+  const freeTrialDays = row?.stripe_subscription_id ? 0 : trialDays(env);
+
   return {
     accessKind,
     cancelAtPeriodEnd: Boolean(row?.billing_cancel_at_period_end),
@@ -111,6 +118,10 @@ export function mapBillingRow(row, env = process.env) {
     plan: billingPlanForPriceId(priceId, env),
     priceId,
     status,
+    planRequired,
+    freeTrialDays,
+    // Cloud is offered only once its Stripe price is set (docs/billing.md).
+    cloudPlanAvailable: Boolean(env.STRIPE_CLOUD_PRICE_ID?.trim()),
     trialCallsLimit,
     trialCallsRemaining,
     trialCallsUsed,

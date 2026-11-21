@@ -25,7 +25,8 @@ function inputText(value, name, minimum, maximum) {
 }
 
 export function canAskPublicMap(user) {
-  return user?.role === "admin" || user?.billing?.hasAccess === true;
+  // Asking uses the person's own AI keys when they have them, as every other AI request does.
+  return user?.role === "admin" || user?.billing?.hasAccess === true || user?.apiKeys?.hasAny === true;
 }
 
 /** The client validates its own map shape; the server bounds size and version. */

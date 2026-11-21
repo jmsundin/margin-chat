@@ -126,6 +126,10 @@ import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
 import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import VaultFolderGate from "./components/VaultFolderGate";
 import AIControls from "./components/AIControls";
+import { collectAgentInbox, readDismissedAgentItems, saveDismissedAgentItems } from "./lib/agentInbox";
+import { dueHeldMessages, readHeldMessages, saveHeldMessages, MAX_HELD_MESSAGES, type HeldMessage } from "./lib/heldMessages";
+import StarterCards from "./components/StarterCards";
+import { applyPresetSettings, type AIPreset } from "./lib/aiPresets";
 import JevRelatedItems from "./components/JevRelatedItems";
 import { useJevAssistance, useJevPreference } from "./lib/useJevAssistance";
 import { useVaultPassageIndex } from "./lib/useVaultPassageIndex";
@@ -180,7 +184,7 @@ import AIAccessDialog from "./components/AIAccessDialog";
 import GuidedTour, { DESKTOP_TOUR, PHONE_TOUR, TourPill } from "./components/GuidedTour";
 import { chatImportReminderDue, finishChatImportReminder } from "./lib/chatImportReminder";
 import { NEW_DEVICE_NOTICE, loggedInThisTab } from "./lib/newDeviceNotice";
-import { completedStarterTasks, isPristineWorkspace, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
+import { completedStarterTasks, isPristineWorkspace, madeByPerson, seedStarterDocument, tickStarterTasks } from "./lib/starterDocument";
 import { loadOnboarding, saveOnboarding, type OnboardingRecord } from "./lib/onboarding";
 import { addExampleVault } from "./lib/exampleVault";
 import { addTrialTopics, loadTrialTopics } from "./lib/trialTopics";
@@ -251,6 +255,7 @@ import { VaultMediaContext } from "./lib/vaultMedia";
 import {
   getBackendServiceLabel,
   getBackendServiceModel,
+  isBackendServiceId,
   resolveBackendServiceModelId,
   supportsAgentMode,
   type RecentBackendServiceSelection,
@@ -308,6 +313,7 @@ import type {
 const KnowledgeGraphWorkspace = lazy(() => import("./components/KnowledgeGraphWorkspace"));
 // Help carries every guide's text; load it the first time it is opened.
 const HelpPanel = lazy(() => import("./components/HelpPanel"));
+const AgentInbox = lazy(() => import("./components/AgentInbox"));
 
 const EMPTY_SET: ReadonlySet<string> = new Set();
 
@@ -944,6 +950,12 @@ function WorkspaceAppContent({
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
   /** Help: the guides panel beside the workspace. */
   const [helpOpen, setHelpOpen] = useState(false);
+  /** The agent inbox: questions, drafts to approve and runs that stopped early, across every document. */
+  const [agentInboxOpen, setAgentInboxOpen] = useState(false);
+  const [dismissedAgentItems, setDismissedAgentItems] = useState(readDismissedAgentItems);
+  /** Hosted AI spending for the AI controls; absent for a guest or until billing has loaded. */
+  const aiUsage = useMemo(() => guest || !billingDashboard ? null
+    : { usedThisMonthMicros: billingDashboard.usageThisMonthMicros, balanceMicros: billingDashboard.balanceMicros }, [guest, billingDashboard]);
   const [chatImportReminder, setChatImportReminder] = useState(false);
   // The next time the app opens, this picture of the workspace shows while it starts.
   // Days after the first visit, someone who never brought in old chats is offered it once.
@@ -1010,6 +1022,8 @@ function WorkspaceAppContent({
   useEffect(() => {
     if (!billingOpenRequest) return;
     if (user.billing.accessKind === "none") { setAIAccessOpen(true); return; }
+    // No account here, so nothing to bill: AI runs on the person's own keys.
+    if (user.billing.accessKind === "local") { setProfileInitialTab("api-keys"); setProfileModalOpen(true); return; }
     setProfileInitialTab("billing");
     setProfileModalOpen(true);
   }, [billingOpenRequest]);
@@ -1033,6 +1047,29 @@ function WorkspaceAppContent({
     const request = source && createCaptureAIRequest(source, prompt);
     if (request) handleDocumentSubmit(conversationId, request);
   });
+  /** Send when…: questions held until a condition is met, then asked once. Kept on this device. */
+  const [heldMessages, setHeldMessages] = useState<HeldMessage[]>(() => readHeldMessages(storageUserId));
+  const updateHeldMessages = (next: HeldMessage[]) => { setHeldMessages(next); saveHeldMessages(storageUserId, next); };
+  const releaseHeldMessages = useEffectEvent(() => {
+    if (!heldMessages.length || !vault.ready) return;
+    const conversations = currentStateRef.current.conversations;
+    const { send, orphaned, keep } = dueHeldMessages(heldMessages, {
+      now: Date.now(),
+      hasDocument: (id) => Boolean(conversations[id]),
+      isBusy: (id) => Boolean(pendingConversationIds[id]) || chatExecutions.has(id),
+      synced: cloudSyncEnabled ? cloudBackupMatchesLocal : null,
+    });
+    if (!send.length && !orphaned.length) return;
+    // Forgotten before it is asked: a message that is sent can never be sent a second time.
+    updateHeldMessages(keep);
+    for (const message of send) submitCaptureAI(message.conversationId, message.prompt);
+  });
+  useEffect(() => {
+    if (!heldMessages.length) return;
+    releaseHeldMessages();
+    const timer = window.setInterval(releaseHeldMessages, 15_000);
+    return () => window.clearInterval(timer);
+  }, [heldMessages, pendingConversationIds, cloudBackupMatchesLocal, vault.ready]);
   useEffect(() => {
     if (!captureAIRequest || !state.conversations[captureAIRequest.conversationId]) return;
     setCaptureAIRequest(null);
@@ -1514,8 +1551,11 @@ function WorkspaceAppContent({
   // A brand-new, empty workspace becomes "Start here" and the tour begins, once per device.
   // Waiting for the cloud list keeps a new device from treating a full vault as empty.
   const vaultSettled = vault.ready && !vault.fetchStatus && !(vault.cloudDocuments?.length);
+  // The desktop app asks for a vault folder first: a folder that already holds notes must not get the
+  // sample documents written into it, so wait until one is open (or "Not now") before deciding.
+  const vaultFolderSettled = !vault.vaultFolderPrompt && !vaultFolderGateBusy;
   useEffect(() => {
-    if (!vaultSettled || inExtension || onboarding.checked) return;
+    if (!vaultSettled || !vaultFolderSettled || inExtension || onboarding.checked) return;
     if (isPristineWorkspace(state)) {
       setState((current) => seedStarterDocument(current));
       // A trial visitor starts working straight away; the trial bar's Tour button starts the tour.
@@ -1523,7 +1563,7 @@ function WorkspaceAppContent({
       // An existing Free account on an empty browser has its documents on another device.
       if (!canSyncWorkspaceToCloud(user) && loggedInThisTab(user.id)) setNewDeviceNotice(true);
     } else updateOnboarding({ checked: true });
-  }, [vaultSettled, inExtension, onboarding.checked]);
+  }, [vaultSettled, vaultFolderSettled, inExtension, onboarding.checked]);
   // A trial visitor also gets the example vault, once, so the Map and search have something to show.
   // Today's news topics come too when they arrive in time; without them the examples alone are enough.
   useEffect(() => {
@@ -1564,6 +1604,10 @@ function WorkspaceAppContent({
   }, [starterTasksKey]);
   // A vault this small belongs to someone new, so the views say what they are for.
   const newVault = guest || Object.keys(state.conversations).length <= 8;
+  const agentInboxItems = useMemo(() => collectAgentInbox(state.conversations, dismissedAgentItems), [state.conversations, dismissedAgentItems]);
+  /** Documents the person made, not the Start here page or the trial's examples. The starter cards go once there is one. */
+  const ownDocumentCount = useMemo(() => Object.values(state.conversations)
+    .filter((item) => !item.parentId && item.id !== state.rootId && madeByPerson(item.id)).length, [state.conversations, state.rootId]);
   const threadSummaries = useMemo(
     () => applyJevCategories(buildThreadSummaries(state.conversations), jev.categories).map((thread) => ({
         ...thread,
@@ -3889,6 +3933,16 @@ function WorkspaceAppContent({
       if (!conversation) return current;
       return { ...current, conversations: { ...current.conversations, [conversationId]: { ...conversation, ai: normalizeAISettings(ai), updatedAt: new Date().toISOString() } } };
     });
+  }
+
+  /** A run preset sets the model and the AI settings together; a model this build no longer offers keeps the document's own. */
+  function handleApplyAIPreset(conversationId: string, preset: AIPreset) {
+    const conversation = currentStateRef.current.conversations[conversationId];
+    if (!conversation) return;
+    if (isBackendServiceId(preset.serviceId) && (preset.serviceId !== conversation.serviceId || (preset.modelId ?? "") !== (conversation.modelId ?? ""))) {
+      handleModelChange(conversationId, preset.serviceId, preset.modelId ?? "");
+    }
+    handleAISettingsChange(conversationId, applyPresetSettings(preset, conversation.ai));
   }
 
   function handleAgentModeChange(conversationId: string, next: { enabled: boolean; budgetMicros: number }) {
@@ -6419,23 +6473,6 @@ function WorkspaceAppContent({
     showRoadmapOnMap(made.id);
   }
 
-  /** Lessons whose content AI was asked to write when they were first opened. */
-  const roadmapLessonsAsked = useRef(new Set<string>());
-  /** A lesson just opened from Learn: when it has nothing to read yet (a note the roadmap made), AI writes the lesson, once. */
-  const [lessonToWrite, setLessonToWrite] = useState<{ pathId: string; docId: string; context: string } | null>(null);
-  useEffect(() => {
-    if (!lessonToWrite) return;
-    const { pathId, docId, context } = lessonToWrite;
-    // Wait until the lesson is the open document, so writing into it can't pull the page back to the one before.
-    if (activeConversation.id !== docId) return;
-    setLessonToWrite(null);
-    const conversation = currentStateRef.current.conversations[docId];
-    if (!conversation || roadmapLessonsAsked.current.has(docId) || isHiddenFromAI(conversation) || pendingConversationIds[docId] || chatExecutions.has(docId)) return;
-    const editable = getEditableDocument(conversation);
-    if (editable.generations.length || plainPreview(editable.blocks.map((block) => block.content).join("\n\n")).length >= 600) return;
-    roadmapLessonsAsked.current.add(docId);
-    if (handleRoadmapStepAI(pathId, docId, "explain", context)) roadmapLessonsAsked.current.delete(docId);
-  }, [lessonToWrite, activeConversation.id]);
   /**
    * A roadmap stage opens as a document, like every other node: its index under the roadmap, made the
    * first time, with a link to each lesson. Lessons added since are linked at its end; the rest is the user's.
@@ -6485,9 +6522,8 @@ function WorkspaceAppContent({
     },
     onRevisePath: (pathId, request) => handleReviseRoadmap(pathId, request),
     onChange: handleRoadmapChange,
-    onStepAI: (pathId, docId, action) => handleRoadmapStepAI(pathId, docId, action),
+    onStepAI: (pathId, docId, action, context) => handleRoadmapStepAI(pathId, docId, action, context),
     // Handled after the lesson has opened, so it runs on the state that opened it.
-    onLessonOpened: (pathId, docId, context) => setLessonToWrite({ pathId, docId, context }),
     onOpenStage: handleOpenRoadmapStage,
     onDraftDecision: (pathId, messageId, proposalId, action) => handleAgentProposal(pathId, messageId, proposalId, action),
     onStopDraft: (pathId) => stopChatStream(pathId),
@@ -7157,7 +7193,8 @@ function WorkspaceAppContent({
       resolveWikiLink={(target) => resolveWikiLinkDocument(target, state.conversations, vault.cloudDocuments)}
       onOpenWikiLink={(document) => handleOpenWikiLink(conversation.id, document)}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
-      aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)} />}
+      aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)}
+        onApplyPreset={(preset) => handleApplyAIPreset(conversation.id, preset)} usage={aiUsage} />}
       agentMode={agentModeControls(conversation)} agentProgress={agentProgress[conversation.id]}
       hideAgentStatus={view === "chat" && conversation.nodeType === "roadmap" && Boolean(agentProgress[conversation.id])}
       recentModelSelections={recentModelSelections} theme={theme} anchors={documentAnchorLinks(conversation.id)}
@@ -7639,6 +7676,8 @@ function WorkspaceAppContent({
               onNewNote={handleCreateStandaloneNote}
               onOpenInbox={guest ? undefined : () => setCaptureInboxOpen(true)}
               onImportChatHistory={() => setHistoryImportOpen(true)}
+              agentInboxCount={agentInboxItems.length}
+              onOpenAgentInbox={() => { setAgentInboxOpen(true); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onTakeTour={inExtension ? undefined : startTour}
               onOpenHelp={() => { setHelpOpen(true); if (isMobileViewport) setLeftSidebarOpen(false); }}
               onOpenProfile={() => {
@@ -7769,7 +7808,7 @@ function WorkspaceAppContent({
                     onOpenExplorer={() => { setMapSidebarSection("explore"); setLeftSidebarOpen(true); }}
                     onFocusCanvas={() => { if (isMobileViewport) setLeftSidebarOpen(false); }}
                     urlMapAIOptions={{ serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai }}
-                    publicMapAccount={{ userId: user.id, canAsk: user.role === "admin" || user.billing.hasAccess, isAdmin: user.role === "admin",
+                    publicMapAccount={{ userId: user.id, canAsk: user.role === "admin" || user.billing.hasAccess || user.apiKeys.hasAny, isAdmin: user.role === "admin",
                       aiOptions: { serviceId: state.defaultServiceId, modelId: state.defaultModelId, ai: activeConversation.ai },
                       onBillingRefresh: () => { void onRefreshBilling(); }, onAuthExpired }}
                     onSavePublicTopic={handleSavePublicTopic}
@@ -7917,6 +7956,11 @@ function WorkspaceAppContent({
                   </div> : null) : desktopHeaderOpen && !showSpaceStart && !quietHeader ? renderDocumentBreadcrumbs() : null}
                   </header>
                   {isMobileViewport && mobileHeaderOpen ? <div className="document-header-backdrop" aria-hidden="true" onClick={() => setMobileHeaderOpen(false)} /> : null}
+                  {newVault && ownDocumentCount === 0 && vault.ready && !inExtension && !showMapModal ? <StarterCards
+                    onBringNotes={() => { setProfileSaveError(null); setProfileInitialTab("storage"); setProfileModalOpen(true); }}
+                    onAddFiles={(files) => { void vault.uploadFiles(files); }}
+                    onBringChats={() => setHistoryImportOpen(true)}
+                    onNewDocument={() => handleCreateMainConversation()} /> : null}
                   <div className={`document-workspace-with-search${showMapModal ? ` is-sheet-${shownSheet.mode} is-sheet-edge-${sheetEdge}` : ""}${sheetDragging ? " is-sheet-dragging" : ""}`} ref={documentAreaRef}
                     style={sheetDocked ? (sheetEdge === "top" ? { paddingTop: shownSheet.size + 20 } : { paddingLeft: shownSheet.size })
                       : undefined}>
@@ -8163,7 +8207,8 @@ function WorkspaceAppContent({
             onSelectModel={(serviceId, modelId) => handleModelChange(selectionConversation.id, serviceId, modelId)}
             contextControls={<AIControls conversation={selectionConversation} conversations={state.conversations}
               disabled={Boolean(pendingConversationIds[selectionConversation.id])}
-              onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)} />}
+              onChange={(settings) => handleAISettingsChange(selectionConversation.id, settings)}
+              onApplyPreset={(preset) => handleApplyAIPreset(selectionConversation.id, preset)} usage={aiUsage} />}
           /> : null}
 
           {versionHistory && state.conversations[versionHistory.id] ? (() => {
@@ -8309,6 +8354,20 @@ function WorkspaceAppContent({
               else if (action.kind === "search") handleOpenSearch();
               else setHistoryImportOpen(true);
             }} /></Suspense> : null}
+          {agentInboxOpen ? <Suspense fallback={null}><AgentInbox items={agentInboxItems}
+            onOpen={(id) => { setAgentInboxOpen(false); handleSelectConversation(id, { nextViewMode: "chat" }); }}
+            onProposal={(item, action) => handleAgentProposal(item.conversationId, item.messageId, item.proposal.id, action)}
+            held={{
+              messages: heldMessages,
+              titleOf: (id) => state.conversations[id]?.title || "Untitled",
+              target: activeConversation.vaultFile || isHiddenFromAI(activeConversation) ? null : { id: activeConversation.id, title: activeConversation.title || "Untitled" },
+              canWaitForSync: cloudSyncEnabled,
+              onHold: (prompt, condition) => updateHeldMessages([...heldMessages, { id: createId("held"), conversationId: activeConversation.id, prompt, condition,
+                createdAt: new Date().toISOString() }].slice(-MAX_HELD_MESSAGES)),
+              onCancel: (id) => updateHeldMessages(heldMessages.filter((message) => message.id !== id)),
+            }}
+            onClear={(id) => setDismissedAgentItems((current) => { const next = new Set(current).add(id); saveDismissedAgentItems(next); return next; })}
+            onClose={() => setAgentInboxOpen(false)} /></Suspense> : null}
           <SettingsPage
             initialTab={profileInitialTab}
             onOpenWebsiteSettings={onOpenWebsiteSettings}

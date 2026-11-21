@@ -398,3 +398,10 @@
 
 .sidebar-document-browser > .sidebar-sessions { display: flex; flex: 1; flex-direction: column; min-height: 0; overflow-y: auto; }
 .sidebar-document-browser > .sidebar-sessions[hidden] { display: none; }
+
+/* Something is waiting in the agent inbox, which opens from this menu. */
+.sidebar-more-button { position: relative; }
+.sidebar-more-badge {
+  align-items: center; background: var(--accent); border-radius: 999px; color: var(--bg, #fff); display: flex; font-size: 10px; font-weight: 700;
+  height: 15px; justify-content: center; line-height: 1; min-width: 15px; padding: 0 3px; pointer-events: none; position: absolute; right: -3px; top: -3px;
+}

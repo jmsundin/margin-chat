@@ -12510,6 +12510,19 @@ body .live-markdown-editor {
 .ai-controls-body > label.ai-agent-auto { display: flex; align-items: flex-start; gap: 6px; font-weight: 400; }
 .ai-agent-auto input { margin-top: 2px; }
 .ai-context-picker { display: grid; gap: 7px; }
+.ai-presets { display: grid; gap: 7px; }
+.ai-presets > label { display: grid; gap: 5px; font-weight: 500; }
+.ai-preset-actions, .ai-preset-form { display: flex; flex-wrap: wrap; gap: 6px; }
+.ai-preset-actions button, .ai-preset-form button {
+  padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 8px; color: var(--ink); background: transparent; font: inherit; cursor: pointer;
+}
+.ai-preset-actions button:disabled, .ai-preset-form button:disabled { cursor: default; opacity: .5; }
+.ai-preset-form input {
+  flex: 1; box-sizing: border-box; min-width: 120px; padding: 6px 8px; border: 1px solid var(--line-strong); border-radius: 8px;
+  color: var(--ink); background: var(--bg); font: inherit;
+}
+.ai-usage { margin: 0; font-variant-numeric: tabular-nums; }
+.ai-usage strong { color: var(--ink); font-weight: 600; }
 .ai-context-options { max-height: 180px; overflow-y: auto; display: grid; gap: 8px; }
 .ai-context-options small { margin-left: auto; }
 .ai-context-help { margin: 0; font-size: 11px; line-height: 1.5; }
@@ -13083,7 +13096,7 @@ body .live-markdown-editor {
 
 .settings-page-logout.is-guest {
   border: 1px solid var(--line);
-  color: var(--text);
+  color: var(--ink);
   padding: 0 10px;
   white-space: nowrap;
 }
@@ -13304,4 +13317,79 @@ body .live-markdown-editor {
 .settings-inline-link:disabled {
   cursor: default;
   opacity: 0.55;
+}
+
+/* The desktop app without an account offers sign-in here, in Log out's place (docs/desktop-local-mode.md). */
+.settings-page-signin {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  flex: 0 0 auto;
+  font: inherit;
+  font-size: 0.8rem;
+  height: 30px;
+  margin: -4px -4px 0 auto;
+  padding: 0 10px;
+}
+.settings-page-signin:hover:not(:disabled), .settings-page-signin:focus-visible { background: var(--bg); }
+.settings-page-signin:disabled { display: none; }
+
+/* Picking a plan (a free trial with a card) before the website opens. */
+.auth-loading-card.plan-picker {
+  max-width: 720px;
+}
+
+.plan-picker h1 {
+  font-size: clamp(2rem, 3.2vw, 3.2rem);
+}
+
+.plan-picker-plans {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  margin: 20px 0;
+}
+
+.plan-picker-plan {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 18px;
+}
+
+.plan-picker-plan h2 {
+  font-size: 1.15rem;
+  margin: 0;
+}
+
+.plan-picker-price {
+  margin: 0;
+}
+
+.plan-picker-price strong {
+  font-size: 1.6rem;
+}
+
+.plan-picker-plan ul {
+  display: grid;
+  flex: 1;
+  gap: 6px;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.plan-picker-free,
+.plan-picker-account {
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+
+.plan-picker a {
+  color: var(--accent);
 }

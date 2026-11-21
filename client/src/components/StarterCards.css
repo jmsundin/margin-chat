@@ -1,0 +1,15 @@
+/* Shown above the page of a nearly empty vault; it scrolls away with the document area's top. */
+.starter-cards { box-sizing: border-box; color: var(--ink); flex: none; margin: 12px auto 4px; max-width: 768px; padding: 0 16px; width: 100%; }
+.starter-cards > header { align-items: center; display: flex; justify-content: space-between; margin-bottom: 8px; }
+.starter-cards h2 { color: var(--muted); font-size: 13px; font-weight: 600; margin: 0; }
+.starter-cards-close { background: transparent; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; flex: none; font-size: 16px; height: 24px; line-height: 1; width: 24px; }
+.starter-cards-close:hover, .starter-cards-close:focus-visible { background: #8882; }
+.starter-cards > ul { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); list-style: none; margin: 0; padding: 0; }
+.starter-cards > ul > li { display: flex; }
+.starter-card {
+  background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; color: var(--ink); cursor: pointer; display: flex;
+  flex: 1; flex-direction: column; font: inherit; font-size: 13px; gap: 4px; line-height: 1.4; padding: 12px 14px; text-align: left;
+}
+.starter-card:hover, .starter-card:focus-visible { border-color: var(--ink); }
+.starter-card span { color: var(--muted); }
+@media (pointer: coarse) { .starter-cards-close { font-size: 20px; height: 44px; margin: -10px -10px -10px 0; width: 44px; } }

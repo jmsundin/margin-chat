@@ -4,7 +4,7 @@ import { billingStatusHasAccess, normalizeBillingStatus } from "./status.mjs";
 import {
   BILLING_PLAN, CLOUD_PLAN, CLOUD_PLAN_KEY, MONTHLY_PLAN_CENTS, MONTHLY_PLAN_MICROS, MONTHLY_PLAN_KEY,
   invoiceLinePriceId, invoiceSubscriptionId, isCloudPrice, isMonthlyPrice, monthlyInvoiceLine,
-  requireSubscriptionPlan, stripeId, topUpAmount, validateTopUpCents,
+  requireSubscriptionPlan, stripeId, topUpAmount, trialCreditMicros, trialDays, validateTopUpCents,
 } from "./plan.mjs";
 import { verifyInvoicePayments, verifyPaymentIntent } from "./payments.mjs";
 
@@ -279,11 +279,19 @@ export function createBillingService({ database, env, stripeClient = null }) {
     const { customerId } = await ensureCustomerForUser(user);
     const origin = getRequestOrigin(request, env);
     const planKey = plan === "cloud" ? CLOUD_PLAN_KEY : MONTHLY_PLAN_KEY;
+    // An account's first plan starts with a free trial. The card is taken now and charged when the trial
+    // ends; a trial that ends without a card on file cancels instead of running unpaid.
+    const freeDays = account.stripeSubscriptionId ? 0 : trialDays(env);
+    const trial = freeDays > 0 ? {
+      trial_period_days: freeDays,
+      trial_settings: { end_behavior: { missing_payment_method: "cancel" } },
+    } : {};
     const session = await stripe.checkout.sessions.create({
       mode: "subscription", customer: customerId, client_reference_id: user.id,
       line_items: [lineItem], allow_promotion_codes: false, payment_method_types: ["card"],
+      ...(freeDays > 0 ? { payment_method_collection: "always" } : {}),
       metadata: { purchaseKind: "subscription", planKey, userId: user.id },
-      subscription_data: { metadata: { purchaseKind: "subscription", planKey, userId: user.id } },
+      subscription_data: { metadata: { purchaseKind: "subscription", planKey, userId: user.id }, ...trial },
       cancel_url: `${origin}/?checkout=subscription_canceled`,
       success_url: `${origin}/?checkout=subscription_success&session_id={CHECKOUT_SESSION_ID}`,
     });
@@ -333,6 +341,16 @@ export function createBillingService({ database, env, stripeClient = null }) {
     return { credited, amountMicros: MONTHLY_PLAN_MICROS, status: normalizeBillingStatus(subscription.status) };
   }
 
+  /** The small hosted AI allowance a Cloud + AI trial comes with, granted once per account. */
+  async function grantTrialCredit(userId, subscriptionId) {
+    const amountMicros = trialCreditMicros(env);
+    if (!amountMicros) return null;
+    const credited = await database.grantTrialCredit({
+      userId, amountMicros, ledgerId: randomUUID(), description: "Free trial AI allowance", metadata: { subscriptionId },
+    });
+    return { credited, amountMicros: credited ? amountMicros : 0 };
+  }
+
   async function fulfillCheckout(session, expectedUserId = null) {
     const userId = checkoutUserId(session);
     if (!userId || (expectedUserId && userId !== expectedUserId)) throw new HttpError(403, "This Stripe Checkout Session does not belong to your purchase.");
@@ -347,12 +365,17 @@ export function createBillingService({ database, env, stripeClient = null }) {
       if (!plan) {
         throw new HttpError(409, "This Checkout Session does not contain a Margin Chat monthly plan.");
       }
+      const status = normalizeBillingStatus(subscription.status);
+      // A free trial: nothing is paid yet, the card is on file and is charged when the trial ends.
+      if (session.status === "complete" && session.payment_status === "no_payment_required" && status === "trialing") {
+        const trial = plan === "plus" ? await grantTrialCredit(account.id, subscription.id) : null;
+        return { confirmed: true, purchaseKind: "subscription", plan, trial: true, credited: Boolean(trial?.credited), amountMicros: trial?.amountMicros ?? 0, status };
+      }
       if (session.status !== "complete" || session.payment_status !== "paid" || !stripeId(session.invoice)) {
-        return { confirmed: false, status: normalizeBillingStatus(subscription.status) };
+        return { confirmed: false, status };
       }
       if (plan === "cloud") {
         // Cloud grants storage and sync, not credit, so a paid, active subscription is the whole purchase.
-        const status = normalizeBillingStatus(subscription.status);
         if (!billingStatusHasAccess(status)) return { confirmed: false, status };
         return { confirmed: true, purchaseKind: "subscription", plan, credited: false, amountMicros: 0, status };
       }
@@ -425,6 +448,17 @@ export function createBillingService({ database, env, stripeClient = null }) {
     if (plan === "plus") throw new HttpError(409, "You're already on Plus.");
     if (plan !== "cloud" || !billingStatusHasAccess(normalizeBillingStatus(current.status))) {
       throw new HttpError(409, "Only an active Cloud plan can be upgraded here. Manage your subscription in Stripe instead.");
+    }
+    if (normalizeBillingStatus(current.status) === "trialing") {
+      // During the free trial the plan just changes: nothing is charged until the trial ends, then $20 a month.
+      const updated = await stripe.subscriptions.update(current.id, {
+        items: [{ id: current.items.data[0].id, price: configuredPriceId, quantity: 1 }],
+        proration_behavior: "none", cancel_at_period_end: false,
+        metadata: { ...current.metadata, purchaseKind: "subscription", planKey: MONTHLY_PLAN_KEY, userId: account.id },
+      }, { idempotencyKey: `margin-upgrade:${current.id}:${account.billingRevision}` });
+      await retrieveAndSyncSubscription(updated.id, account.id);
+      const trial = await grantTrialCredit(account.id, updated.id);
+      return { upgraded: true, plan: "plus", trial: true, credited: Boolean(trial?.credited), amountMicros: trial?.amountMicros ?? 0 };
     }
     let updated;
     try {

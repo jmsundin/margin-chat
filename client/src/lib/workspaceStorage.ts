@@ -11,7 +11,9 @@ import {
 import { createWorkspaceDocument } from "./workspaceModel";
 import { validVaultPath, type DirectoryFileStat, type DirectoryStats, type VaultFile } from "./vaultTypes";
 import { scanWhileFolderSettles } from "./fileSnapshot";
-import { decodeVaultFsText, isIgnoredVaultPath, joinVaultFsPath, type VaultFs, type VaultFsStat } from "@margin-chat/vault-sync";
+import {
+  decodeVaultFsText, evictedFileName, evictedPlaceholderPath, isIgnoredVaultPath, joinVaultFsPath, type VaultFs, type VaultFsStat,
+} from "@margin-chat/vault-sync";
 import { toVaultFs } from "./vaultFsAccess";
 import { desktopVaultBridge, desktopVaultFs, isDesktopVaultFs, unwrap, type DesktopVaultFs } from "./vaultFsDesktop";
 import { isDesktopApp } from "./platform";
@@ -83,7 +85,8 @@ export interface LocalDirectoryWorkspace {
 }
 
 export function canSyncWorkspaceToCloud(user: AuthenticatedUser) {
-  return user.role === "admin" || user.billing.accessKind === "subscription";
+  // In the desktop app's local mode the "cloud" is the app's own server on this computer.
+  return user.role === "admin" || user.billing.accessKind === "subscription" || user.billing.accessKind === "local";
 }
 
 export function isRecoverableCloudSyncError(error: unknown) {
@@ -558,7 +561,11 @@ export async function writeConnectedDirectoryWorkspace(
   for (const path of changes) {
     // Check once more immediately before changing a file, from its bytes on disk; external editors do not share our queue.
     const current = await readDirectoryFileOrNull(handle, path);
-    if (current !== (diskFiles[path] ?? null)) throw new LocalDirectoryConflictError([path]);
+    if (current !== (diskFiles[path] ?? null)) {
+      // A note kept only in iCloud has to come back before it changes, or iCloud would keep both as a conflict.
+      if (current === null && await isEvictedFromFolder(handle, path)) await handle.download?.(path).catch(() => undefined);
+      throw new LocalDirectoryConflictError([path]);
+    }
     const next = desiredFiles[path];
     delete stats[path];
     if (next === undefined) await removeDirectoryFile(handle, path);
@@ -698,7 +705,14 @@ export async function readConnectedDirectoryCompanions(
     const stat = knownStats?.[path];
     if (record && stat) {
       const file = await directoryFileInfoOrNull(handle, path);
-      if (!file) continue;
+      if (!file) {
+        // Kept only in iCloud: still there, as last read.
+        if (await isEvictedFromFolder(handle, path)) {
+          reused[path] = record;
+          stats[path] = stat;
+        }
+        continue;
+      }
       if (unchangedSince(file, stat)) {
         reused[path] = record;
         stats[path] = stat;
@@ -706,7 +720,10 @@ export async function readConnectedDirectoryCompanions(
       }
     }
     const read = await readDirectoryBytesWithStat(handle, path);
-    if (!read) continue;
+    if (!read) {
+      if (record && await isEvictedFromFolder(handle, path)) reused[path] = record;
+      continue;
+    }
     bytesByPath.set(path, read.bytes);
     if (read.stat) stats[path] = read.stat;
   }
@@ -784,6 +801,16 @@ export async function syncConnectedDirectoryCompanions(
   const changes: string[] = [];
   for (const path of paths) {
     const current = await readDirectoryBytesWithStat(handle, path);
+    if (!current && expected[path] && await isEvictedFromFolder(handle, path)) {
+      // Kept only in iCloud. Left alone, it stays as it was; to change it, it has to come back first.
+      if (sameCompanion(next[path], expected[path])) {
+        if (knownStats?.[path]) stats[path] = knownStats[path];
+        continue;
+      }
+      await handle.download?.(path).catch(() => undefined);
+      conflicts.push(path);
+      continue;
+    }
     if (!sameBytes(current?.bytes ?? null, expectedBytes.get(path)!)) conflicts.push(path);
     else if (!sameBytes(nextBytes.get(path)!, expectedBytes.get(path)!)) changes.push(path);
     else if (current?.stat) stats[path] = current.stat;
@@ -806,7 +833,8 @@ async function collectCompanionPaths(fs: VaultFs, prefix: string, paths: string[
     const path = `${prefix}/${name}`;
     if (!validVaultPath(path)) throw new Error(`Invalid vault companion path: ${path}`);
     if (kind === "directory") await collectCompanionPaths(fs, path, paths);
-    else paths.push(path);
+    // Placeholders and system or editor files aren't the vault's (.margin-chat is always ignored as a folder, so ask by name).
+    else if (!isIgnoredVaultPath(name)) paths.push(path);
   }
 }
 
@@ -825,6 +853,11 @@ function bytesToBase64(bytes: Uint8Array) {
 function sameBytes(left: Uint8Array | null, right: Uint8Array | null) {
   return left === null || right === null ? left === right
     : left.length === right.length && left.every((byte, index) => byte === right[index]);
+}
+
+/** Whether iCloud keeps `path` only in the cloud, with its placeholder left in the folder. */
+async function isEvictedFromFolder(fs: VaultFs, path: string) {
+  return !!await fs.stat(evictedPlaceholderPath(path)).catch(() => null);
 }
 
 function directoryFileInfoOrNull(fs: VaultFs, path: string): Promise<VaultFsStat | null> {
@@ -876,8 +909,13 @@ async function scanMarkdownDirectory(fs: VaultFs, known?: { files: Record<string
   const modifiedAt: Record<string, string> = {};
   const stats: DirectoryStats = {};
   let latestModified = 0;
+  const evicted: string[] = [];
   for await (const { name, kind } of fs.list(prefix)) {
-    if (name.startsWith(".")) continue;
+    if (name.startsWith(".")) {
+      const original = kind === "file" ? evictedFileName(name) : null;
+      if (original) evicted.push(joinVaultFsPath(prefix, original));
+      continue;
+    }
     const path = joinVaultFsPath(prefix, name);
     if (/^(?:attachments|_conflicts|\.margin-chat)(?:\/|$)/i.test(path)) continue;
     if (kind === "directory") {
@@ -908,6 +946,15 @@ async function scanMarkdownDirectory(fs: VaultFs, known?: { files: Record<string
       if (lastModified > 0) modifiedAt[path] = new Date(lastModified).toISOString();
       latestModified = Math.max(latestModified, lastModified);
     }
+  }
+  // A note iCloud keeps only in the cloud is still there: it keeps the text it was last read with. One never
+  // read here is asked for, and is taken in once it arrives.
+  for (const path of evicted) {
+    if (Object.hasOwn(files, path) || !isSafeMarkdownPath(path)) continue;
+    if (known && Object.hasOwn(known.files, path)) {
+      files[path] = known.files[path];
+      if (Object.hasOwn(known.stats, path)) stats[path] = known.stats[path];
+    } else await fs.download?.(path).catch(() => undefined);
   }
   return { files, modifiedAt, stats, latestModified };
 }

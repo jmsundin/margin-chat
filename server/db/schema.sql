@@ -1997,3 +1997,26 @@ alter table marginchat_language_terms add column if not exists fragment text not
 alter table marginchat_language_terms add column if not exists srs jsonb;
 alter table marginchat_language_terms add column if not exists srs_due_at timestamptz;
 create index if not exists marginchat_language_terms_due_idx on marginchat_language_terms(user_id, language, srs_due_at) where srs_due_at is not null;
+
+-- People can bring their own keys for web search, translation and read-aloud voices too,
+-- so the desktop app without an account (and any plan) has every feature.
+alter table marginchat_user_api_keys
+  drop constraint if exists marginchat_user_api_keys_provider_check;
+alter table marginchat_user_api_keys
+  add constraint marginchat_user_api_keys_provider_check check (
+    provider in ('openai', 'anthropic', 'gemini', 'huggingface', 'xai', 'meta', 'tavily', 'deepl', 'google_translate', 'azure_speech')
+  );
+
+-- Signing up on the web starts a free trial with a card (Cloud or Cloud + AI). Accounts made before
+-- this keep using the web as they did; new ones pick a plan first. The desktop app needs no account.
+alter table marginchat_users
+  add column if not exists web_plan_required boolean not null default false;
+-- A Cloud + AI trial comes with a small hosted AI allowance, once per account.
+alter table marginchat_billing_ledger
+  drop constraint if exists marginchat_billing_ledger_entry_type_check;
+alter table marginchat_billing_ledger
+  add constraint marginchat_billing_ledger_entry_type_check check (
+    entry_type in ('stripe_credit_purchase', 'stripe_subscription_credit', 'hosted_request', 'hosted_request_refund', 'stripe_payment_reversal', 'trial_credit')
+  );
+create unique index if not exists marginchat_billing_ledger_trial_credit_idx
+  on marginchat_billing_ledger (user_id) where entry_type = 'trial_credit';

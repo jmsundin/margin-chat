@@ -381,7 +381,7 @@ export function createChatService({ database, documentService, env, runtimeConfi
         semanticWarnings.push(...analysis.warnings.filter((warning) => typeof warning === "string").slice(0, 8).map((warning) => warning.slice(0, 500)));
       }
       routes = applySemanticRouting(chatRequest, routes, runtimeConfig, analysis, candidates,
-        automatic ? { label: AUTO_ROUTER_LABEL, method: "astra", version: "astra-low-v1" } : undefined);
+        automatic ? { label: AUTO_ROUTER_LABEL, method: "luna", version: "luna-low-v1" } : undefined);
       const permittedIds = new Set(semanticRequest.workspaceContext.map((item) => item.id));
       const ordering = new Map();
       for (const id of Array.isArray(analysis?.contextOrder) ? analysis.contextOrder : []) {

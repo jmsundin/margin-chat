@@ -260,7 +260,7 @@ export function isFresh(row, ttl, now) {
 export function createLanguageLookupService({ database, env = process.env, fetchImpl = globalThis.fetch, now = () => Date.now(), wiktionary, translator } = {}) {
   const contact = env.WIKIMEDIA_CONTACT?.trim() || env.SUPPORT_EMAIL?.trim() || "support@marginchat.com";
   const source = wiktionary ?? createWiktionarySource({ fetchImpl, now, userAgent: `MarginChat/1.0 (https://www.marginchat.com; ${contact})` });
-  const machine = translator === undefined ? machineTranslatorFor(env, fetchImpl) : translator;
+  const serverMachine = translator === undefined ? machineTranslatorFor(env, fetchImpl) : translator;
   const used = new Map();
 
   const read = async (key) => { try { return await database.readLookupCache(key); } catch { return null; } };
@@ -300,7 +300,15 @@ export function createLanguageLookupService({ database, env = process.env, fetch
     }
   }
 
-  async function machineFor({ userId, term, sentence, src, tgt, signal }) {
+  /** The person's own DeepL or Google key comes first: it is their account, so no daily cap here. */
+  function ownTranslator(keys) {
+    if (keys?.deepl?.trim()) return createDeepLTranslator({ apiKey: keys.deepl.trim(), fetchImpl });
+    if (keys?.google_translate?.trim()) return createGoogleTranslator({ apiKey: keys.google_translate.trim(), fetchImpl });
+    return null;
+  }
+
+  async function machineFor({ userId, term, sentence, src, tgt, signal, own = null }) {
+    const machine = own ?? serverMachine;
     if (!machine) return null;
     const texts = [term, ...(sentence && sentence !== term ? [sentence] : [])];
     const keys = texts.map((text) => ({ source: machine.provider, srcLang: src.split("-")[0], tgtLang: tgt.split("-")[0], term: cacheTerm(text) }));
@@ -312,8 +320,8 @@ export function createLanguageLookupService({ database, env = process.env, fetch
       const tally = used.get(userId);
       const spent = tally?.day === day ? tally.characters : 0;
       const size = wanted.reduce((total, item) => total + item.text.length, 0);
-      if (spent + size > MACHINE_DAILY_CHARACTERS) throw new Error("Today's machine translation limit is used up.");
-      used.set(userId, { day, characters: spent + size });
+      if (!own && spent + size > MACHINE_DAILY_CHARACTERS) throw new Error("Today's machine translation limit is used up.");
+      if (!own) used.set(userId, { day, characters: spent + size });
       const translated = await machine.translate({ texts: wanted.map((item) => item.text), source: src, target: tgt, signal });
       await Promise.all(wanted.map((item, at) => { answers[item.index] = translated[at]; return save(keys[item.index], { text: translated[at] }); }));
     }
@@ -321,7 +329,8 @@ export function createLanguageLookupService({ database, env = process.env, fetch
   }
 
   /** Never throws for a source's failure: that source is null and `failed` names it. */
-  async function lookup({ userId, term, src, tgt, sentence = "", signal }) {
+  async function lookup({ userId, term, src, tgt, sentence = "", signal, keys = null }) {
+    const own = ownTranslator(keys);
     const clean = normalizeTerm(term);
     if (!clean || clean.length > LOOKUP_MAX_TERM) throw new HttpError(400, `Look up a word or a short phrase, at most ${LOOKUP_MAX_TERM} characters.`);
     if (!LANGUAGE.test(src ?? "") || !LANGUAGE.test(tgt ?? "")) throw new HttpError(400, "Say which language the text is in and which to translate into.");
@@ -329,13 +338,13 @@ export function createLanguageLookupService({ database, env = process.env, fetch
     const failed = [];
     const [entry, translation] = await Promise.all([
       wiktionaryFor(clean, src, signal).catch(() => { failed.push("wiktionary"); return null; }),
-      machineFor({ userId, term: clean, sentence: context, src, tgt, signal }).catch(() => { failed.push("machine"); return null; }),
+      machineFor({ userId, term: clean, sentence: context, src, tgt, signal, own }).catch(() => { failed.push("machine"); return null; }),
     ]);
     const found = entry && !entry.missing ? entry : null;
     return {
       term: clean, resolvedTerm: found?.resolvedTerm ?? clean, ...(found?.lemma ? { lemma: found.lemma.term } : {}),
       wiktionary: found ? { senses: found.senses, url: found.url, lemma: found.lemma } : null,
-      machine: translation, machineAvailable: Boolean(machine), failed,
+      machine: translation, machineAvailable: Boolean(own ?? serverMachine), failed,
     };
   }
 

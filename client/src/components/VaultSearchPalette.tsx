@@ -2,7 +2,7 @@ import { useDeferredValue, useEffect, useId, useRef, useState, type KeyboardEven
 import { createPortal } from "react-dom";
 import { getCurrentDocumentText } from "../lib/documentSources";
 import {
-  vaultSearchTerms, type VaultSearchDocumentHit, type VaultSearchPassageHit, type VaultSearchProvider,
+  vaultSearchTerms, type VaultFoundHit, type VaultSearchDocumentHit, type VaultSearchPassageHit, type VaultSearchProvider,
   type VaultSearchResults, type VaultSearchScope,
 } from "../lib/vaultSearch";
 import { useVaultSearchResults } from "../lib/useVaultSearchResults";
@@ -70,6 +70,25 @@ export function rankTitles(hits: VaultSearchDocumentHit[], query: string) {
   if (!typed) return hits;
   const rank = (title: string) => { const folded = newDocumentTitle(title).toLocaleLowerCase(); return folded === typed ? 0 : folded.startsWith(typed) ? 1 : 2; };
   return hits.map((hit, index) => ({ hit, index, rank: rank(hit.title) })).sort((a, b) => a.rank - b.rank || a.index - b.index).map(({ hit }) => hit);
+}
+const targetOf = (hit: VaultSearchDocumentHit) => hit.target.kind === "cloud" ? `cloud:${hit.target.path}` : `id:${hit.target.conversationId}`;
+/**
+ * Leaves out what "Found it" already shows: a title row for a document found above, and
+ * a passage that is only the document's own title heading, so one document is listed once.
+ */
+export function withoutRepeats(found: VaultFoundHit[], documents: VaultSearchDocumentHit[], passages: VaultSearchPassageHit[]) {
+  const shown = new Set(found.flatMap((entry) => entry.kind === "document" ? [targetOf(entry.hit)] : []));
+  const titleOnly = (hit: VaultSearchPassageHit) => sameTitle(hit.passage.replace(/^\s*#{1,6}\s+/u, ""), hit.title);
+  return {
+    documents: shown.size ? documents.filter((hit) => !shown.has(targetOf(hit))) : documents,
+    passages: passages.filter((hit) => !titleOnly(hit)),
+  };
+}
+/** "2 titles, 1 best match and 5 passages": best matches only when there are some, and after "Found it" any count of nothing. */
+function countsLine(afterFound: boolean, counts: [number, string, string][]) {
+  const parts = counts.filter(([count, one]) => count > 0 || (!afterFound && one !== "best match"))
+    .map(([count, one, many]) => `${count} ${count === 1 ? one : many}`);
+  return parts.length > 1 ? `${parts.slice(0, -1).join(", ")} and ${parts.at(-1)}` : parts[0] ?? "";
 }
 /** How long Enter waits for titles still coming from the cloud before it creates a document. */
 const CREATE_WAIT_MS = 1500;
@@ -169,11 +188,12 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
   }, [isOpen]);
 
   const searching = !!query.trim();
-  const documents = switcher ? rankTitles(results?.documents ?? [], query) : results?.documents ?? [];
-  const passages = switcher ? [] : results?.passages ?? [];
-  const related = searching && !switcher ? results?.related ?? [] : [];
   const found = searching && !switcher ? results?.found ?? null : null;
   const foundEntries = found?.hits ?? [];
+  const { documents, passages } = switcher
+    ? { documents: rankTitles(results?.documents ?? [], query), passages: [] }
+    : withoutRepeats(foundEntries, results?.documents ?? [], results?.passages ?? []);
+  const related = searching && !switcher ? results?.related ?? [] : [];
   const canAnswer = !!onAnswer && query.trim().length >= 3;
   // A question puts the answer first; otherwise it follows what was found.
   const answerFirst = canAnswer && (found?.question ?? /\?\s*$/u.test(query));
@@ -365,7 +385,9 @@ export default function VaultSearchPalette({ isOpen, variant = "search", onClose
       : `${documents.length} ${documents.length === 1 ? "title" : "titles"}${results?.complete === false ? " so far" : ""}${createEntry ? `. Shift+Enter creates “${createEntry.hit.title}”` : ""}`)
     : !searching ? "Recent documents. Type to search titles and passages in your whole vault."
     : stale ? "Searching…"
-    : `${foundEntries.length ? `Found ${foundEntries.length === 1 ? `“${foundEntries[0].hit.title}”` : `${foundEntries.length} documents on this`}. ` : ""}${documents.length} ${documents.length === 1 ? "title" : "titles"}${related.length ? `, ${related.length} best ${related.length === 1 ? "match" : "matches"}` : ""} and ${passages.length} ${passages.length === 1 ? "passage" : "passages"}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
+    : `${foundEntries.length ? `Found ${foundEntries.length === 1 ? `“${foundEntries[0].hit.title}”` : `${foundEntries.length} documents on this`}. ` : ""}${countsLine(foundEntries.length > 0, [
+      [documents.length, "title", "titles"], [related.length, "best match", "best matches"], [passages.length, "passage", "passages"],
+    ])}${results?.complete === false ? " so far" : ""}${results?.notice ? `. ${results.notice}` : ""}`;
 
   const createRow = createEntry ? <>
     {createFirst ? null : <li className="vault-search-section" role="presentation"><span>New</span><span/></li>}

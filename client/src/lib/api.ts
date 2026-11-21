@@ -1299,6 +1299,8 @@ export interface PlanUpgradeResult {
   upgraded: boolean;
   plan: BillingPlan;
   credited: boolean;
+  /** The account is in its free trial: nothing was charged, the plan just changed. */
+  trial?: boolean;
   amountMicros: number;
   user?: AuthenticatedUser;
 }

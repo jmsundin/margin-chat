@@ -12,6 +12,18 @@ export const BILLING_PLAN = Object.freeze({ monthlyAmountMicros: MONTHLY_PLAN_MI
 export const CLOUD_PLAN = Object.freeze({ monthlyPriceCents: CLOUD_PLAN_CENTS, currency: "usd", includesCreditMicros: 0 });
 export const SUBSCRIPTION_PLANS = Object.freeze(["plus", "cloud"]);
 
+/** Days free before the first charge when an account starts its first plan; 0 turns trials off. */
+export function trialDays(env = process.env) {
+  const value = Number(env.STRIPE_TRIAL_DAYS ?? 14);
+  return Number.isSafeInteger(value) && value >= 0 && value <= 90 ? value : 14;
+}
+
+/** Hosted AI allowance that comes with a Cloud + AI trial, once per account; 0 gives none. At most $20. */
+export function trialCreditMicros(env = process.env) {
+  const cents = Number(env.STRIPE_TRIAL_AI_CREDIT_CENTS ?? 200);
+  return Number.isSafeInteger(cents) && cents >= 0 && cents <= MONTHLY_PLAN_CENTS ? cents * 10_000 : 2_000_000;
+}
+
 export function requireSubscriptionPlan(value = "plus") {
   if (!SUBSCRIPTION_PLANS.includes(value)) throw new HttpError(400, "Choose the Cloud or Plus plan.");
   return value;

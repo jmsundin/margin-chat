@@ -15,6 +15,8 @@ extension/releases/
 desktop/release/
 # Built from desktop/sync by scripts/build-desktop-engine.mjs.
 desktop/vaultSyncEngine.mjs
+# Built from server/local by scripts/build-desktop-server.mjs.
+desktop/local-server/
 
 # Local tooling artifacts
 .codex-artifacts/

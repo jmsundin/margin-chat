@@ -263,5 +263,5 @@ export function MobileComposerViewport({ children }: { children: ReactNode }) {
   useEffect(() => registerComposer(), [registerComposer]);
   const viewport = useVisualViewport(true);
   const safeBottom = viewport.height < window.innerHeight - 100 ? "0px" : "env(safe-area-inset-bottom, 0px)";
-  return createPortal(<div className="mobile-composer-viewport" style={{ top: viewport.top, left: viewport.left, width: viewport.width, height: viewport.height, paddingBottom: `calc(20px + ${safeBottom})` }}>{children}</div>, document.body);
+  return createPortal(<div className="mobile-composer-viewport" data-mobile-composer style={{ top: viewport.top, left: viewport.left, width: viewport.width, height: viewport.height, paddingBottom: `calc(20px + ${safeBottom})` }}>{children}</div>, document.body);
 }

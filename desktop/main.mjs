@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu, net, powerMonitor, protocol, session, shell } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, net, powerMonitor, protocol, safeStorage, session, shell } from "electron";
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -9,6 +9,8 @@ import { createShellUpdater, DEFAULT_FEED } from "./shellUpdater.mjs";
 import { createVaultWatchers, registerVaultBridge } from "./vaultBridge.mjs";
 import { createVaultFolders } from "./vaultFolders.mjs";
 import { createVaultSyncManager } from "./vaultSync.mjs";
+import { startLocalBackend } from "./localMode.mjs";
+import { CAPABILITIES_PATH, MODE_PATHS, readAppMode, saveAppMode } from "./appMode.mjs";
 
 // The packaged app serves the built web client from margin://app and forwards
 // /api to the hosted backend, so the client keeps its same-origin relative fetches.
@@ -49,7 +51,17 @@ const PROXIED_PREFIXES = ["/api/", "/_vercel/"];
 const DROPPED_REQUEST_HEADERS = ["host", "origin", "referer", "cookie"];
 // The vault folder read and written by this process instead of the page (docs/desktop-vault-sync.md).
 // Off until it has been tried on real computers: start the app with MARGIN_DESKTOP_NATIVE_VAULT=1.
-const NATIVE_VAULT = process.env.MARGIN_DESKTOP_NATIVE_VAULT?.trim() === "1";
+// Local mode runs the whole app on this computer with no account (desktop/localMode.mjs,
+// docs/desktop-local-mode.md). New installs start in it; signing in switches to the website's account
+// (desktop/appMode.mjs). MARGIN_DESKTOP_LOCAL=1 or 0 picks one for development.
+const LOCAL_MODE = !DEV_URL && readAppMode({
+  userDataDir: app.getPath("userData"),
+  override: process.env.MARGIN_DESKTOP_LOCAL?.trim() || null,
+}) === "local";
+// Local mode reads and writes the vault folder from this process; it has no web page to sync it.
+const NATIVE_VAULT = LOCAL_MODE || process.env.MARGIN_DESKTOP_NATIVE_VAULT?.trim() === "1";
+/** Set once the in-app server is listening (local mode only). */
+let localBackend = null;
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -74,14 +86,16 @@ async function forwardToBackend(request, url) {
   for (const name of DROPPED_REQUEST_HEADERS) headers.delete(name);
   const hasBody = request.method !== "GET" && request.method !== "HEAD";
 
+  // Local mode: the app's own server, which knows nobody without the token and needs no cookie.
+  if (localBackend) for (const [name, value] of Object.entries(localBackend.headers)) headers.set(name, value);
   // net.fetch uses the default session's cookie jar, so the HttpOnly auth cookie
   // lives under the backend's domain and never reaches the renderer.
-  const response = await net.fetch(new URL(url.pathname + url.search, API_ORIGIN), {
+  const response = await net.fetch(new URL(url.pathname + url.search, localBackend?.origin ?? API_ORIGIN), {
     method: request.method,
     headers,
     body: hasBody ? request.body : undefined,
     duplex: hasBody ? "half" : undefined,
-    credentials: "include",
+    credentials: localBackend ? "omit" : "include",
   });
   const responseHeaders = new Headers(response.headers);
   responseHeaders.delete("set-cookie");
@@ -110,7 +124,9 @@ async function serveClientFile(url) {
 
   // The newest client first; older ones still serve chunks a page loaded before
   // an update asks for.
-  const dirs = clientBundles.dirs();
+  // Local mode keeps the client that came with this app: its server is the same version, and a
+  // newer client from the website could ask it for things it doesn't have yet.
+  const dirs = LOCAL_MODE ? [BUNDLED_CLIENT_DIR] : clientBundles.dirs();
   for (const dir of dirs) {
     const filePath = path.join(dir, pathname);
     if (filePath.startsWith(dir + path.sep) && (await isFile(filePath))) {
@@ -125,6 +141,10 @@ async function serveClientFile(url) {
 function handleAppRequest(request) {
   const url = new URL(request.url);
   if (url.pathname === INSTALL_UPDATE_PATH) return installShellUpdateNow();
+  if (url.pathname === CAPABILITIES_PATH) {
+    return Response.json({ modes: true, mode: LOCAL_MODE ? "local" : "account" }, { headers: { "Cache-Control": "no-store" } });
+  }
+  if (MODE_PATHS[url.pathname]) return switchAppMode(MODE_PATHS[url.pathname]);
   return isProxiedPath(url.pathname) ? forwardToBackend(request, url) : serveClientFile(url);
 }
 
@@ -316,6 +336,23 @@ function startClientUpdates() {
   app.on("browser-window-focus", () => { void check(); });
 }
 
+/** Signing in, or going back to no account, restarts the app in the other mode. */
+function switchAppMode(mode) {
+  if ((mode === "local") === LOCAL_MODE) return Response.redirect(`${APP_ORIGIN}/`, 302);
+  try {
+    saveAppMode({ userDataDir: app.getPath("userData"), mode });
+  } catch (error) {
+    return new Response(`Margin Chat couldn't switch: ${error instanceof Error ? error.message : error}`, { status: 500 });
+  }
+  // Signing in opens on the sign-in form rather than the sign-up page.
+  const args = process.argv.slice(1).filter((arg) => !arg.startsWith(`${DEEP_LINK_SCHEME}:`));
+  if (mode === "account") args.push(`${DEEP_LINK_SCHEME}://open?path=${encodeURIComponent("/login")}`);
+  setImmediate(() => { app.relaunch({ args }); app.quit(); });
+  return new Response(mode === "local" ? "Opening Margin Chat without an account…" : "Opening sign-in…", {
+    headers: { "Content-Type": "text/plain; charset=utf-8" },
+  });
+}
+
 let quittingForUpdate = false;
 function installShellUpdateNow() {
   if (!shellUpdater.install({ relaunch: true })) return new Response("No update is ready.", { status: 409 });
@@ -391,7 +428,22 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     // Serve the newest client already on disk; a broken download falls back to the installed one.
-    if (!DEV_URL) await clientBundles.load().catch((error) => console.warn("Using the installed client.", error));
+    if (!DEV_URL && !LOCAL_MODE) await clientBundles.load().catch((error) => console.warn("Using the installed client.", error));
+    if (LOCAL_MODE) {
+      try {
+        localBackend = await startLocalBackend({
+          dataDir: path.join(app.getPath("userData"), "local"),
+          safeStorage,
+          loadServer: () => import("./local-server/server.mjs"),
+        });
+        app.on("will-quit", () => { void localBackend?.close(); });
+      } catch (error) {
+        console.error("Margin Chat couldn't start on this computer", error);
+        dialog.showErrorBox("Margin Chat couldn't start", `Its local server didn't start: ${error instanceof Error ? error.message : String(error)}`);
+        app.quit();
+        return;
+      }
+    }
     protocol.handle(SCHEME, handleAppRequest);
 
     // The check handler keeps a vault folder chosen before readable at launch (desktop/permissions.mjs).
@@ -422,10 +474,22 @@ if (!app.requestSingleInstanceLock()) {
         }),
         stateRoot: path.join(app.getPath("userData"), "vault-sync"),
         // Through the default session, as page requests are: the sign-in cookie stays in Electron's jar.
-        fetch: (input, init) => input instanceof Request
-          ? net.fetch(input, { credentials: "include" })
-          : net.fetch(new URL(String(input), API_ORIGIN).href, { ...init, credentials: "include" }),
-        serverUrl: API_ORIGIN,
+        fetch: (input, init) => {
+          if (localBackend) {
+            // The app's own server: add its token, no cookie.
+            const request = new Request(input instanceof Request ? input : new URL(String(input), localBackend.origin).href, init);
+            const target = new URL(request.url);
+            const local = new URL(target.pathname + target.search, localBackend.origin);
+            const headers = new Headers(request.headers);
+            for (const [name, value] of Object.entries(localBackend.headers)) headers.set(name, value);
+            const hasBody = request.method !== "GET" && request.method !== "HEAD";
+            return net.fetch(local.href, { method: request.method, headers, body: hasBody ? request.body : undefined, duplex: hasBody ? "half" : undefined, signal: request.signal, credentials: "omit" });
+          }
+          return input instanceof Request
+            ? net.fetch(input, { credentials: "include" })
+            : net.fetch(new URL(String(input), API_ORIGIN).href, { ...init, credentials: "include" });
+        },
+        serverUrl: localBackend?.origin ?? API_ORIGIN,
         broadcast(channel, payload) {
           for (const window of BrowserWindow.getAllWindows()) {
             if (!window.webContents.isDestroyed() && isAppUrl(window.webContents.getURL())) window.webContents.send(channel, payload);
@@ -460,7 +524,7 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     // The dev server is always current, so only bundled builds check.
     if (!DEV_URL) {
-      startClientUpdates();
+      if (!LOCAL_MODE) startClientUpdates();
       startShellUpdates();
     }
 

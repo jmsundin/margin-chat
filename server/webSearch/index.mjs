@@ -59,40 +59,44 @@ export function createWebSearchService({ env = {}, billingService, fetchImpl = g
    * One unbilled provider call. The agent calls this directly and meters its
    * own run; the HTTP route goes through `search`, which bills the member.
    */
-  async function request(rawQuery, signal) {
+  async function request(rawQuery, signal, { apiKey = null } = {}) {
     const { query } = validateWebSearchRequest({ query: rawQuery });
-    if (!configured) throw new HttpError(503, "Web search is not set up yet. Wikipedia search still works.");
+    const key = apiKey?.trim() || (configured ? env.TAVILY_API_KEY.trim() : null);
+    if (!key) throw new HttpError(503, "Web search needs a Tavily key. Add yours in Settings → API keys. Wikipedia search still works.");
     const combined = AbortSignal.any([AbortSignal.timeout(timeoutMs), ...(signal ? [signal] : [])]);
     // "basic" costs one Tavily credit; safe_search needs basic or advanced.
     const body = JSON.stringify({ query, max_results: RESULT_LIMIT, search_depth: "basic", safe_search: true, include_answer: false, include_raw_content: false });
     let response;
     try {
-      response = await fetchImpl(TAVILY_URL, { method: "POST", signal: combined, body, headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${env.TAVILY_API_KEY.trim()}` } });
+      response = await fetchImpl(TAVILY_URL, { method: "POST", signal: combined, body, headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: `Bearer ${key}` } });
     } catch {
       signal?.throwIfAborted();
       throw new HttpError(502, "Web search could not be reached. Try again.");
     }
     if (response.status === 429) throw new HttpError(429, "Web search is busy right now. Try again shortly.");
+    if (apiKey && (response.status === 401 || response.status === 403)) throw new HttpError(502, "Tavily refused your web search key. Check it in Settings → API keys.");
     if (!response.ok) throw new HttpError(502, `Web search is temporarily unavailable (${response.status}).`);
     return normalizeTavilyResults(await response.json().catch(() => null));
   }
 
-  async function search({ user, payload, signal }) {
+  /** `apiKey` is the member's own Tavily key: their searches then go on their account, and nothing is billed here. */
+  async function search({ user, payload, signal, apiKey = null }) {
     if (!user?.id) throw new HttpError(401, "Sign in to search the web.");
-    if (!canSearchWeb(user)) throw new HttpError(402, "Web search needs a subscription or credit. Wikipedia search is free for everyone.");
+    const ownKey = apiKey?.trim() || null;
+    if (!ownKey && !canSearchWeb(user)) throw new HttpError(402, "Web search needs your own Tavily key (Settings → API keys), a subscription or credit. Wikipedia search is free for everyone.");
     const { query } = validateWebSearchRequest(payload);
-    if (!configured) throw new HttpError(503, "Web search is not set up yet. Wikipedia search still works.");
+    if (!ownKey && !configured) throw new HttpError(503, "Web search needs a Tavily key. Add yours in Settings → API keys. Wikipedia search still works.");
     if (active.has(user.id)) throw new HttpError(429, "A web search is already running. Wait for it to finish.");
     active.add(user.id);
     // Admins are not billed, as for AI requests. Members hold the price first
     // and keep it only when the provider returns results.
-    const metered = user.role !== "admin";
+    const metered = user.role !== "admin" && !ownKey;
     const requestId = `web-search:${randomUUID()}`;
     const metadata = { operation: "web-search", kind: "search", provider: "tavily", priceMicros };
     try {
       if (metered) await billingService.reserveHostedRequest({ requestId, userId: user.id, amountMicros: priceMicros, metadata });
       let results;
-      try { results = await request(query, signal); }
+      try { results = await request(query, signal, { apiKey: ownKey }); }
       catch (error) {
         if (metered) await billingService.settleHostedRequest({ requestId, userId: user.id, amountMicros: 0, metadata: { ...metadata, outcome: "failed", usageSource: "not-billed" } });
         throw error;

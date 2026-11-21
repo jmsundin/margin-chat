@@ -17,6 +17,7 @@ import {
   normalizeProfileUpdatePayload,
   normalizeSignupPayload,
 } from "./validation.mjs";
+import { createLocalUserSource, isLocalMode } from "../local/mode.mjs";
 
 export function createAuthService({
   apiKeyService = null,
@@ -27,6 +28,8 @@ export function createAuthService({
   async function decorateUser(user) {
     return apiKeyService ? apiKeyService.decorateUser(user) : user;
   }
+  // The desktop app's local mode has one person and no sign-in.
+  const localUser = isLocalMode(env) ? createLocalUserSource(database) : null;
   function hashResetToken(token) {
     return createHash("sha256").update(token).digest("hex");
   }
@@ -111,6 +114,8 @@ export function createAuthService({
       // Signup does not prove ownership of the supplied email address. Admin
       // access is provisioned separately on a verified existing account.
       role: "member",
+      // The website is for paying accounts (a free trial with a card); the desktop app is free without one.
+      webPlanRequired: true,
     });
     const cookie = await createSessionForUser(user.id);
     await sendVerificationLink(user);
@@ -254,6 +259,7 @@ export function createAuthService({
   }
 
   async function getAuthContext(request) {
+    if (localUser) return { sessionId: null, shouldClearSession: false, user: await decorateUser(await localUser()) };
     const sessionId = readAuthSessionId(request);
 
     if (!sessionId) {

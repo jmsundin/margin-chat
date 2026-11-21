@@ -47,7 +47,7 @@ Press <kbd>Cmd</kbd>/<kbd>Ctrl</kbd> + <kbd>K</kbd> to search by words and by me
 
 ### Learn anything with a roadmap
 
-Type what you want to learn and AI drafts a roadmap: stages, lessons in order, and what each one unlocks. Open a lesson and AI writes it for you as a document you can annotate, question and keep. Or paste a link to a course outline and the roadmap follows it.
+Type what you want to learn and AI drafts a roadmap: stages, lessons in order, and what each one unlocks. Open a lesson and it is a document of your own; choose **✦ Explain** and AI writes the lesson into it for you to annotate, question and keep. Or paste a link to a course outline and the roadmap follows it.
 
 ![Typing a goal, drafting a roadmap with AI, and opening the first lesson in Learn](docs/media/readme/roadmap-learn.gif)
 

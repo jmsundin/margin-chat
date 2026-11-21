@@ -66,6 +66,10 @@ interface ThreadSidebarProps {
   onNewNote: () => void;
   onOpenInbox?: () => void;
   onImportChatHistory?: () => void;
+  /** How many things an agent is waiting on the person for. */
+  agentInboxCount?: number;
+  /** Opens the agent inbox: questions, drafts to approve and runs that stopped early. */
+  onOpenAgentInbox?: () => void;
   /** Start the guided tour from the beginning. */
   onTakeTour?: () => void;
   /** Opens Help: guides to using Margin Chat. */
@@ -384,6 +388,8 @@ export default function ThreadSidebar({
   onNewNote,
   onOpenInbox,
   onImportChatHistory,
+  agentInboxCount = 0,
+  onOpenAgentInbox,
   onTakeTour,
   onOpenHelp,
   onMoreFeatures,
@@ -1013,10 +1019,11 @@ export default function ThreadSidebar({
               setWorkspaceActionsOpen((current) => !current);
             }}
             ref={workspaceActionsTriggerRef}
-            title="More actions"
+            title={agentInboxCount ? `More actions. ${agentInboxCount} waiting in the agent inbox` : "More actions"}
             type="button"
           >
             <MoreIcon />
+            {agentInboxCount ? <span className="sidebar-more-badge" aria-hidden="true">{agentInboxCount > 9 ? "9+" : agentInboxCount}</span> : null}
           </button>
           {workspaceActionsOpen ? (
             <div
@@ -1100,6 +1107,9 @@ export default function ThreadSidebar({
               {onImportChatHistory ? <button type="button" className="sidebar-workspace-action" onClick={() => {
                 closeWorkspaceActions(); onImportChatHistory();
               }}><span>Bring your chat history</span></button> : null}
+              {onOpenAgentInbox ? <button type="button" className="sidebar-workspace-action" onClick={() => {
+                closeWorkspaceActions(); onOpenAgentInbox();
+              }}><span>Agent inbox{agentInboxCount ? ` (${agentInboxCount})` : ""}</span></button> : null}
               {onTakeTour ? <button type="button" className="sidebar-workspace-action" onClick={() => {
                 closeWorkspaceActions(); onTakeTour();
               }}><span>Take the tour</span></button> : null}
