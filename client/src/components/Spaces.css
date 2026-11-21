@@ -117,3 +117,28 @@
 /* Phone: the title row names the space in small type above the document. */
 .document-header-space { display: flex; align-items: center; gap: 5px; color: var(--space-color, var(--muted)); font-size: 11px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; }
 .document-header-title-stack { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
+
+/* Tile view's Spaces tab: a tile per space, laid out like the roadmap tiles. */
+.space-tiles { display: flex; flex-direction: column; gap: 14px; margin: 0 auto; width: min(calc(100% - 48px), 1120px); }
+.space-tile-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); list-style: none; margin: 0; padding: 0; }
+.space-tile { position: relative; display: flex; flex-direction: column; gap: 6px; min-height: 128px; padding: 12px 12px 12px 16px; border: 1px solid var(--line); border-left: 4px solid var(--space-color, var(--line)); border-radius: 12px; background: var(--panel-strong, var(--panel)); color: var(--ink); }
+.space-tile.is-active { border-color: var(--space-color, var(--accent)); box-shadow: 0 0 0 1px var(--space-color, var(--accent)) inset; }
+.space-tile.is-new { align-items: flex-start; justify-content: center; border-style: dashed; border-left-width: 1px; background: transparent; }
+.space-tile.is-new .space-rename-input { width: 100%; }
+.space-tile-head { position: relative; display: flex; align-items: center; gap: 8px; }
+.space-tile-open { flex: 1; min-width: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.space-tile-open strong { display: block; font-size: 1rem; line-height: 1.3; overflow-wrap: anywhere; }
+.space-tile-open:hover strong, .space-tile-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
+.space-tile > .space-meta { margin: 0; font-size: 12px; }
+.space-tile-documents { display: flex; flex-direction: column; margin: 2px 0 0; padding: 0; list-style: none; }
+.space-tile-documents .space-document { display: flex; align-items: center; gap: 4px; }
+.space-tile-documents .space-document-open { min-height: 26px; font-size: 13px; color: var(--muted); }
+.space-tile-documents .space-document-open:hover { color: var(--ink); }
+.space-tile-documents > .space-meta { font-size: 12px; padding-top: 2px; }
+.space-tile .spaces-hint { margin: 0; }
+.space-tiles .spaces-confirm { position: fixed; left: 50%; bottom: 24px; z-index: var(--z-modal); width: min(360px, calc(100vw - 32px)); margin: 0; transform: translateX(-50%); }
+@media (max-width: 720px) {
+  .space-tiles { width: 100%; }
+  .space-tile-grid { grid-template-columns: 1fr; }
+  .space-tile-documents .space-document-open { min-height: 40px; }
+}

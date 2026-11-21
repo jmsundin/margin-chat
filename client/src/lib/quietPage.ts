@@ -7,8 +7,6 @@
 import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
 
 const QUIET_KEY = "margin-chat:quiet-page";
-/** The quiet page starts with the sidebar closed, so it keeps its own open/closed memory. */
-export const QUIET_SIDEBAR_KEY = "margin-chat:quiet-page-sidebar-open";
 const listeners = new Set<() => void>();
 
 export function readQuietPage(): boolean {

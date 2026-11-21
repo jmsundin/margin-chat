@@ -10,6 +10,7 @@ const browser = new Window({ url: "http://document-workspace.test" });
 browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 // These cover the full toolbars; the quiet page (on by default) hides some of them until hovered.
 browser.localStorage.setItem("margin-chat:quiet-page", "false");
+browser.sessionStorage.setItem("margin-chat:left-sidebar-open", "true");
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
 const workspaceStyles = browser.document.createElement("style");
 workspaceStyles.textContent = await Bun.file(new URL("../../client/src/document-workspace.css", import.meta.url)).text();

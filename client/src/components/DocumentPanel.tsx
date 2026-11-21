@@ -23,7 +23,7 @@ export type DocumentCaretMenu = Omit<RichDocumentCaretMenu, "paragraph"> & { par
 import RichDocumentEditor, { RichDocumentPlaceholder } from "./LazyRichDocumentEditor";
 import ServicePickerModal from "./ServicePickerModal";
 import AnnotationPreview from "./AnnotationPreview";
-import VaultFileViewer from "./VaultFileViewer";
+import VaultFileViewer, { type VaultFileViewerProps } from "./VaultFileViewer";
 import type { HtmlPlayActions } from "./HtmlPageMenu";
 import { useHtmlPageLayout, useHtmlPagePrefs } from "../lib/htmlPagePrefs";
 import MarkdownMessage from "./MarkdownMessage";
@@ -53,6 +53,8 @@ export interface DocumentPanelProps {
   linkSuggestions?: RichDocumentEditorProps["linkSuggestions"];
   resolveWikiLink?: RichDocumentEditorProps["resolveWikiLink"];
   onOpenWikiLink?: RichDocumentEditorProps["onOpenWikiLink"];
+  /** A PDF's Contents tab offers to make a roadmap from its contents. */
+  pdfRoadmap?: VaultFileViewerProps["pdfRoadmap"];
   isActive: boolean;
   isSubmitting: boolean;
   aiControls: ReactNode;
@@ -701,7 +703,7 @@ export default function DocumentPanel(props: DocumentPanelProps) {
       {conversation.vaultFile ? <>
         {/* A page's controls live in the header; over a full screen page, which covers the header, they get a slim bar of their own. */}
         {htmlFull ? <div className="html-page-bar" ref={setHtmlBar} /> : null}
-        <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors}
+        <VaultFileViewer conversation={conversation} file={conversation.vaultFile} anchors={props.anchors} pdfRoadmap={props.pdfRoadmap}
           onSelection={props.onSelection} onClearSelection={props.onClearSelection} onOpenBranch={(id) => { setHtmlFullFor(null); props.onOpenBranch(id); }} toolbarTarget={fileControls}
           htmlLayout={htmlPage ? htmlLayout : undefined} htmlControls={htmlPage ? { target: htmlFull ? htmlBar : props.htmlControlsTarget !== undefined ? props.htmlControlsTarget : fileControls, place: htmlFull ? "bar" : "header", play: props.htmlPlay,
             view: htmlFill ? htmlView : undefined, onView: setHtmlView, full: htmlFull, onFull: (full) => setHtmlFullFor(full ? conversation.id : null) } : undefined} onHtmlEscape={htmlFull ? leaveHtmlFull : undefined}/>

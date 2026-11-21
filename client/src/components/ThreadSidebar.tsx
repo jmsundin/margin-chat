@@ -1,15 +1,14 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useProgressiveList } from "../lib/useProgressiveList";
 import { useSuggestedDocumentTitle } from "../lib/documentTitleSuggestion";
-import { ConversationGroupSelect } from "./ConversationGroupControls";
+import { ConversationGroupPickerContext } from "./ConversationGroupControls";
+import GroupPickerModal from "./GroupPickerModal";
+import { SpaceMenuContext } from "./Spaces";
+import { getConversationGroupId } from "../lib/conversationGroups";
 import type { ChatOutlineItem } from "../lib/chatOutline";
 import ChatOutline from "./ChatOutline";
-import {
-  getSidebarThreadDropAction,
-  sortThreadsByRecentActivity,
-  sortDocumentsByCreation,
-} from "../lib/sidebarThreads";
+import { sortDocumentsByCreation } from "../lib/sidebarThreads";
 import type { ConversationGroup, MainViewMode, ThreadSummary } from "../types";
 import { SIDEBAR_DOCUMENT_SORTS, groupByDate, type SidebarDateSection, type SidebarDocumentSort } from "../lib/sidebarDocumentOrder";
 import type { SidebarDocumentOrder } from "../lib/useSidebarDocumentOrder";
@@ -25,7 +24,8 @@ const THREAD_MENU_ITEM_HEIGHT = 42;
 const THREAD_MENU_GAP = 8;
 const THREAD_MENU_VIEWPORT_MARGIN = 12;
 
-type SidebarContent = "documents" | "groups" | "outline" | "sessions";
+/** The left panel shows documents, or the open document's outline. Groups and Spaces live in Tile view. */
+type SidebarContent = "documents" | "outline";
 
 interface ThreadSidebarProps {
   header?: ReactNode;
@@ -41,14 +41,10 @@ interface ThreadSidebarProps {
   fetchIndicator?: ReactNode;
   /** Documents that just streamed in from the cloud, briefly highlighted. */
   arrivingThreadIds?: ReadonlySet<string>;
-  /** The Spaces view: spaces to switch between, rename and delete. */
-  sessionsPanel?: ReactNode;
-  /** Groups (a feature): the Groups tab, New group and the Group picker on each document. */
+  /** Groups (a feature): New group, and a Group section in each document's menu. */
   groupsEnabled?: boolean;
   /** Outline (a feature): the Outline tab and each document's outline arrow. */
   outlineEnabled?: boolean;
-  /** Changes each time something outside the sidebar asks for the Spaces view. */
-  sessionsRequest?: number;
   mapExplorerRef?: (element: HTMLDivElement | null) => void;
   mapExplorerActive?: boolean;
   onSelectSidebarSection?: (section: "chats" | "explore") => void;
@@ -415,8 +411,6 @@ export default function ThreadSidebar({
   cloudIndex,
   fetchIndicator,
   arrivingThreadIds,
-  sessionsPanel,
-  sessionsRequest = 0,
 }: ThreadSidebarProps) {
   const [openMenuState, setOpenMenuState] = useState<{
     left: number;
@@ -428,7 +422,10 @@ export default function ThreadSidebar({
   const [deleteTarget, setDeleteTarget] = useState<ThreadActionTarget | null>(null);
   const [sidebarContent, setSidebarContent] = useState<SidebarContent>("documents");
   const [draggedThreadId, setDraggedThreadId] = useState<string | null>(null);
-  const [dropTargetKey, setDropTargetKey] = useState<string | null>(null);
+  /** The document whose group is being picked or made, in the group picker. */
+  const [groupPickerFor, setGroupPickerFor] = useState<string | null>(null);
+  const spaceActions = useContext(SpaceMenuContext);
+  const groupPicker = useContext(ConversationGroupPickerContext);
   const [workspaceActionsOpen, setWorkspaceActionsOpen] = useState(false);
   const [sortMenuOpen, setSortMenuOpen] = useState(false);
   const [collapsedCategories, setCollapsedCategories] = useState<ReadonlySet<string>>(() => new Set());
@@ -440,27 +437,33 @@ export default function ThreadSidebar({
   const workspaceActionsTriggerRef = useRef<HTMLButtonElement>(null);
   const outlineTitleRef = useRef<HTMLHeadingElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
-  const listScroll = useRef({ documents: 0, groups: 0 });
+  const listScroll = useRef(0);
 
   function showSidebarContent(next: SidebarContent) {
-    if ((sidebarContent === "documents" || sidebarContent === "groups") && listRef.current) listScroll.current[sidebarContent] = listRef.current.scrollTop;
+    if (sidebarContent === "documents" && listRef.current) listScroll.current = listRef.current.scrollTop;
     setOpenMenuState(null);
     setSidebarContent(next);
   }
 
-  // A tab whose feature was just switched off falls back to the list.
+  // The Outline tab falls back to the list when Outline is switched off.
   useEffect(() => {
-    if ((sidebarContent === "groups" && !groupsEnabled) || (sidebarContent === "outline" && !outlineEnabled) || (sidebarContent === "sessions" && !sessionsPanel)) setSidebarContent("documents");
-  }, [sidebarContent, groupsEnabled, outlineEnabled, sessionsPanel]);
-
-  useEffect(() => {
-    if (sessionsRequest && sessionsPanel) showSidebarContent("sessions");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionsRequest]);
+    if (sidebarContent === "outline" && !outlineEnabled) setSidebarContent("documents");
+  }, [sidebarContent, outlineEnabled]);
 
   useLayoutEffect(() => {
-    if ((sidebarContent === "documents" || sidebarContent === "groups") && listRef.current) listRef.current.scrollTop = listScroll.current[sidebarContent];
+    if (sidebarContent === "documents" && listRef.current) listRef.current.scrollTop = listScroll.current;
   }, [sidebarContent]);
+
+  // The menu grows with its Spaces and Group sections: keep all of it on screen.
+  useLayoutEffect(() => {
+    const menu = menuRef.current;
+    if (!openMenuState || !menu) return;
+    const bottom = window.innerHeight - THREAD_MENU_VIEWPORT_MARGIN;
+    const rect = menu.getBoundingClientRect();
+    if (rect.bottom <= bottom) return;
+    const top = Math.max(THREAD_MENU_VIEWPORT_MARGIN, bottom - rect.height);
+    if (top !== openMenuState.top) setOpenMenuState((current) => current ? { ...current, top } : current);
+  }, [openMenuState]);
 
 
   useEffect(() => {
@@ -696,103 +699,14 @@ export default function ThreadSidebar({
 
   function handleThreadDragEnd() {
     setDraggedThreadId(null);
-    setDropTargetKey(null);
-  }
-
-  function handleThreadDragOver(
-    event: React.DragEvent<HTMLElement>,
-    targetKey: string,
-  ) {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-    setDropTargetKey(targetKey);
-  }
-
-  function handleThreadDragLeave(
-    event: React.DragEvent<HTMLElement>,
-    targetKey: string,
-  ) {
-    const relatedTarget = event.relatedTarget;
-
-    if (
-      relatedTarget instanceof Node &&
-      event.currentTarget.contains(relatedTarget)
-    ) {
-      return;
-    }
-
-    setDropTargetKey((current) => current === targetKey ? null : current);
-  }
-
-  function handleThreadDrop(
-    event: React.DragEvent<HTMLElement>,
-    target: { groupId?: string | null; pinned?: boolean },
-  ) {
-    event.preventDefault();
-    const threadId =
-      event.dataTransfer.getData("text/plain") || draggedThreadId;
-
-    setDraggedThreadId(null);
-    setDropTargetKey(null);
-
-    if (!threadId || !threads.some((thread) => thread.id === threadId)) {
-      return;
-    }
-
-    const action = getSidebarThreadDropAction({
-      isPinned: pinnedThreadIds.has(threadId),
-      targetGroupId: target.groupId,
-      targetPinned: target.pinned,
-    });
-
-    if (action.assignGroup) {
-      onAssignGroup(threadId, action.groupId);
-    }
-
-    if (action.pin) {
-      onPinThread(threadId);
-    }
-
-    if (action.unpin) {
-      onUnpinThread(threadId);
-    }
   }
 
   const pinnedThreadIds = new Set(pinnedThreads.map((thread) => thread.id));
-  const recentThreads = sortThreadsByRecentActivity(threads);
   const createdThreads = sortDocumentsByCreation(threads);
-  const recentPinnedThreads = recentThreads.filter((thread) =>
-    pinnedThreadIds.has(thread.id),
-  );
-  const unpinnedThreads = recentThreads.filter(
-    (thread) => !pinnedThreadIds.has(thread.id),
-  );
-  const groupPriority = new Map<string, number>();
-
-  unpinnedThreads.forEach((thread, index) => {
-    if (thread.groupId && !groupPriority.has(thread.groupId)) {
-      groupPriority.set(thread.groupId, index);
-    }
-  });
-
-  const activityOrderedGroups = Object.values(groups).sort(
-    (left, right) =>
-      (groupPriority.get(left.id) ?? Number.POSITIVE_INFINITY) -
-      (groupPriority.get(right.id) ?? Number.POSITIVE_INFINITY),
-  );
-  const groupedThreads = activityOrderedGroups.flatMap((group) =>
-    unpinnedThreads.filter((thread) => thread.groupId === group.id),
-  );
-  const ungroupedThreads = unpinnedThreads.filter((thread) => !thread.groupId);
   // Thousands of documents render a page at a time, always including the open one.
   const listedThreads = documentOrder?.threads ?? createdThreads;
   const documentPages = useProgressiveList(listedThreads.length, { include: listedThreads.findIndex((thread) => thread.id === activeThreadId) });
-  const ungroupedPages = useProgressiveList(ungroupedThreads.length, { include: ungroupedThreads.findIndex((thread) => thread.id === activeThreadId) });
-  const orderedThreads = sidebarContent === "groups" ? [
-    ...recentPinnedThreads,
-    ...groupedThreads,
-    ...ungroupedThreads,
-  ] : listedThreads;
+  const orderedThreads = listedThreads;
   const sortLabel = SIDEBAR_DOCUMENT_SORTS.find((sort) => sort.id === documentSort)?.label ?? "Recently viewed";
 
   function renderDocumentList() {
@@ -854,7 +768,7 @@ export default function ThreadSidebar({
   }
 
   function renderSortControl() {
-    if (!onDocumentSortChange || (sidebarContent !== "documents" && sidebarContent !== "sessions")) return null;
+    if (!onDocumentSortChange || sidebarContent !== "documents") return null;
     const unavailable = documentOrder?.meaningUnavailable ?? null;
     return (
       <div className="sidebar-sort">
@@ -911,7 +825,7 @@ export default function ThreadSidebar({
         data-sidebar-document-id={thread.id}
         key={thread.id}
       >
-        <span className="thread-item-drag-handle" title="Drag to pin or group">
+        <span className="thread-item-drag-handle" title="Drag onto the space button to add it to the space you're in">
           <DragHandleIcon />
         </span>
         <button
@@ -1201,155 +1115,20 @@ export default function ThreadSidebar({
         </div>
       ) : (
         <div className="sidebar-document-browser">
-          <div className={`sidebar-content-switcher${groupsEnabled || outlineEnabled || sessionsPanel ? "" : " is-sort-only"}`} role="group" aria-label="Sidebar content">
-            {/* With Groups, Outline and Spaces off there is one list, so no tabs to switch between. */}
-            {groupsEnabled || outlineEnabled || sessionsPanel ? <button type="button" aria-label="Show documents" aria-pressed={sidebarContent === "documents"}
+          <div className={`sidebar-content-switcher${outlineEnabled ? "" : " is-sort-only"}`} role="group" aria-label="Sidebar content">
+            {/* With Outline off there is one list, so no tabs to switch between. Groups and Spaces are in Tile view. */}
+            {outlineEnabled ? <button type="button" aria-label="Show documents" aria-pressed={sidebarContent === "documents"}
               aria-controls="sidebar-document-list" onClick={() => showSidebarContent("documents")}>Documents</button> : null}
-            {groupsEnabled ? <button type="button" aria-label="Show groups" aria-pressed={sidebarContent === "groups"}
-              aria-controls="sidebar-document-list" onClick={() => showSidebarContent("groups")}>Groups</button> : null}
             {outlineEnabled ? <button type="button" aria-label="Show document outline" aria-pressed={sidebarContent === "outline"}
               aria-controls={`chat-outline-${activeThreadId}`} onClick={() => handleOpenOutline(activeThreadId)}>Outline</button> : null}
-            {sessionsPanel ? <button type="button" aria-label="Show spaces" aria-pressed={sidebarContent === "sessions"}
-              aria-controls="sidebar-sessions" onClick={() => showSidebarContent("sessions")}>Spaces</button> : null}
             {renderSortControl()}
           </div>
           {fetchIndicator}
-          <div className="thread-list" ref={listRef} id="sidebar-document-list" hidden={sidebarContent === "outline" || sidebarContent === "sessions"}>
-            {sidebarContent !== "groups" ? <>
-              {documentOrder?.meaningLoading ? <p className="sidebar-sort-status" aria-live="polite">Sorting by meaning…</p>
-                : documentOrder?.note ? <p className="sidebar-sort-status">{documentOrder.note}</p> : null}
-              {renderDocumentList()}
-              {cloudIndex}
-            </> : <>
-            {recentPinnedThreads.length || draggedThreadId ? (
-              <section
-                aria-label="Pinned documents"
-                className={
-                  dropTargetKey === "pinned"
-                    ? "thread-sidebar-section is-pinned is-drop-target"
-                    : "thread-sidebar-section is-pinned"
-                }
-                data-thread-drop-target="pinned"
-                onDragLeave={(event) => handleThreadDragLeave(event, "pinned")}
-                onDragOver={(event) => handleThreadDragOver(event, "pinned")}
-                onDrop={(event) =>
-                  handleThreadDrop(event, { pinned: true })
-                }
-              >
-                <div className="thread-group-section-header is-pinned">
-                  <div className="thread-section-label">
-                    <span aria-hidden="true" className="thread-section-pin-icon">
-                      <PinIcon filled />
-                    </span>
-                    <span>Pinned</span>
-                    <span className="thread-section-count">
-                      {recentPinnedThreads.length}
-                    </span>
-                  </div>
-                </div>
-                {recentPinnedThreads.length ? (
-                  recentPinnedThreads.map(renderThreadItem)
-                ) : (
-                  <p className="thread-section-drop-hint">Drop here to pin</p>
-                )}
-              </section>
-            ) : null}
-
-            {activityOrderedGroups.map((group) => {
-              const sectionThreads = groupedThreads.filter(
-                (thread) => thread.groupId === group.id,
-              );
-              const targetKey = `group:${group.id}`;
-
-              return (
-                <section
-                  aria-label={`${group.name} group`}
-                  className={
-                    dropTargetKey === targetKey
-                      ? "thread-sidebar-section is-drop-target"
-                      : "thread-sidebar-section"
-                  }
-                  data-thread-drop-target={targetKey}
-                  key={group.id}
-                  onDragLeave={(event) =>
-                    handleThreadDragLeave(event, targetKey)
-                  }
-                  onDragOver={(event) =>
-                    handleThreadDragOver(event, targetKey)
-                  }
-                  onDrop={(event) =>
-                    handleThreadDrop(event, {
-                      groupId: group.id,
-                    })
-                  }
-                >
-                  <div className="thread-group-section-header">
-                    <button
-                      aria-expanded={!group.collapsed}
-                      onClick={() => onToggleGroup(group.id)}
-                      type="button"
-                    >
-                      <span
-                        aria-hidden="true"
-                        className="conversation-group-color"
-                        style={{ backgroundColor: group.color }}
-                      />
-                      <span>{group.name}</span>
-                      <span className="thread-section-count">
-                        {sectionThreads.length}
-                      </span>
-                      <span aria-hidden="true">
-                        {group.collapsed ? "＋" : "−"}
-                      </span>
-                    </button>
-                  </div>
-                  {!group.collapsed ? (
-                    sectionThreads.length ? (
-                      sectionThreads.map(renderThreadItem)
-                    ) : draggedThreadId ? (
-                      <p className="thread-section-drop-hint">Drop into group</p>
-                    ) : null
-                  ) : null}
-                </section>
-              );
-            })}
-
-            {ungroupedThreads.length || draggedThreadId ? (
-              <section
-                aria-label="Ungrouped documents"
-                className={
-                  dropTargetKey === "ungrouped"
-                    ? "thread-sidebar-section is-ungrouped is-drop-target"
-                    : "thread-sidebar-section is-ungrouped"
-                }
-                data-thread-drop-target="ungrouped"
-                onDragLeave={(event) => handleThreadDragLeave(event, "ungrouped")}
-                onDragOver={(event) => handleThreadDragOver(event, "ungrouped")}
-                onDrop={(event) =>
-                  handleThreadDrop(event, { groupId: null })
-                }
-              >
-                <div className="thread-group-section-header">
-                  <div className="thread-section-label">
-                    <span
-                      aria-hidden="true"
-                      className="conversation-group-color is-ungrouped"
-                    />
-                    <span>Ungrouped</span>
-                    <span className="thread-section-count">
-                      {ungroupedThreads.length}
-                    </span>
-                  </div>
-                </div>
-                {ungroupedThreads.length ? (<>
-                  {ungroupedThreads.slice(0, ungroupedPages.shown).map(renderThreadItem)}
-                  {ungroupedPages.more ? <div aria-hidden="true" className="thread-list-more" ref={ungroupedPages.sentinel} /> : null}
-                </>) : (
-                  <p className="thread-section-drop-hint">Drop here to ungroup</p>
-                )}
-              </section>
-            ) : null}
-            </>}
+          <div className="thread-list" ref={listRef} id="sidebar-document-list" hidden={sidebarContent === "outline"}>
+            {documentOrder?.meaningLoading ? <p className="sidebar-sort-status" aria-live="polite">Sorting by meaning…</p>
+              : documentOrder?.note ? <p className="sidebar-sort-status">{documentOrder.note}</p> : null}
+            {renderDocumentList()}
+            {cloudIndex}
           </div>
           <nav aria-label={`Outline for ${currentChatTitle}`} className="chat-outline is-expanded-panel"
             id={`chat-outline-${activeThreadId}`} hidden={sidebarContent !== "outline"}>
@@ -1359,9 +1138,6 @@ export default function ThreadSidebar({
             <ChatOutline key={activeThreadId} items={currentChatOutline} activeItemId={activeOutlineItemId} onSelect={onSelectOutlineItem}
               conversationId={activeThreadId} onNavigated={onOutlineNavigated} />
           </nav>
-          {sessionsPanel ? <div className="sidebar-sessions" id="sidebar-sessions" hidden={sidebarContent !== "sessions"}>
-            {sessionsPanel}
-          </div> : null}
         </div>
       )}
 
@@ -1457,15 +1233,39 @@ export default function ThreadSidebar({
                     {revealInFolder.label}
                   </button>
                 ) : null}
-                {groupsEnabled ? <ConversationGroupSelect
-                  className="is-menu"
-                  conversationId={thread.id}
-                  groups={groups}
-                  onAssign={(conversationId, groupId) => {
-                    onAssignGroup(conversationId, groupId);
-                    setOpenMenuState(null);
-                  }}
-                /> : null}
+                {spaceActions ? <div className="thread-item-menu-section" role="group" aria-label={`Spaces for ${thread.title}`}>
+                  <span className="thread-item-menu-heading" title="A space is a workspace you're actively in: its documents open as tabs when you switch to it.">Spaces</span>
+                  {spaceActions.spaces.map((space) => {
+                    const inSpace = spaceActions.isIn(space.id, thread.id);
+                    return <button key={space.id} type="button" role="menuitemcheckbox" aria-checked={inSpace}
+                      className="thread-item-menu-action thread-item-menu-choice" onClick={() => spaceActions.onToggle(space.id, thread.id)}>
+                      <span className="thread-item-menu-swatch" style={{ background: space.color }} aria-hidden="true" />
+                      <span className="thread-item-menu-choice-name">{space.name}</span>
+                      <span className="thread-item-menu-check" aria-hidden="true">{inSpace ? "✓" : ""}</span>
+                    </button>;
+                  })}
+                  <button type="button" role="menuitem" className="thread-item-menu-action thread-item-menu-choice is-new"
+                    onClick={() => { setOpenMenuState(null); spaceActions.onCreateWith(thread.id); }}>
+                    <span aria-hidden="true" className="thread-item-menu-plus">＋</span><span>New space with this</span>
+                  </button>
+                </div> : null}
+                {groupsEnabled ? (() => {
+                  const groupId = getConversationGroupId(groups, thread.id);
+                  const choices = [{ id: null as string | null, name: "No group", color: "" }, ...Object.values(groups).map((group) => ({ id: group.id as string | null, name: group.name, color: group.color }))];
+                  return <div className="thread-item-menu-section" role="group" aria-label={`Group for ${thread.title}`}>
+                    <span className="thread-item-menu-heading" title="A group is a label, like a tag. Each document sits in one group.">Group</span>
+                    {choices.map((choice) => <button key={choice.id ?? "none"} type="button" role="menuitemradio" aria-checked={groupId === choice.id}
+                      className="thread-item-menu-action thread-item-menu-choice" onClick={() => { onAssignGroup(thread.id, choice.id); setOpenMenuState(null); }}>
+                      <span className={`thread-item-menu-swatch is-group${choice.id ? "" : " is-none"}`} style={choice.color ? { background: choice.color } : undefined} aria-hidden="true" />
+                      <span className="thread-item-menu-choice-name">{choice.name}</span>
+                      <span className="thread-item-menu-check" aria-hidden="true">{groupId === choice.id ? "✓" : ""}</span>
+                    </button>)}
+                    <button type="button" role="menuitem" className="thread-item-menu-action thread-item-menu-choice is-new"
+                      aria-haspopup="dialog" onClick={() => { setOpenMenuState(null); setGroupPickerFor(thread.id); }}>
+                      <span aria-hidden="true" className="thread-item-menu-plus">＋</span><span>New group…</span>
+                    </button>
+                  </div>;
+                })() : null}
                 <button
                   className="thread-item-menu-action is-danger"
                   onClick={() => handleOpenDelete(thread)}
@@ -1478,6 +1278,12 @@ export default function ThreadSidebar({
             ))}
         </div>
       , document.body) : null}
+
+      {groupPickerFor ? <GroupPickerModal isOpen groups={groups} currentGroupId={getConversationGroupId(groups, groupPickerFor)}
+        suggestion={groupPicker.getSuggestion?.(groupPickerFor) ?? null} isSuggesting={groupPicker.isSuggesting} status={groupPicker.status}
+        onSelect={(groupId) => onAssignGroup(groupPickerFor, groupId)}
+        onCreate={groupPicker.onCreateAndAssign ? (name) => groupPicker.onCreateAndAssign?.(groupPickerFor, name) : undefined}
+        onClose={() => setGroupPickerFor(null)} /> : null}
 
       {renameTarget ? createPortal(
         <div

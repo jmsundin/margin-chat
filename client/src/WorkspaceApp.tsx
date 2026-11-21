@@ -20,7 +20,7 @@ import { applySelectionFormat, hasSelectionFormat, type SelectionFormat } from "
 import { copySelection, hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
-import { canMoveToMargin, createMarginDocument, isCompactDocument as isMarginNoteDocument, sideDocumentToMarginNote, isHiddenFromAI } from "@margin-chat/workspace-contracts";
+import { canMoveToMargin, createMarginDocument, isCompactDocument as isMarginNoteDocument, marginNoteToSideDocument, sideDocumentToMarginNote, isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import { getNoteSnap as getNoteSnapFor, loadNotesBeside, saveNotesBeside } from "./lib/notesBeside";
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
@@ -51,7 +51,7 @@ import {
 } from "react";
 import BranchRail from "./components/BranchRail";
 import "./components/FeatureSettings.css";
-import { FEATURES, dismissFeatureHint, featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, unchosenFeatures, useDismissedFeatureHints, useFeatures, type FeatureId } from "./lib/features";
+import { FEATURES, dismissFeatureHint, featureAvailable, featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, unchosenFeatures, useDismissedFeatureHints, useFeatures, type FeatureId } from "./lib/features";
 import { interfaceSettingsLoaded, onInterfaceSettingsLoaded, startInterfaceSettingsSync } from "./lib/interfaceSettings";
 import { parseDocumentFlashcards } from "./lib/flashcards";
 import ServicePickerModal from "./components/ServicePickerModal";
@@ -60,15 +60,16 @@ import VersionHistoryPanel from "./components/VersionHistoryPanel";
 import { resolveWikiLinkDocument, wikiLinkSuggestions, type WikiLinkDocument } from "./lib/wikiLinkSuggestions";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import OpenBesideIcon from "./components/OpenBesideIcon";
+import DocumentNewButtons, { SideDocumentIcon } from "./components/DocumentNewButtons";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
-import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpacesPanel, type SpaceMenuActions } from "./components/Spaces";
+import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpaceTiles, type SpaceMenuActions } from "./components/Spaces";
 import DocumentTabs from "./components/DocumentTabs";
 import { DocumentCompass, DocumentKeepReading, DocumentMapButton, DocumentSheetPill, DocumentNavigationSwitcher, DocumentTopicOutline, type NeighborRelation } from "./components/DocumentNavigator";
 import { PAGE_SHEET, SHEET_NARROW_MAP, fitDocumentSheet, getDefaultDocumentSheet, getDocumentSheetEdge, getDocumentSheetMapBox, loadLastDocumentSheet, saveLastDocumentSheet, settleDocumentSheet, type DocumentSheet, type DocumentSheetEdge } from "./lib/documentSheet";
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
 import { useFloatingHeaderClearance } from "./lib/floatingHeader";
-import { QUIET_SIDEBAR_KEY, readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
+import { readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
 import { createDocumentLinkResolver, getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
@@ -230,6 +231,8 @@ import { buildLookupMessages, defaultLanguagePair, guessTextLanguage, languageNa
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
+import { pdfNavigationFor, requestPdfPage } from "./lib/pdfNavigation";
+import { pdfContentsDraftGoal, pdfOutlineRoadmapProposal, pdfRoadmapTitle, type PdfRoadmapSource } from "./lib/pdfRoadmap";
 import { applyTextEdit, canUndoProposal, undoEditArguments, withProposalUpdate } from "./lib/agentProposals";
 import { addImportedWebDocuments } from "./lib/webImportDocuments";
 import { fetchImportImage, importedImageSources, saveImportedImages, type ImportedImageSource } from "./lib/webImportImages";
@@ -340,7 +343,9 @@ const pageLanguageOf = (blocks: ReadonlyArray<{ kind?: string; content?: string 
 const pastedLinkOf = (blocks: ReadonlyArray<{ kind?: string; content?: string }>) => pageTextFacts(blocks).link;
 /** Width of the margin when it holds only claim cards. */
 const CLAIM_MARGIN_WIDTH = 220;
-const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
+// The left sidebar starts closed each time the app opens (thread "Start with the left sidebar
+// closed"). Within one tab or window it is kept in sessionStorage, so a reload leaves it as it was.
+const LEFT_SIDEBAR_SESSION_KEY = "margin-chat:left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
 const HIDDEN_FROM_AI_MESSAGE = "This document is hidden from AI, so nothing in it was sent. To ask AI about it, turn off “Hide from AI” in its menu.";
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
@@ -440,13 +445,9 @@ function getIsMobileViewport() {
   ).matches;
 }
 
-function sidebarStorageKey() {
-  return readQuietPage() ? QUIET_SIDEBAR_KEY : LEFT_SIDEBAR_STORAGE_KEY;
-}
-
 function loadInitialLeftSidebarOpen(): boolean {
   if (typeof window === "undefined") {
-    return true;
+    return false;
   }
 
   if (getIsMobileViewport()) {
@@ -454,22 +455,10 @@ function loadInitialLeftSidebarOpen(): boolean {
   }
 
   try {
-    // The quiet page starts with the sidebar closed; once you open it, it stays open.
-    const storedValue = window.localStorage.getItem(sidebarStorageKey());
-    if (storedValue === null && readQuietPage()) return false;
-
-    if (storedValue === "true") {
-      return true;
-    }
-
-    if (storedValue === "false") {
-      return false;
-    }
+    return window.sessionStorage.getItem(LEFT_SIDEBAR_SESSION_KEY) === "true";
   } catch {
-    return true;
+    return false;
   }
-
-  return true;
 }
 
 function getChatPanelWidthBounds() {
@@ -845,7 +834,7 @@ function WorkspaceAppContent({
    */
   const [linkGuests, setLinkGuests] = useState<Array<{ id: string; sourceId: string }>>([]);
   /** A linked document still downloading from the cloud, to open beside its link's document once it arrives. */
-  const [pendingWikiLinkOpen, setPendingWikiLinkOpen] = useState<{ sourceId: string; id: string } | null>(null);
+  const [pendingWikiLinkOpen, setPendingWikiLinkOpen] = useState<{ sourceId: string; id: string; roadmap?: true } | null>(null);
   const [recentModelSelections, setRecentModelSelections] = useState<
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
@@ -1213,6 +1202,8 @@ function WorkspaceAppContent({
   useEffect(() => {
     if (!pendingWikiLinkOpen || !state.conversations[pendingWikiLinkOpen.id]) return;
     setPendingWikiLinkOpen(null);
+    // A roadmap made just now (from a PDF's contents) opens in Learn, as a roadmap tile does.
+    if (pendingWikiLinkOpen.roadmap) { handleOpenRoadmapFromTiles(pendingWikiLinkOpen.id); return; }
     openLinkedDocumentBeside(state.conversations[pendingWikiLinkOpen.sourceId] ? pendingWikiLinkOpen.sourceId : activeConversation.id, pendingWikiLinkOpen.id);
   }, [pendingWikiLinkOpen, state.conversations]);
   const activeMarginNotesVisible = !closedMarginNotes[activeConversation.id]
@@ -1631,7 +1622,6 @@ function WorkspaceAppContent({
   );
   const sessions = state.sessions;
   const orderedSpaces = useMemo(() => orderSpaces(sessions), [sessions]);
-  const [sessionsRequest, setSessionsRequest] = useState(0);
   useSessionAutoNames({ userId: user.id, enabled: jevEnabled, sessions, conversations: state.conversations,
     onName: (sessionId, nameKey, name) => setState((current) => applySessionAutoName(current, sessionId, nameKey, name)) });
   const [navigationStyle, setNavigationStyle] = useState<DocumentNavigationStyle>(loadDocumentNavigationStyle);
@@ -1690,6 +1680,7 @@ function WorkspaceAppContent({
   }
   function featureHintFor(conversation: Conversation): { id: Parameters<typeof dismissFeatureHint>[0]; text: string; action: string; dismiss: string; act: () => void } | null {
     const turnOn = (id: FeatureId, text: string) => {
+      if (!featureAvailable(id)) return null;
       const name = FEATURES.find((feature) => feature.id === id)!.name;
       return { id, text, action: `Turn on ${name}`, dismiss: `keep ${name} off`, act: () => setFeature(id, true) };
     };
@@ -2264,8 +2255,8 @@ function WorkspaceAppContent({
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(
-        sidebarStorageKey(),
+      window.sessionStorage.setItem(
+        LEFT_SIDEBAR_SESSION_KEY,
         leftSidebarOpen ? "true" : "false",
       );
     } catch {
@@ -2597,6 +2588,25 @@ function WorkspaceAppContent({
     }
     return false;
   });
+  // ⌘⇧M a new margin note, ⌘⇧D a new side document, on the selection or the caret's paragraph of the focused page.
+  const handleNewNoteShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey) || (event.metaKey && event.ctrlKey) || !event.shiftKey || event.altKey || event.isComposing) return false;
+    const key = event.key.toLowerCase();
+    if (key !== "m" && key !== "d") return false;
+    if (mainViewMode !== "chat" || !activeConversation || activeConversation.nodeType === "board") return false;
+    if (!event.repeat) {
+      if (key === "m") handleNewMarginNote(activeConversation.id);
+      else handleNewSideDocument(activeConversation.id);
+    }
+    return true;
+  });
+  useEffect(() => {
+    function listener(event: KeyboardEvent) {
+      if (handleNewNoteShortcut(event)) { event.preventDefault(); event.stopPropagation(); }
+    }
+    document.addEventListener("keydown", listener, true);
+    return () => document.removeEventListener("keydown", listener, true);
+  }, []);
   useEffect(() => {
     function listener(event: KeyboardEvent) {
       // Capture before editor keymaps; a keep or a switch also stops the browser's bookmark and tab shortcuts.
@@ -5031,21 +5041,6 @@ function WorkspaceAppContent({
     return id;
   }
 
-  /**
-   * Opens a note beside its page, like any other document: the same note, id and text, shown wider.
-   * Nothing about the note changes; putting it away shows it in the margin again, level with its passage.
-   */
-  function handleOpenNoteBeside(conversationId: string) {
-    const conversation = state.conversations[conversationId];
-    if (!isMarginNoteDocument(conversation)) return;
-    setNotesBeside((current) => current.includes(conversationId) ? current : [...current, conversationId]);
-    setState((current) => current.conversations[conversationId]
-      ? placeDocumentAfterParent(focusDocument(current, conversationId), conversationId) : current);
-    // Clicking the note focused its page first; the opened note should still scroll into view.
-    suppressNextChatAutoCenterRef.current = false;
-    setDocumentFocusSequence((sequence) => sequence + 1);
-  }
-
   /** Puts a note opened beside its page back in the page's margin, and goes back to the page. */
   function handlePutNoteBack(conversationId: string) {
     if (!notesBesideSet.has(conversationId)) return false;
@@ -5099,20 +5094,51 @@ function WorkspaceAppContent({
     window.requestAnimationFrame(focus);
   }
 
-  /** The phone's + menu acts on the selection, else the paragraph at the caret, else the whole document. */
-  function prepareCreateMenu(): MobileCreateTarget {
-    if (selectionDraft?.conversationId === activeConversation.id) { createMenuPassage.current = selectionDraft; return "selection"; }
-    const paragraph = caretParagraphIn(activeConversation.id);
+  /**
+   * A new margin note or side document acts on the selection, else the paragraph at the caret, else the whole document.
+   * The phone's + menu, the header's Note and Side doc buttons, the ⋮ menu and ⌘⇧M / ⌘⇧D all start here.
+   */
+  function prepareNewTarget(conversationId: string): MobileCreateTarget {
+    if (selectionDraft?.conversationId === conversationId) { createMenuPassage.current = selectionDraft; return "selection"; }
+    const paragraph = caretParagraphIn(conversationId);
     createMenuPassage.current = paragraph ? { ...paragraph, prompt: "", sourceKind: "message", sourceContent: paragraph.quote } : null;
     return paragraph ? "paragraph" : "document";
   }
-  function handleCreateMenuSideDocument() {
+  function prepareCreateMenu(): MobileCreateTarget { return prepareNewTarget(activeConversation.id); }
+  function handleCreateMenuSideDocument(conversationId: string = activeConversation.id) {
     if (createMenuPassage.current) handleCreateSelectionSideDocument(createMenuPassage.current);
-    else handleAddSideChat(activeConversation.id);
+    else handleAddSideChat(conversationId);
   }
-  function handleCreateMenuNote() {
+  function handleCreateMenuNote(conversationId: string = activeConversation.id) {
     if (createMenuPassage.current) { handleCreateSelectionNote(createMenuPassage.current); return; }
-    focusNewDocumentEditor(handleCreateNote({ conversationId: activeConversation.id, content: "", sourceMessageId: null }));
+    focusNewDocumentEditor(handleCreateNote({ conversationId, content: "", sourceMessageId: null }));
+  }
+  /** New margin note on the selection, the caret's paragraph, or the document (header Note button, ⋮, ⌘⇧M). */
+  function handleNewMarginNote(conversationId: string) {
+    prepareNewTarget(conversationId);
+    handleCreateMenuNote(conversationId);
+  }
+  /** New side document from the selection, the caret's paragraph, or the document (header Side doc button, ⋮, ⌘⇧D). */
+  function handleNewSideDocument(conversationId: string) {
+    prepareNewTarget(conversationId);
+    handleCreateMenuSideDocument(conversationId);
+  }
+  /** Only where Move to margin can bring it back: vault files and public topics stay as they are. */
+  function canTurnIntoSideDocument(conversation: Conversation | undefined) {
+    return Boolean(conversation && isCompactDocument(conversation) && conversation.parentId && !conversation.vaultFile && !conversation.publicTopic);
+  }
+  /** A margin note becomes a side document of its own: its own pane, path crumb and map node. Move to margin undoes it. */
+  function handleTurnNoteIntoSideDocument(conversationId: string) {
+    if (!canTurnIntoSideDocument(state.conversations[conversationId])) return;
+    setNotesBeside((current) => current.filter((id) => id !== conversationId));
+    setState((current) => {
+      const target = current.conversations[conversationId];
+      if (!isMarginNoteDocument(target)) return current;
+      const next = { ...current, conversations: { ...current.conversations, [conversationId]: marginNoteToSideDocument(target) } };
+      return placeDocumentAfterParent(focusDocument(next, conversationId), conversationId);
+    });
+    suppressNextChatAutoCenterRef.current = false;
+    setDocumentFocusSequence((sequence) => sequence + 1);
   }
 
   /** Files picked from the + menu join the vault; one document opens right away. */
@@ -6019,6 +6045,8 @@ function WorkspaceAppContent({
 
   /** A `[[link]]`'s pop-up, or Cmd/Ctrl and click on it: the linked document opens beside the one it's in. */
   function handleOpenWikiLink(sourceId: string, document: WikiLinkDocument) {
+    // A link to a page of a PDF opens it there, once it is on screen.
+    if (document.page) requestPdfPage(document.id, document.page);
     // A roadmap stage's index hands over to the lesson it links to, which opens in its place (Back returns).
     if (state.conversations[document.id] && isStageDocumentId(sourceId)) { handleSwitchDocumentInPlace(sourceId, document.id); return; }
     if (state.conversations[document.id]) { openLinkedDocumentBeside(sourceId, document.id); return; }
@@ -6340,6 +6368,59 @@ function WorkspaceAppContent({
     return null;
   }
 
+  /** The roadmap already made from a PDF's contents: a roadmap under the PDF with the name one gets. */
+  function pdfRoadmapOf(conversations: AppState["conversations"], pdfId: string): string | null {
+    const pdf = conversations[pdfId];
+    if (!pdf?.vaultFile || pdf.vaultFile.kind !== "pdf") return null;
+    const title = pdfRoadmapTitle(pdf.title).toLowerCase();
+    return pdf.childIds.find((id) => conversations[id]?.nodeType === "roadmap" && conversations[id].title.trim().toLowerCase() === title) ?? null;
+  }
+
+  /**
+   * Make a roadmap from a PDF's contents: a new roadmap document under the PDF, opened beside it, with
+   * a step for each part of the contents. A PDF without contents of its own gets Draft with AI instead,
+   * reading the table of contents on its first pages; that draft waits on the roadmap for approval.
+   */
+  function handleMakePdfRoadmap(pdfId: string, source: PdfRoadmapSource) {
+    const pdf = currentStateRef.current.conversations[pdfId];
+    if (!pdf?.vaultFile) return;
+    const existing = pdfRoadmapOf(currentStateRef.current.conversations, pdfId);
+    if (existing) {
+      if (!features.roadmaps) setFeature("roadmaps", true);
+      handleOpenRoadmapFromTiles(existing);
+      return;
+    }
+    const fromContents = source.outline.length > 0;
+    if (!fromContents && isHiddenFromAI(pdf)) { setDocumentErrors((current) => ({ ...current, [pdfId]: HIDDEN_FROM_AI_MESSAGE })); return; }
+    const title = pdfRoadmapTitle(pdf.title);
+    const roadmapId = createId("conversation");
+    const blockId = createId("block");
+    const now = new Date().toISOString();
+    const proposal = fromContents ? pdfOutlineRoadmapProposal(source.outline, { roadmapId, roadmapTitle: title, pdfTitle: pdf.title, pageCount: source.pageCount, labels: source.labels }) : null;
+    if (fromContents && !proposal) { setDocumentErrors((current) => ({ ...current, [pdfId]: "This PDF's contents list has nothing to make steps from." })); return; }
+    const ids = proposal ? roadmapDraftIds(proposal, createId) : null;
+    const intro = fromContents ? `A roadmap for reading [[${pdf.title}]], made from its contents. Each step opens the PDF at its pages.`
+      : `A roadmap for reading [[${pdf.title}]].`;
+    const made = (current: AppState) => {
+      if (!current.conversations[pdfId] || current.conversations[roadmapId]) return current;
+      const added = addAIChildNodes(current, pdfId, [{ id: "roadmap", title, content: intro, blockId: "", from: 0, to: 0 }],
+        { now, createId: (prefix) => prefix === "conversation" ? roadmapId : blockId });
+      if (!added.createdIds.length) return current;
+      if (proposal && ids) return applyRoadmapDraft(added.state, proposal, ids, { updatedAt: now })?.state ?? added.state;
+      const roadmap = added.state.conversations[roadmapId];
+      return { ...added.state, conversations: { ...added.state.conversations, [roadmapId]: makeRoadmapDocument(roadmap, now) } };
+    };
+    currentStateRef.current = made(currentStateRef.current);
+    setState(made);
+    // Asking for a roadmap is asking for Roadmaps, which draws it; the feature is off until then.
+    if (!features.roadmaps) setFeature("roadmaps", true);
+    setPendingWikiLinkOpen({ sourceId: pdfId, id: roadmapId, roadmap: true });
+    if (!fromContents) {
+      const problem = handleDraftRoadmap(roadmapId, pdfContentsDraftGoal(pdf.title, source.firstPages ?? []), { agent: false });
+      if (problem) setDocumentErrors((current) => ({ ...current, [roadmapId]: problem }));
+    }
+  }
+
   /** Ask Agent mode to change this roadmap as the user describes; the change goes in when the run ends, with Undo. */
   function handleReviseRoadmap(conversationId: string, request: string): string | null {
     const conversation = currentStateRef.current.conversations[conversationId];
@@ -6468,6 +6549,12 @@ function WorkspaceAppContent({
   function handleMakeRoadmapFrom(conversationId: string) {
     const conversation = state.conversations[conversationId];
     if (!conversation) return;
+    // A PDF open on screen with contents of its own gets its roadmap from them, as its Contents tab's button does.
+    const navigation = conversation.vaultFile?.kind === "pdf" ? pdfNavigationFor(conversationId) : null;
+    if (navigation?.outline?.length || pdfRoadmapOf(state.conversations, conversationId)) {
+      handleMakePdfRoadmap(conversationId, { outline: navigation?.outline ?? [], labels: navigation?.labels ?? null, pageCount: navigation?.pageCount ?? 0, firstPages: null });
+      return;
+    }
     const title = conversation.title || "this document";
     const made = mapPathActions.onDraftPath(`Learn ${title}, building on my document \u201c${title}\u201d and the notes around it`);
     if ("error" in made) { setRevealNotice(made.error); return; }
@@ -6838,7 +6925,7 @@ function WorkspaceAppContent({
       onSwitch={(id) => { if (inline) setMobileHeaderOpen(false); handleSwitchSession(id); }}
       onNew={(name) => { if (inline) setMobileHeaderOpen(false); handleCreateSession(name); }}
       onNewFromTabs={() => { if (inline) setMobileHeaderOpen(false); handleCreateSession(undefined, openRootIds); }}
-      onManage={() => { setMobileHeaderOpen(false); setLeftSidebarOpen(true); setSessionsRequest((count) => count + 1); }}
+      onManage={() => { setMobileHeaderOpen(false); setTileTab("spaces"); handleSetMainViewMode("tiles"); }}
       onDropDocument={handleKeepInSpace} />;
   }
 
@@ -7001,11 +7088,12 @@ function WorkspaceAppContent({
         // Documents with a tab close from its ×; notes and branches have no tab, so their menu keeps Close.
         onMinimize={handleMinimizeDocument}
         onClose={!hasDocumentTab(conversation.id) ? handleCloseDocument : quietTabsHidden() ? handleCloseTab : undefined} onRestore={handleSelectConversation} onRename={handleRenameThread}
-        onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
+        onNewMarginNote={handleNewMarginNote}
+        onNewSideDocument={handleNewSideDocument}
         // On a played page this is the phone's way to ask about what the game shows; the question carries its screen.
         onAskAboutNote={conversation.document || conversation.kind === "note" || isPlayPage(conversation) && !isHiddenFromAI(conversation) ? (id) => setNoteChatFor(id) : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
-        onOpenBeside={isCompactDocument(conversation) ? handleOpenNoteBeside : undefined}
+        onMoveToSideDocument={canTurnIntoSideDocument(conversation) ? handleTurnNoteIntoSideDocument : undefined}
         onPutBackInMargin={notesBesideSet.has(conversation.id) ? handlePutNoteBack : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI}
         // Board, Language, Read and Review are modes now, switched from the button in the document's header.
@@ -7050,8 +7138,12 @@ function WorkspaceAppContent({
     const roadmap = view === "chat" && isPathDocument(conversation) ? buildMapPath(conversation, state.conversations) : null;
     const steps = view === "chat" ? (roadmapSteps.get(conversation.id) ?? []).filter((step) => step.pathId !== conversation.id).slice(0, 2) : [];
     const modeSwitch = view === "chat" && !isMobileViewport ? renderDocumentModeSwitch(conversation) : null;
-    if (!claimCount && !roadmap && !steps.length && !modeSwitch) return null;
+    // Note and Side doc: the two ways to add to a page, always one click away on desktop (phones use the + button).
+    const newButtons = view === "chat" && !isMobileViewport && !isCompactDocument(conversation) && conversation.nodeType !== "board"
+      ? <DocumentNewButtons iconsOnly={Boolean(conversation.parentId)} onNote={() => handleNewMarginNote(conversation.id)} onSideDocument={() => handleNewSideDocument(conversation.id)} /> : null;
+    if (!claimCount && !roadmap && !steps.length && !modeSwitch && !newButtons) return null;
     return <>
+      {newButtons}
       {modeSwitch}
       {roadmap ? <button type="button" className="document-roadmap-chip" title="Show this roadmap on the map"
         onClick={() => showRoadmapOnMap(conversation.id)}>Roadmap <span>{roadmap.finished}/{roadmap.total}</span></button> : null}
@@ -7136,7 +7228,7 @@ function WorkspaceAppContent({
           ? <div className="document-page-path">{renderDocumentBreadcrumbs()}</div> : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
-        {inMargin && view === "chat" && isCompactDocument(conversation) ? renderOpenBesideButton(conversation) : null}
+        {inMargin && view === "chat" && canTurnIntoSideDocument(conversation) ? renderTurnIntoSideDocButton(conversation) : null}
       </>}
       // A note's own notes are listed at the end of its page and drawn on the map beside it, so document view has no Children menu.
       childNavigation={view === "graph" ? renderChildrenMenu(conversation, view, dock) : undefined}
@@ -7193,6 +7285,8 @@ function WorkspaceAppContent({
       linkSuggestions={(query) => wikiLinkSuggestions({ conversations: state.conversations, cloudDocuments: vault.cloudDocuments, currentId: conversation.id }, query)}
       resolveWikiLink={(target) => resolveWikiLinkDocument(target, state.conversations, vault.cloudDocuments)}
       onOpenWikiLink={(document) => handleOpenWikiLink(conversation.id, document)}
+      pdfRoadmap={conversation.vaultFile?.kind === "pdf" ? { exists: Boolean(pdfRoadmapOf(state.conversations, conversation.id)),
+        onMake: (source) => handleMakePdfRoadmap(conversation.id, source) } : undefined}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
       aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)}
         onApplyPreset={(preset) => handleApplyAIPreset(conversation.id, preset)} usage={aiUsage} />}
@@ -7318,7 +7412,6 @@ function WorkspaceAppContent({
   function renderMarginFamily(note: Conversation, view: "chat" | "graph", fitContent = false) {
     return <div className="margin-document-family">
       <MarginDocumentFrame data-document-id={note.id} size={note.document?.marginNote?.size} fitContent={fitContent}
-        onOpen={view === "chat" ? () => handleOpenNoteBeside(note.id) : undefined}
         onResize={(size) => handleResizeMarginDocument(note.id, size)}
         onResizePreview={(size) => setMarginResizePreviews((current) => ({ ...current, [note.id]: size ?? undefined }))}
         onPointerDownCapture={() => handleFocusVisibleDocument(note.id)}
@@ -7328,12 +7421,13 @@ function WorkspaceAppContent({
       {renderDocumentMarginNotes(note, view)}
     </div>;
   }
-  /** The note's own "open to the side" button, next to its ⋮ and ×, where people look for window controls. */
-  function renderOpenBesideButton(note: Conversation) {
+  /** The note's own "make it a page" button, next to its ⋮ and ×: a note that outgrew the margin becomes a side document. */
+  function renderTurnIntoSideDocButton(note: Conversation) {
     return <button type="button" className="document-window-button note-open-beside-button"
-      aria-label={`Open beside the page: ${note.title || "Untitled note"}`} title={`Open beside (${isApplePlatform() ? "⌘↵" : "Ctrl+Enter"})`}
-      onClick={() => handleOpenNoteBeside(note.id)}>
-      <OpenBesideIcon />
+      aria-label={`Turn into side document: ${note.title || "Untitled note"}`}
+      title="Turn into side document: its own page beside this one (⋮ → Move to margin puts it back)"
+      onClick={() => handleTurnNoteIntoSideDocument(note.id)}>
+      <SideDocumentIcon size={16} />
     </button>;
   }
   /** "Thinks with you ▾": how the AI joins in, on the page's own row. Opens Customise. */
@@ -7371,7 +7465,6 @@ function WorkspaceAppContent({
     if (!showsMarginInPanel(conversation, view)) return undefined;
     const claims = view === "chat" ? getClaimMarginItems(conversation) : [];
     const items = getMarginDocuments(conversation).map((note): DocumentMarginItem => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true), foldable: true,
-      onOpenBeside: view === "chat" ? () => handleOpenNoteBeside(note.id) : undefined,
       label: getEditableDocumentText(note).trim().split(/\r?\n/)[0]?.slice(0, 80) || note.title,
       ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()),
       pending: Boolean(note.document?.generations.some((generation) => generation.status === "streaming")) }));
@@ -7648,16 +7741,6 @@ function WorkspaceAppContent({
                 onOpenSettings={() => { setProfileInitialTab("storage"); setProfileModalOpen(true); }} />}
               documentOrder={documentOrder}
               groupsEnabled={features.groups} outlineEnabled={features.outline} onMoreFeatures={openFeatureSettings}
-              sessionsPanel={!features.spaces ? undefined : <SpacesPanel spaces={orderedSpaces} activeId={sessions?.activeId ?? null}
-                conversations={state.conversations} focusedDocumentId={activeConversation.id}
-                onOpen={handleSwitchSession}
-                onRename={(sessionId, name) => setState((current) => renameSession(current, sessionId, name))}
-                onDuplicate={(sessionId) => setState((current) => duplicateSession(current, sessionId))}
-                onDelete={handleDeleteSession} onNew={(name) => handleCreateSession(name)}
-                onOpenDocument={(id) => handleSelectConversation(id, { nextViewMode: "chat" })}
-                showIntro={newVault}
-                onRemoveDocument={handleToggleSpaceDocument} />}
-              sessionsRequest={sessionsRequest}
               documentSort={documentSort}
               onDocumentSortChange={(sort) => { setDocumentSort(sort); saveSidebarDocumentSort(storageUserId, sort); }}
               mapExplorerRef={setGraphExplorerContainer}
@@ -7743,6 +7826,12 @@ function WorkspaceAppContent({
                     {features.roadmaps && tileTab === "roadmaps" ? <>
                       <h2>Your roadmaps</h2>
                       <p className="canvas-hint">Every roadmap as a card. Open one to learn it in order, or start a new one.</p>
+                    </> : features.groups && tileTab === "groups" ? <>
+                      <h2>Your groups</h2>
+                      <p className="canvas-hint">A group is a label, like a tag: it sorts documents by topic, and each document sits in one group. Nothing opens or closes when you use one.</p>
+                    </> : features.spaces && tileTab === "spaces" ? <>
+                      <h2>Your spaces</h2>
+                      <p className="canvas-hint">A space is a workspace you&apos;re actively working in: it keeps one project&apos;s documents open as tabs, so you can switch to it and pick up where you left off.</p>
                     </> : <>
                       <h2>Your documents</h2>
                       <p className="canvas-hint">
@@ -7750,7 +7839,7 @@ function WorkspaceAppContent({
                       </p>
                     </>}
                     {newVault ? <ViewIntro id="tiles" className="is-tiles" title="What Tiles shows">
-                      Each main document gets a card here, with its side documents and notes counted on it. Make a group to keep a project&apos;s documents together.
+                      Each main document gets a card here, with its side documents and notes counted on it.
                     </ViewIntro> : null}
                   </div>
                   {renderRelatedItems()}
@@ -7766,7 +7855,23 @@ function WorkspaceAppContent({
                   onOpenThread={handleSelectConversation}
                   onToggleGroup={handleToggleConversationGroup}
                   threads={threadSummaries}
-                  roadmaps={features.roadmaps ? { tiles: roadmapTiles, tab: tileTab, onTab: setTileTab, onOpen: handleOpenRoadmapFromTiles,
+                  tab={tileTab} onTab={setTileTab}
+                  groupsEnabled={features.groups}
+                  spaces={!features.spaces ? undefined : { count: orderedSpaces.length, content: <SpaceTiles spaces={orderedSpaces}
+                    activeId={sessions?.activeId ?? null} conversations={state.conversations}
+                    onOpen={(sessionId) => {
+                      if ((currentStateRef.current.sessions?.activeId ?? null) === sessionId) setMainViewMode("chat");
+                      else handleSwitchSession(sessionId);
+                    }}
+                    onRename={(sessionId, name) => setState((current) => renameSession(current, sessionId, name))}
+                    onDuplicate={(sessionId) => setState((current) => duplicateSession(current, sessionId))}
+                    onDelete={handleDeleteSession} onNew={(name) => handleCreateSession(name)}
+                    onOpenDocument={(sessionId, documentId) => {
+                      if ((currentStateRef.current.sessions?.activeId ?? null) !== sessionId) handleSwitchSession(sessionId);
+                      handleSelectConversation(documentId, { nextViewMode: "chat" });
+                    }}
+                    onRemoveDocument={handleToggleSpaceDocument} /> }}
+                  roadmaps={features.roadmaps ? { tiles: roadmapTiles, onOpen: handleOpenRoadmapFromTiles,
                     onDraft: (goal) => {
                       const made = mapPathActions.onDraftPath(goal);
                       if ("error" in made) return made.error;
@@ -8114,9 +8219,11 @@ function WorkspaceAppContent({
                 pressed={(format) => hasSelectionFormat(selectionBlock.content, selectionDraft.startOffset, selectionDraft.endOffset, format as SelectionFormat)}
                 onFormat={(format) => handleFormatSelection(format as SelectionFormat)} /> : null}
               <SelectionToolbarRow
-                // Note, Link and Ask AI stay in view; everything else waits in ⋯ (thread "Simplify Margin Chat with opt-in features").
+                // Note, Side doc, Link and Ask AI stay in view; everything else waits in ⋯ (thread "Simplify Margin Chat with opt-in features").
                 actions={[
                   { icon: "note", label: "Note", ariaLabel: selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note", onSelect: () => handleCreateSelectionNote() },
+                  // Margin note and side document side by side: a thought beside the passage, or a new page from it.
+                  { icon: "side", label: "Side doc", ariaLabel: "Create a side document from this passage", onSelect: () => handleCreateSelectionSideDocument() },
                   { icon: "link", label: "Link", ariaLabel: "Link selected text to an existing document or block", pressed: selectionIntent === "link",
                     onSelect: () => { setSelectionLinkError(null); setSelectionIntent((intent) => intent === "link" ? "actions" : "link"); } },
                 ]}

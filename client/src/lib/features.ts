@@ -37,10 +37,10 @@ export const FEATURES: readonly FeatureInfo[] = [
     adds: "Language in a document's mode button", keywords: ["language", "translate", "translation", "vocabulary", "words", "spanish", "lingq", "foreign"] },
   { id: "voice", group: "Capture", name: "Voice typing", description: "Talk instead of typing in any text field.",
     adds: "The mic button in text fields and Hold Space to talk", keywords: ["voice", "dictation", "dictate", "mic", "microphone", "speech", "talk"] },
-  { id: "groups", group: "Organize", name: "Groups", description: "Collect documents into named groups.",
-    adds: "A Groups tab in the sidebar, “New group” in the sidebar's ⋯ menu, “Group” in a document's ⋯ menu", keywords: ["group", "folder", "collection"] },
-  { id: "spaces", group: "Organize", name: "Spaces", description: "Save a set of open documents to come back to.",
-    adds: "A Spaces tab in the sidebar, “Add to space” in a document's ⋯ menu", keywords: ["space", "session", "workspace"] },
+  { id: "groups", group: "Organize", name: "Groups", description: "Label documents by topic, like tags.",
+    adds: "A Groups tab in Tile view, “New group” in the sidebar's ⋯ menu, a Group section in each document's ⋯ menu", keywords: ["group", "folder", "collection"] },
+  { id: "spaces", group: "Organize", name: "Spaces", description: "Workspaces you're actively in: one project's open tabs to switch back to.",
+    adds: "A Spaces tab in Tile view, the space button by the tabs, a Spaces section in each document's ⋯ menu", keywords: ["space", "session", "workspace"] },
   { id: "outline", group: "Organize", name: "Outline", description: "The open document's headings, to jump between.",
     adds: "An Outline tab in the sidebar", keywords: ["outline", "headings", "table of contents", "toc"] },
   { id: "tiles", group: "Organize", name: "Tile view", description: "Every open document side by side as tiles.",
@@ -61,10 +61,33 @@ export const FEATURE_PRESETS: readonly { id: FeaturePreset; name: string; featur
 
 export type FeatureSet = Readonly<Record<FeatureId, boolean>>;
 
+/**
+ * Features that aren't ready for everyone: only accounts the server lists in
+ * OWNER_ONLY_FEATURE_EMAILS get them (it sends them as `ownerFeatures` on the signed-in user,
+ * and refuses their API for everyone else). Keep in step with server/features/ownerOnly.mjs.
+ */
+export const OWNER_ONLY_FEATURES: readonly FeatureId[] = ["voice", "flashcards"];
+let ownerAccess: ReadonlySet<FeatureId> = new Set();
+
+/** Which held-back features the signed-in account may use; call with nothing on sign-out. */
+export function setOwnerFeatureAccess(ids: readonly string[] | null | undefined) {
+  const next = new Set(OWNER_ONLY_FEATURES.filter((id) => ids?.includes(id)));
+  if (next.size === ownerAccess.size && [...next].every((id) => ownerAccess.has(id))) return;
+  ownerAccess = next;
+  listeners.forEach((listener) => listener());
+}
+
+/** False for a held-back feature this account can't use: it has no switch and stays off. */
+export function featureAvailable(id: FeatureId): boolean {
+  return !OWNER_ONLY_FEATURES.includes(id) || ownerAccess.has(id);
+}
+
 export const FEATURES_KEY = "margin-chat:features";
 const ALL_OFF = Object.fromEntries(FEATURES.map(({ id }) => [id, false])) as unknown as FeatureSet;
 const listeners = new Set<() => void>();
 let cached: { raw: string | null; features: FeatureSet } | null = null;
+let usableCached: { saved: FeatureSet; access: ReadonlySet<FeatureId>; features: FeatureSet } | null = null;
+let availableCached: { access: ReadonlySet<FeatureId>; features: readonly FeatureInfo[] } | null = null;
 
 export function parseFeatures(raw: string | null): FeatureSet {
   let value: Record<string, unknown> = {};
@@ -82,6 +105,22 @@ export function readFeatures(): FeatureSet {
   const raw = readRaw();
   if (!cached || cached.raw !== raw) cached = { raw, features: parseFeatures(raw) };
   return cached.features;
+}
+
+/** The saved choices, with held-back features this account can't use left off. */
+export function readUsableFeatures(): FeatureSet {
+  const saved = readFeatures();
+  if (usableCached && usableCached.saved === saved && usableCached.access === ownerAccess) return usableCached.features;
+  const features = Object.fromEntries(FEATURES.map(({ id }) => [id, saved[id] && featureAvailable(id)])) as unknown as FeatureSet;
+  usableCached = { saved, access: ownerAccess, features };
+  return features;
+}
+
+/** The features this account can switch on (all but held-back ones it isn't allowed). */
+export function availableFeatures(): readonly FeatureInfo[] {
+  if (availableCached && availableCached.access === ownerAccess) return availableCached.features;
+  availableCached = { access: ownerAccess, features: FEATURES.filter(({ id }) => featureAvailable(id)) };
+  return availableCached.features;
 }
 
 /** Whether this device or the account has ever saved a choice (new accounts and existing ones differ here). */
@@ -115,12 +154,13 @@ export function setFeature(id: FeatureId, on: boolean) {
 
 export function applyFeaturePreset(preset: FeaturePreset) {
   const chosen = new Set(FEATURE_PRESETS.find((entry) => entry.id === preset)?.features ?? []);
-  saveFeatures(Object.fromEntries(FEATURES.map(({ id }) => [id, chosen.has(id)])));
+  // A held-back feature this account can't use is left as it was.
+  saveFeatures(Object.fromEntries(availableFeatures().map(({ id }) => [id, chosen.has(id)])));
 }
 
-/** The preset these switches match exactly, if any. */
+/** The preset these switches match exactly, if any (held-back features this account can't use don't count). */
 export function matchingPreset(features: FeatureSet): FeaturePreset | null {
-  return FEATURE_PRESETS.find((preset) => FEATURES.every(({ id }) => features[id] === preset.features.includes(id)))?.id ?? null;
+  return FEATURE_PRESETS.find((preset) => availableFeatures().every(({ id }) => features[id] === preset.features.includes(id)))?.id ?? null;
 }
 
 export function subscribeFeatures(listener: () => void): () => void {
@@ -130,7 +170,12 @@ export function subscribeFeatures(listener: () => void): () => void {
 }
 
 export function useFeatures(): FeatureSet {
-  return useSyncExternalStore(subscribeFeatures, readFeatures, () => ALL_OFF);
+  return useSyncExternalStore(subscribeFeatures, readUsableFeatures, () => ALL_OFF);
+}
+
+const NO_FEATURES: readonly FeatureInfo[] = [];
+export function useAvailableFeatures(): readonly FeatureInfo[] {
+  return useSyncExternalStore(subscribeFeatures, availableFeatures, () => NO_FEATURES);
 }
 
 /** Features whose name or keywords match what was typed in ⌘K. */
@@ -138,7 +183,7 @@ export function matchFeatures(query: string): FeatureInfo[] {
   const text = query.trim().toLocaleLowerCase();
   if (text.length < 3) return [];
   // Typing the start of a name or keyword finds it ("flash", "dictat"); a plural finds it too ("boards").
-  return FEATURES.filter((feature) => [feature.name.toLocaleLowerCase(), ...feature.keywords]
+  return availableFeatures().filter((feature) => [feature.name.toLocaleLowerCase(), ...feature.keywords]
     .some((word) => word.startsWith(text) || text === `${word}s` || text === `${word}es`));
 }
 

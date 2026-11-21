@@ -3,7 +3,6 @@ import type { Conversation, WorkspaceSession } from "../types";
 import { formatRelativeTime } from "../lib/conversationSearch";
 import { useOutsideDismiss } from "../lib/useOutsideDismiss";
 import { getSessionRootDocuments } from "../lib/workspaceSessions";
-import ViewIntro from "./ViewIntro";
 import "./Spaces.css";
 
 /** What a document's menu needs to add it to spaces or take it out. */
@@ -60,7 +59,7 @@ interface SwitcherProps {
   onSwitch: (id: string | null) => void;
   onNew: (name: string) => void;
   onNewFromTabs: () => void;
-  /** Opens the left panel's Spaces view, where spaces are renamed and deleted. */
+  /** Opens Tile view's Spaces tab, where spaces are renamed and deleted. */
   onManage: () => void;
   /** A document dropped on the button joins the space you're in. */
   onDropDocument?: (documentId: string) => void;
@@ -226,99 +225,86 @@ export function SpaceStartPanel({ space, conversations, onOpen, onNewDocument }:
   </section>;
 }
 
-interface PanelProps {
+interface TilesProps {
   spaces: WorkspaceSession[];
   activeId: string | null;
   conversations: Record<string, Conversation>;
-  focusedDocumentId: string;
-  onOpen: (id: string | null) => void;
+  /** Go into a space; the one you're in just shows its documents. */
+  onOpen: (id: string) => void;
   onRename: (id: string, name: string) => void;
   onDuplicate: (id: string) => void;
   onDelete: (id: string) => void;
   onNew: (name: string) => void;
-  onOpenDocument: (id: string) => void;
+  onOpenDocument: (spaceId: string, documentId: string) => void;
   onRemoveDocument: (spaceId: string, documentId: string) => void;
-  /** Explain what a space is, for a nearly empty vault. */
-  showIntro?: boolean;
 }
 
-/** The left panel's Spaces view: every space, and the documents kept in the one you're in. */
-export function SpacesPanel({ spaces, activeId, conversations, focusedDocumentId, onOpen, onRename, onDuplicate, onDelete, onNew, onOpenDocument, onRemoveDocument, showIntro = false }: PanelProps) {
+/** Tile view's Spaces tab: every space as a tile, with what's kept in it. */
+export function SpaceTiles({ spaces, activeId, conversations, onOpen, onRename, onDuplicate, onDelete, onNew, onOpenDocument, onRemoveDocument }: TilesProps) {
   const [menuId, setMenuId] = useState<string | null>(null);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const menu = useRef<HTMLDivElement>(null);
   useOutsideDismiss(menuId !== null, () => setMenuId(null), menu);
-  const active = spaces.find((space) => space.id === activeId);
   const deletingSpace = spaces.find((space) => space.id === deleting);
-  const activeDocuments = active ? getSessionRootDocuments(active, conversations) : [];
 
-  function row(space: WorkspaceSession) {
+  function tile(space: WorkspaceSession) {
     const isActive = space.id === activeId;
-    const count = getSessionRootDocuments(space, conversations).length;
-    return <li key={space.id} className={`space-row${isActive ? " is-active" : ""}`} data-space-row-id={space.id}>
-      <span className="space-dot" style={{ background: space.color }} aria-hidden="true" />
-      {renaming === space.id ? <RenameInput initial={space.nameSource === "user" ? space.name : ""} label={`Rename ${space.name}`}
-        onDone={(name) => { setRenaming(null); if (name !== null) onRename(space.id, name); }} />
-        : <button type="button" className="space-row-open" aria-current={isActive ? "true" : undefined} onClick={() => onOpen(space.id)}
-          title={space.nameSource === "auto" ? `${space.name} (named from its documents)` : space.name}>
-          <span className="space-row-name">{space.name}</span>
-          <span className="space-meta">{countLabel(count)}{isActive ? "" : ` · ${formatRelativeTime(space.lastOpenedAt)}`}</span>
-        </button>}
-      <button type="button" className="space-row-menu-trigger" aria-label={`Options for ${space.name}`} aria-haspopup="menu"
-        aria-expanded={menuId === space.id} onClick={() => setMenuId((current) => current === space.id ? null : space.id)}>⋯</button>
-      {menuId === space.id ? <div ref={menu} className="space-menu" role="menu" aria-label={`Options for ${space.name}`}
-        onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setMenuId(null); } }}>
-        <button type="button" role="menuitem" onClick={() => { setMenuId(null); onOpen(space.id); }}>Open</button>
-        <button type="button" role="menuitem" onClick={() => { setMenuId(null); setRenaming(space.id); }}>Rename</button>
-        <button type="button" role="menuitem" onClick={() => { setMenuId(null); onDuplicate(space.id); }}>Duplicate</button>
-        <hr />
-        <button type="button" role="menuitem" className="is-danger" onClick={() => { setMenuId(null); setDeleting(space.id); }}>Delete space…</button>
-      </div> : null}
+    const documents = getSessionRootDocuments(space, conversations);
+    const shown = documents.slice(0, 5);
+    return <li key={space.id} className={`space-tile${isActive ? " is-active" : ""}`} style={{ "--space-color": space.color } as CSSProperties}
+      data-space-tile-id={space.id}>
+      <div className="space-tile-head">
+        <span className="space-dot" style={{ background: space.color }} aria-hidden="true" />
+        {renaming === space.id ? <RenameInput initial={space.nameSource === "user" ? space.name : ""} label={`Rename ${space.name}`}
+          onDone={(name) => { setRenaming(null); if (name !== null) onRename(space.id, name); }} />
+          : <button type="button" className="space-tile-open" onClick={() => onOpen(space.id)}
+            aria-label={isActive ? `${space.name}: you're here. Go back to its documents` : `Open the space ${space.name}`}>
+            <strong>{space.name}</strong>
+          </button>}
+        <button type="button" className="space-row-menu-trigger" aria-label={`Options for ${space.name}`} aria-haspopup="menu"
+          aria-expanded={menuId === space.id} onClick={() => setMenuId((current) => current === space.id ? null : space.id)}>⋯</button>
+        {menuId === space.id ? <div ref={menu} className="space-menu" role="menu" aria-label={`Options for ${space.name}`}
+          onKeyDown={(event) => { if (event.key === "Escape") { event.preventDefault(); setMenuId(null); } }}>
+          <button type="button" role="menuitem" onClick={() => { setMenuId(null); onOpen(space.id); }}>Open</button>
+          <button type="button" role="menuitem" onClick={() => { setMenuId(null); setRenaming(space.id); }}>Rename</button>
+          <button type="button" role="menuitem" onClick={() => { setMenuId(null); onDuplicate(space.id); }}>Duplicate</button>
+          <hr />
+          <button type="button" role="menuitem" className="is-danger" onClick={() => { setMenuId(null); setDeleting(space.id); }}>Delete space…</button>
+        </div> : null}
+      </div>
+      <p className="space-meta">{countLabel(documents.length)}{isActive ? " · you're here" : ` · last used ${formatRelativeTime(space.lastOpenedAt)}`}</p>
+      {shown.length ? <ul className="space-tile-documents">
+        {shown.map((document) => <li key={document.id} className="space-document">
+          <button type="button" className="space-document-open" onClick={() => onOpenDocument(space.id, document.id)} title={document.title || "Untitled document"}>
+            {document.title || "Untitled document"}
+          </button>
+          <button type="button" className="space-document-remove" aria-label={`Remove ${document.title || "Untitled document"} from ${space.name}`}
+            title="Take out of this space (stays in your vault)" onClick={() => onRemoveDocument(space.id, document.id)}>×</button>
+        </li>)}
+        {documents.length > shown.length ? <li className="space-meta">and {documents.length - shown.length} more</li> : null}
+      </ul> : <p className="spaces-hint">Nothing kept here yet. Add documents from their ⋯ menu in the left panel.</p>}
     </li>;
   }
 
-  return <div className="spaces-panel">
-    {showIntro ? <ViewIntro id="sessions" className="is-sessions" title="What spaces are">
-      A space keeps the documents for one project together, so you can come back to them. Documents join only when you add them; anything else you open there is just visiting.
-    </ViewIntro> : null}
-    <section aria-labelledby="spaces-all">
-      <h3 id="spaces-all" className="spaces-heading">Spaces</h3>
-      <ul className="spaces-list">
-        <li className={`space-row${activeId === null ? " is-active" : ""}`}>
-          <span className="space-ring" aria-hidden="true" />
-          <button type="button" className="space-row-open" aria-current={activeId === null ? "true" : undefined} onClick={() => onOpen(null)}>
-            <span className="space-row-name">No space</span><span className="space-meta">just browsing</span>
-          </button>
-        </li>
-        {spaces.map(row)}
-      </ul>
-    </section>
-    {creating ? <div className="spaces-new-form">
-      <RenameInput initial="" label="New space name" placeholder="Name the new space" onDone={(name) => { setCreating(false); if (name !== null) onNew(name); }} />
-      <p className="spaces-hint">Enter makes it and takes you there.</p>
-    </div> : <button type="button" className="spaces-new" onClick={() => setCreating(true)}><PlusIcon />New space</button>}
-    {active ? <section aria-labelledby="spaces-active-documents" className="spaces-documents">
-      <h3 id="spaces-active-documents" className="spaces-heading">In {active.name}</h3>
-      {activeDocuments.length ? <ul className="spaces-list">
-        {activeDocuments.map((document) => <li key={document.id} className={`space-document${document.id === focusedDocumentId ? " is-here" : ""}`}>
-          <button type="button" className="space-document-open" aria-current={document.id === focusedDocumentId ? "page" : undefined}
-            onClick={() => onOpenDocument(document.id)} title={document.title || "Untitled document"}>
-            {document.title || "Untitled document"}
-          </button>
-          <button type="button" className="space-document-remove" aria-label={`Remove ${document.title || "Untitled document"} from ${active.name}`}
-            title="Remove from this space (stays in your vault)" onClick={() => onRemoveDocument(active.id, document.id)}>×</button>
-        </li>)}
-      </ul> : <p className="spaces-empty">Nothing kept here yet. Use Keep on a tab, ⌘D, or a document's menu to add one.</p>}
-    </section> : null}
-    {deletingSpace ? <div className="spaces-confirm" role="alertdialog" aria-modal="true" aria-labelledby="spaces-confirm-title" aria-describedby="spaces-confirm-body">
-      <strong id="spaces-confirm-title">Delete “{deletingSpace.name}”?</strong>
-      <p id="spaces-confirm-body">Its {countLabel(getSessionRootDocuments(deletingSpace, conversations).length)} stay in your vault. Only this space's list and layout are removed.</p>
+  return <section className="space-tiles" aria-label="Spaces">
+    <ul className="space-tile-grid">
+      <li className="space-tile is-new">
+        {creating ? <>
+          <RenameInput initial="" label="New space name" placeholder="Name the new space" onDone={(name) => { setCreating(false); if (name !== null) onNew(name); }} />
+          <p className="spaces-hint">Enter makes it and takes you there.</p>
+        </> : <button type="button" className="spaces-new" onClick={() => setCreating(true)}><PlusIcon />New space</button>}
+      </li>
+      {spaces.map(tile)}
+    </ul>
+    {deletingSpace ? <div className="spaces-confirm" role="alertdialog" aria-modal="true" aria-labelledby="space-tiles-confirm-title" aria-describedby="space-tiles-confirm-body">
+      <strong id="space-tiles-confirm-title">Delete “{deletingSpace.name}”?</strong>
+      <p id="space-tiles-confirm-body">Its {countLabel(getSessionRootDocuments(deletingSpace, conversations).length)} stay in your vault. Only this space's list and layout are removed.</p>
       <div className="spaces-confirm-actions">
         <button type="button" onClick={() => setDeleting(null)}>Cancel</button>
         <button type="button" className="is-danger" onClick={() => { setDeleting(null); onDelete(deletingSpace.id); }}>Delete space</button>
       </div>
     </div> : null}
-  </div>;
+  </section>;
 }

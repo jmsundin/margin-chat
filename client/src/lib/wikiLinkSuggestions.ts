@@ -1,3 +1,4 @@
+import { pdfPageFromLinkTarget } from "./pdfRoadmap";
 import { markdownIdentitySuffix, titleMarkdownPath } from "@margin-chat/workspace-contracts";
 import { createDocumentLinkResolver } from "./documentRelations";
 import type { Conversation } from "../types";
@@ -129,6 +130,8 @@ export interface WikiLinkDocument {
   detail?: string;
   /** Still in the cloud; it downloads when opened. */
   cloudPath?: string;
+  /** The page a PDF link opens at (`Book.pdf#page=12`). */
+  page?: number;
 }
 
 /** The document a link names: one already here, or one still in the cloud, by filename, id or unique title. */
@@ -138,7 +141,8 @@ export function resolveWikiLinkDocument(target: string, conversations: Record<st
   if (id) {
     const conversation = conversations[id];
     const parentTitle = conversation.parentId ? conversations[conversation.parentId]?.title?.trim() : "";
-    return { id, title: conversation.title.trim() || "Untitled document", ...(parentTitle ? { detail: parentTitle } : {}) };
+    const page = conversation.vaultFile?.kind === "pdf" ? pdfPageFromLinkTarget(target) : null;
+    return { id, title: conversation.title.trim() || "Untitled document", ...(parentTitle ? { detail: parentTitle } : {}), ...(page ? { page } : {}) };
   }
   const name = target.replace(/\\/g, "/").split("/").at(-1)!.replace(/\.md$/i, "").trim();
   const suffix = / — ([0-9a-z]+-[0-9a-z]+)(?: \(\d+\))?$/.exec(name)?.[1];

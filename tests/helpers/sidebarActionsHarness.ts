@@ -114,15 +114,13 @@ try {
       element(selector).dispatchEvent(event);
     });
   }
-  await click('[aria-label="Show groups"]');
+  // Dragging a document carries it for the space button by the tabs; the left panel has no drop sections.
   await drag("dragstart", ".thread-item-main");
-  assert(container.querySelector('[data-thread-drop-target="pinned"]'));
-  await drag("drop", '[data-thread-drop-target="pinned"]');
-  assert(events.includes("pin:chat"));
-  assert.equal(container.querySelector('[data-thread-drop-target="pinned"]'), null);
-  await drag("dragstart", ".thread-item-main");
+  assert.equal(data.get("application/x-margin-document"), "chat");
+  assert.equal(container.querySelector('[data-thread-drop-target]'), null);
   await drag("dragend", ".thread-item-main");
-  assert.equal(container.querySelector('[data-thread-drop-target="pinned"]'), null);
+  assert.equal(container.querySelector('[aria-label="Show groups"]'), null, "Groups live in Tile view, not a sidebar tab.");
+  assert.equal(container.querySelector('[aria-label="Show spaces"]'), null, "Spaces live in Tile view, not a sidebar tab.");
   // Reveal in Finder: only with the desktop app's vault folder, and only for documents with a file there.
   // The menu renders at the page level (so a docked Map or roadmap cannot cover it), not inside the sidebar.
   const menuItem = (label: string) => [...browser.document.querySelectorAll('.thread-item-menu [role="menuitem"]')]
@@ -141,11 +139,50 @@ try {
   assert.equal(events.at(-1), "reveal:chat");
   assert.equal(browser.document.querySelector(".thread-item-menu"), null, "The menu closes after revealing.");
 
+  // A document's menu has a Spaces section and a Group section to move it into either.
+  const { SpaceMenuContext } = await import("../../client/src/components/Spaces");
+  const inSpaces = new Set<string>();
+  const spaceActions = {
+    spaces: [{ id: "space-1", name: "Thesis", color: "#4f7bdf" }] as never[],
+    isIn: (spaceId: string, documentId: string) => inSpaces.has(`${spaceId}:${documentId}`),
+    onToggle: (spaceId: string, documentId: string) => { events.push(`space:${spaceId}:${documentId}`); },
+    onCreateWith: (documentId: string) => { events.push(`new-space:${documentId}`); },
+  };
+  await act(async () => {
+    root.render(createElement(SpaceMenuContext.Provider, { value: spaceActions as never }, createElement(ThreadSidebar, {
+      activeOutlineItemId: null, activeThreadId: "side-document", collapsed: false,
+      currentChatOutline: [], currentChatTitle: "Research", mainViewMode: "chat",
+      groups: { reading: { id: "reading", name: "Reading", color: "#4fbf9f", collapsed: false, conversationIds: [] } },
+      onAssignGroup: (id: string, groupId: string | null) => events.push(`group:${id}:${groupId}`),
+      onCreateGroup: noop, onDeleteThread: noop, onNewChat: noop, onNewNote: noop, onOpenProfile: noop, onOpenSearch: noop,
+      onPinThread: noop, onRenameThread: noop, onSelectOutlineItem: noop, onSelectThread: noop, onToggleGroup: noop,
+      onToggleTheme: noop, onUnpinThread: noop, pinnedThreads: [], streamingThreadIds: new Set(),
+      theme: "dark", threads: [thread, sideThread],
+    } as never)));
+  });
+  await click('[aria-label="Open actions for Research"]');
+  const spacesSection = browser.document.querySelector('[aria-label="Spaces for Research"]') as any;
+  assert(spacesSection, "The menu has a Spaces section.");
+  const thesis = spacesSection.querySelector('[role="menuitemcheckbox"]');
+  assert.equal(thesis.textContent.trim(), "Thesis");
+  assert.equal(thesis.getAttribute("aria-checked"), "false");
+  await act(async () => { thesis.click(); });
+  assert.equal(events.at(-1), "space:space-1:chat");
+  assert(browser.document.querySelector(".thread-item-menu"), "Ticking a space keeps the menu open for another.");
+  const groupSection = browser.document.querySelector('[aria-label="Group for Research"]') as any;
+  assert(groupSection, "The menu has a Group section.");
+  const groupChoices = [...groupSection.querySelectorAll('[role="menuitemradio"]')] as any[];
+  assert.deepEqual(groupChoices.map((choice) => choice.querySelector(".thread-item-menu-choice-name").textContent), ["No group", "Reading"]);
+  assert.equal(groupChoices[0].getAttribute("aria-checked"), "true");
+  await act(async () => { groupChoices[1].click(); });
+  assert.equal(events.at(-1), "group:chat:reading");
+  assert.equal(browser.document.querySelector(".thread-item-menu"), null, "Picking a group closes the menu.");
+
   await renderSidebar(true);
   assert.equal(container.querySelector('[aria-label="New side document"]'), null);
   await click('[aria-label="Open document Side research"]');
   assert.equal(events.at(-1), "select:side-document");
-  console.log("Sidebar action, keyboard dismissal, group creation, and drag/drop checks passed.");
+  console.log("Sidebar action, keyboard dismissal, group creation, and Spaces/Group menu checks passed.");
 } finally {
   await act(async () => { root.unmount(); });
   await browser.happyDOM.abort();
