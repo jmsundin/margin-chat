@@ -110,8 +110,12 @@
 /* The sheet is the phone's way of opening a note, so it has no "open beside". */
 .note-sheet-body .margin-document-frame .note-open-beside-button { display: none; }
 .note-sheet-body .margin-document-frame > .chat-panel.document-panel { border: 0; background: transparent; box-shadow: none; }
-.note-sheet-body .document-body { --document-left-padding: 20px; --document-right-padding: 44px; }
-.note-sheet-body .margin-document-frame .live-document-host, .is-quiet-page .note-sheet-body .margin-document-frame .live-document-host { font-size: 16px; }
+/* The sheet is a phone screen of its own: page gutters and 16px text (smaller text makes iOS zoom while typing).
+   These outrank the quiet page's small margin-note rules, which otherwise reach into the sheet. */
+.note-sheet-body .document-body, .is-quiet-page .note-sheet-body .margin-document-frame .document-body { --document-left-padding: 20px; --document-right-padding: 44px; }
+.note-sheet-body .margin-document-frame .live-document-host, .is-quiet-page .note-sheet-body .margin-document-frame .live-document-host,
+.note-sheet-body .margin-document-frame .live-document-host .cm-editor, .is-quiet-page .note-sheet-body .margin-document-frame .live-document-host .cm-editor,
+.is-quiet-page .note-sheet-body .margin-document-frame .live-document-preview { font-size: 16px; }
 /* The note's menu lives in the page's ⋮ on phones, so its empty header goes. */
 .note-sheet-body .margin-document-frame .document-header:not(:has(button:not(.note-open-beside-button))) { display: none; }
 
