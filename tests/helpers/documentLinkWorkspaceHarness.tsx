@@ -10,6 +10,7 @@ const browser = new Window({ url: "http://document-links.test" });
 browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 // These cover the full toolbars; the quiet page (on by default) hides some of them until hovered.
 browser.localStorage.setItem("margin-chat:quiet-page", "false");
+browser.sessionStorage.setItem("margin-chat:left-sidebar-open", "true");
 const mobileSelectionTest = process.env.TEST_MOBILE_SELECTION === "1";
 browser.happyDOM.setWindowSize({ width: mobileSelectionTest ? 390 : 1600, height: 844 });
 for (const name of ["window", "document", "navigator", "localStorage", "sessionStorage", "HTMLElement", "HTMLDivElement", "HTMLInputElement", "HTMLTextAreaElement", "Element", "Node", "Text", "NodeFilter", "Document", "DocumentFragment", "MutationObserver", "ResizeObserver", "Event", "MouseEvent", "PointerEvent", "KeyboardEvent", "Range", "DOMRect", "DOMParser", "getComputedStyle", "ShadowRoot"]) {
