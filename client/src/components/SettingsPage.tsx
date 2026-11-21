@@ -7,7 +7,7 @@ import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AiFeatureSettings, AppearanceSettings, useVoiceTypingEnabled, VoiceTypingSettings, type ThemeMode } from "./AppSettingsSections";
 import { FeatureSettings } from "./FeatureSettings";
-import { FEATURES, useFeatures } from "../lib/features";
+import { FEATURES, useAvailableFeatures, useFeatures } from "../lib/features";
 import type {
   ApiKeyProvider,
   ApiKeySettings,
@@ -243,6 +243,7 @@ export default function SettingsPage({
   const [apiKeyError, setApiKeyError] = useState<string | null>(null);
   const phone = useSyncExternalStore(subscribePhoneLayout, readPhoneLayout, () => false);
   const featureSet = useFeatures();
+  const voiceAvailable = useAvailableFeatures().some((feature) => feature.id === "voice");
   const voiceTypingOn = useVoiceTypingEnabled() && featureSet.voice;
   const featuresOn = FEATURES.filter((feature) => featureSet[feature.id]).length;
   const [selectedTab, setActiveTab] = useState<SettingsSection | null>(initialTab ?? null);
@@ -250,7 +251,8 @@ export default function SettingsPage({
   // Phones show the section list until a section is picked; computers always show one section.
   const local = user.billing.accessKind === "local";
   const desktopMode = useDesktopMode();
-  const hiddenSection = (section: SettingsSection) => (guest && GUEST_HIDDEN_SECTIONS.has(section)) || (local && LOCAL_HIDDEN_SECTIONS.has(section));
+  const hiddenSection = (section: SettingsSection) => (guest && GUEST_HIDDEN_SECTIONS.has(section)) || (local && LOCAL_HIDDEN_SECTIONS.has(section))
+    || (section === "voice" && !voiceAvailable);
   const activeTab: SettingsSection = selectedTab && !hiddenSection(selectedTab) ? selectedTab : "features";
   const [storageBusy, setStorageBusy] = useState(false);
   const [storageError, setStorageError] = useState<string | null>(null);
@@ -447,7 +449,7 @@ export default function SettingsPage({
     billing: user.billing.creditBalanceMicros > 0 ? formatCreditBalance(user.billing.creditBalanceMicros) : undefined,
     "api-keys": configuredKeyCount ? `${configuredKeyCount} key${configuredKeyCount === 1 ? "" : "s"}` : undefined,
     appearance: theme ? (theme === "dark" ? "Dark" : "Light") : undefined,
-    voice: dictationSupported() ? (voiceTypingOn ? "On" : "Off") : undefined,
+    voice: dictationSupported() && voiceAvailable ? (voiceTypingOn ? "On" : "Off") : undefined,
     storage: local ? "This computer" : cloudSyncEnabled ? "Cloud" : "This device",
   };
   const visibleSections = SECTIONS.filter((section) => section.id !== "voice" || dictationSupported())

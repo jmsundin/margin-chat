@@ -18,6 +18,7 @@ import {
   normalizeSignupPayload,
 } from "./validation.mjs";
 import { createLocalUserSource, isLocalMode } from "../local/mode.mjs";
+import { withOwnerOnlyFeatures } from "../features/ownerOnly.mjs";
 
 export function createAuthService({
   apiKeyService = null,
@@ -26,7 +27,8 @@ export function createAuthService({
   runtimeConfig,
 }) {
   async function decorateUser(user) {
-    return apiKeyService ? apiKeyService.decorateUser(user) : user;
+    const decorated = apiKeyService ? await apiKeyService.decorateUser(user) : user;
+    return withOwnerOnlyFeatures(decorated, env);
   }
   // The desktop app's local mode has one person and no sign-in.
   const localUser = isLocalMode(env) ? createLocalUserSource(database) : null;

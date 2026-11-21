@@ -6,9 +6,10 @@ import { useVaultMedia } from "../lib/vaultMedia";
 import { htmlPageTheme, useAppTheme, useHtmlPageLayout, useHtmlPagePrefs, useSmallScreen } from "../lib/htmlPagePrefs";
 import HtmlPageMenu, { type HtmlPlayActions } from "./HtmlPageMenu";
 import { htmlAssetContentType, htmlAssetPath, htmlPageHasAssets, inlineHtmlAssets } from "../lib/htmlAssets";
-import { loadPdfjs, openPdf } from "../lib/pdfDocuments";
+import { loadPdfjs, openPdf, readPdfPages } from "../lib/pdfDocuments";
 import { readPdfOutline, type PdfOutlineEntry } from "../lib/pdfOutline";
-import { publishPdfNavigation } from "../lib/pdfNavigation";
+import { publishPdfNavigation, takePendingPdfPage } from "../lib/pdfNavigation";
+import type { PdfRoadmapSource } from "../lib/pdfRoadmap";
 import PdfSidebar, { type PdfSidebarTab } from "./PdfSidebar";
 import { HTML_FRAME_SANDBOX, HTML_SOURCE_ID, htmlFrameDocument, htmlLayoutMessage, htmlThemeMessage, readHtmlFrameMessage, type HtmlAnchor, type HtmlRect, type HtmlScreen } from "../lib/htmlDocuments";
 import { registerHtmlScreen } from "../lib/htmlScreens";
@@ -44,6 +45,8 @@ export interface VaultFileViewerProps {
   };
   /** Escape pressed inside an HTML page, which the page didn't use itself. */
   onHtmlEscape?: () => void;
+  /** A PDF's Contents tab offers a roadmap made from its contents; `exists` when one was made already. */
+  pdfRoadmap?: { exists: boolean; onMake: (source: PdfRoadmapSource) => void };
 }
 
 type Loaded = { status: "loading" } | { status: "missing" } | { status: "error"; message: string } | { status: "ready"; blob: Blob };
@@ -283,11 +286,36 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
   const conversationId = props.conversation.id;
   useEffect(() => {
     if (!pdf) return;
-    return publishPdfNavigation(conversationId, { outline, labels, currentPage, jump: (page, top) => jumpRef.current(page, top, { fromPanel: false }) });
+    return publishPdfNavigation(conversationId, { outline, labels, currentPage, pageCount: pdf.numPages, jump: (page, top) => jumpRef.current(page, top, { fromPanel: false }) });
   }, [conversationId, pdf, outline, labels, currentPage]);
 
   const fitScale = width && sizes[0] ? clampScale((width - 2) / sizes[0].width) : null;
   const shownScale = fit ? fitScale : scale;
+
+  // A link to a page of this PDF (`Book.pdf#page=12`) opened it: go there once the pages are laid out.
+  const pagesReady = Boolean(pdf && shownScale);
+  useEffect(() => {
+    if (!pagesReady) return;
+    const page = takePendingPdfPage(conversationId);
+    if (page === null) return;
+    const frame = requestAnimationFrame(() => jumpRef.current(Math.min(page, pdf!.numPages), null, { fromPanel: false }));
+    return () => cancelAnimationFrame(frame);
+  }, [pagesReady, conversationId, pdf]);
+
+  const [roadmapBusy, setRoadmapBusy] = useState(false);
+  const pdfRoadmap = props.pdfRoadmap;
+  async function makeRoadmap() {
+    if (!pdf || !outline || !pdfRoadmap || roadmapBusy) return;
+    if (pdfRoadmap.exists || outline.length) { pdfRoadmap.onMake({ outline, labels, pageCount: pdf.numPages, firstPages: null }); return; }
+    // No contents of its own: the table of contents printed on its first pages goes to AI instead.
+    setRoadmapBusy(true);
+    try {
+      const pages = await readPdfPages(props.file.path, props.blob).catch(() => [] as string[]);
+      pdfRoadmap.onMake({ outline, labels, pageCount: pdf.numPages, firstPages: pages.slice(0, 16) });
+    } finally {
+      setRoadmapBusy(false);
+    }
+  }
 
   // Two fingers zoom the pages, not the app. The pages stretch under the fingers while they move,
   // then draw again at the new size with the same spot of the page still under them.
@@ -407,7 +435,8 @@ function PdfView(props: VaultFileViewerProps & { blob: Blob }) {
     </ZoomBar>
     <div className="vault-pdf-layout">
     {sidebar.open && pdf ? <PdfSidebar pdf={pdf} tab={sidebar.tab} onTab={(tab) => changeSidebar({ ...sidebar, tab })} sizes={sizes} labels={labels}
-      outline={outline} currentPage={currentPage} onJump={jumpTo} onClose={() => changeSidebar({ ...sidebar, open: false })} /> : null}
+      outline={outline} currentPage={currentPage} onJump={jumpTo} onClose={() => changeSidebar({ ...sidebar, open: false })}
+      roadmap={pdfRoadmap ? { exists: pdfRoadmap.exists, busy: roadmapBusy, onClick: () => void makeRoadmap() } : undefined} /> : null}
     <div className="vault-file-frame" ref={frameRef}>
       {pdf && shownScale ? sizes.map((size, index) => <PdfPage key={index} pdf={pdf} number={index + 1} size={size} scale={shownScale}
         conversationId={props.conversation.id} anchors={anchorsByPage.get(index + 1) ?? []} onMeasured={measured}

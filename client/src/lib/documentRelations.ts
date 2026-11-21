@@ -79,13 +79,15 @@ export function createDocumentLinkResolver(conversations: Record<string, Convers
     const title = conversation.title.trim().toLowerCase();
     byTitle.set(title, byTitle.has(title) ? null : conversation.id);
   }
-  return (target: string): string | null => {
+  const find = (target: string): string | null => {
     const name = target.replace(/\\/g, "/").split("/").at(-1)!.replace(/\.md$/i, "").trim();
     if (Object.hasOwn(conversations, name)) return name;
     const suffix = / — ([0-9a-z]+-[0-9a-z]+)(?: \(\d+\))?$/.exec(name)?.[1];
     if (suffix && bySuffix.has(suffix)) return bySuffix.get(suffix)!;
     return byTitle.get(name.toLowerCase()) ?? null;
   };
+  // A link to a place in a document ([[Book.pdf#page=12]], [[Notes#Heading]]) names the document before the # or ^.
+  return (target: string): string | null => find(target) ?? (/[#^]/.test(target) ? find(target.split(/[#^]/)[0]) : null);
 }
 
 /** Saved relations and links written in text, deduplicated per pair and type. */

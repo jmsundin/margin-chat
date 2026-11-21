@@ -17,6 +17,15 @@ export interface PdfSidebarProps {
   currentPage: number;
   onJump: (page: number, top?: number | null) => void;
   onClose: () => void;
+  /** The Contents tab's button that turns the contents into a roadmap, when this PDF can have one. */
+  roadmap?: PdfRoadmapButton;
+}
+
+export interface PdfRoadmapButton {
+  /** A roadmap made from this PDF already exists, so the button opens it. */
+  exists: boolean;
+  busy?: boolean;
+  onClick: () => void;
 }
 
 /** Page thumbnails and the PDF's own table of contents, for jumping around a long file. */
@@ -30,6 +39,14 @@ export default function PdfSidebar(props: PdfSidebarProps) {
     {props.tab === "thumbnails"
       ? <Thumbnails {...props} />
       : <PdfContents inTab outline={props.outline} currentPage={props.currentPage} labels={props.labels} onJump={props.onJump} />}
+    {props.tab === "contents" && props.roadmap && props.outline !== null ? <div className="vault-pdf-roadmap">
+      <button type="button" disabled={props.roadmap.busy} onClick={props.roadmap.onClick}
+        title={props.roadmap.exists ? "Open the roadmap made from this PDF"
+          : props.outline.length ? "A roadmap with a step for each part of these contents, each opening the PDF at its page"
+          : "This PDF has no contents list of its own, so AI reads the table of contents on its first pages"}>
+        {props.roadmap.exists ? "Open roadmap" : props.roadmap.busy ? "Reading pages…" : props.outline.length ? "Make a roadmap" : "Draft a roadmap with AI"}
+      </button>
+    </div> : null}
   </aside>;
 }
 

@@ -93,6 +93,8 @@ export interface AuthenticatedUser {
   /** Whether the account's address was confirmed from the emailed link; missing on older servers. */
   emailVerified?: boolean;
   displayName: string;
+  /** Features not ready for everyone that this account may use (server OWNER_ONLY_FEATURE_EMAILS); missing on older servers. */
+  ownerFeatures?: string[];
   role: UserRole;
 }
 
