@@ -50,15 +50,25 @@ const GAP = 8;
 const FOLDED_GAP = 2;
 /** Room on the left of the cards for the line back to each passage. */
 export const DOCUMENT_MARGIN_GUTTER = 22;
-/** The margin's width in marks mode: room for one dot beside the text. */
-export const DOCUMENT_MARKS_WIDTH = 26;
-const MARK_SIZE = 16;
+/** The margin's width in bubbles mode: room for a short bubble with the first words of each note. */
+export const DOCUMENT_MARKS_WIDTH = 136;
+/** On a phone the margin is narrower (its bubbles also reach into the page's right padding), so the text keeps most of the screen. */
+export const DOCUMENT_MARKS_PHONE_WIDTH = 66;
+const MARK_SIZE = 26;
+/** Between bubbles on neighbouring lines. */
+const BUBBLE_GAP = 4;
 /** A note pushed this far below its passage on the right goes to the left of the text instead, when there's room. */
 const CROWDED = 40;
 const LEFT_MIN_WIDTH = 150;
 const LEFT_PAD = 16;
 /** Where a note's dot sits from its top (see .margin-document-frame::before in quiet-page.css). */
 const NOTE_DOT_Y = 22;
+
+/** What a bubble says: the note's first words, without the markdown that starts a line. */
+function bubbleText(item: DocumentMarginItem) {
+  const text = (item.label ?? "").replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s+)?|>\s*|\d+[.)]\s+)/, "").replace(/[*_`~]+/g, "").trim();
+  return text || (item.pending ? "Thinking…" : "Margin note");
+}
 
 /** How far in from the note's left edge its dot is: past the editor's gutter, or at the edge without a quiet page. */
 function noteDotX(aside: HTMLElement | null) {
@@ -274,13 +284,13 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       const found = item.anchored ? anchorMarks(body, item.id) : [];
       const mark = found[0];
       // The passage's first line: its words run from the first box's left to the last box on that line.
-      const boxes = marks ? [] : found.flatMap((element) => [...element.getClientRects()]).filter((box) => box.width > 0);
+      const boxes = found.flatMap((element) => [...element.getClientRects()]).filter((box) => box.width > 0);
       const first = boxes[0];
       const onLine = first ? boxes.filter((box) => Math.abs(box.top - first.top) < first.height / 2) : [];
       const line = first ? { start: Math.round(Math.min(...onLine.map((box) => box.left)) - asideLeft),
         end: Math.round(Math.max(...onLine.map((box) => box.right)) - asideLeft), y: Math.round(first.top + first.height / 2 - bodyTop) } : undefined;
       return { id: item.id, index, anchorTop: mark ? mark.getBoundingClientRect().top - bodyTop : null, line,
-        folded: folded.has(item.id), height: marks ? MARK_SIZE : itemRefs.current[item.id]?.offsetHeight ?? 0 };
+        folded: folded.has(item.id), height: marks ? itemRefs.current[item.id]?.offsetHeight || MARK_SIZE : itemRefs.current[item.id]?.offsetHeight ?? 0 };
     });
     // Whole-document notes (and notes whose passage is gone) first, then notes in passage order.
     measured.sort((a, b) => (a.anchorTop === null ? -1 : 0) - (b.anchorTop === null ? -1 : 0)
@@ -292,8 +302,9 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     for (const item of measured) {
       // A folded note's one line sits on its passage's first line, centred on it.
       const wanted = item.anchorTop === null ? start
-        : item.folded ? (item.line ? item.line.y - item.height / 2 : item.anchorTop)
-        : item.anchorTop + (marks ? 6 : -4);
+        // A folded note's line and a bubble sit on their passage's first line, centred on it.
+        : item.folded || marks ? (item.line ? item.line.y - item.height / 2 : item.anchorTop)
+        : item.anchorTop - 4;
       const gap = item.folded ? FOLDED_GAP : GAP;
       const top = Math.max(cursor, wanted);
       const leftTop = Math.max(leftCursor, wanted);
@@ -304,7 +315,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
         continue;
       }
       next[item.id] = { top, anchorTop: item.anchorTop, line: item.line };
-      cursor = top + item.height + (marks ? 4 : gap);
+      cursor = top + item.height + (marks ? BUBBLE_GAP : gap);
     }
     const end = Math.max(cursor, leftCursor);
     setPlacements((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
@@ -362,6 +373,14 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     return () => { body.removeEventListener("pointerover", over); body.removeEventListener("pointerout", out); };
   }, [bodyRef]);
 
+  // A bubble's note opens out to the right, over the bubble, when there's room beside the page;
+  // otherwise it opens over the page's edge to the left.
+  const [openRight, setOpenRight] = useState(true);
+  useLayoutEffect(() => {
+    const aside = asideRef.current;
+    if (!marks || !openId || !aside) return;
+    setOpenRight(freeRoomRight(aside, 8) + aside.offsetWidth >= noteWidth);
+  }, [marks, openId, noteWidth, width]);
   // Marks mode: a note chosen elsewhere (Children menu, search, a new question) opens from its dot.
   useEffect(() => { if (marks && activeId && items.some((item) => item.id === activeId)) setOpenId(activeId); }, [marks, activeId, itemKey]);
   useEffect(() => { if (!marks) setOpenId(null); }, [marks]);
@@ -450,12 +469,16 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       {items.map((item) => {
         const placement = placements[item.id];
         const open = openId === item.id;
-        return <div key={item.id} className="document-margin-mark-slot" style={{ top: placement?.top ?? 0, visibility: placement ? undefined : "hidden" }}>
-          <button type="button" className={`document-margin-mark${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}${item.id === passageHoverId ? " is-pointed" : ""}`}
+        const text = bubbleText(item);
+        return <div key={item.id} className={`document-margin-mark-slot${open ? " is-open" : ""}`} style={{ top: placement?.top ?? 0, visibility: placement ? undefined : "hidden" }}>
+          <button type="button" className={`document-margin-mark${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${item.pending ? " is-pending" : ""}`}
             ref={(element) => { itemRefs.current[item.id] = element; }}
-            aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${item.label || "Margin note"}`} title={item.label}
+            aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${text}`}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
-            onClick={() => setOpenId((current) => current === item.id ? null : item.id)} />
+            onClick={() => setOpenId((current) => current === item.id ? null : item.id)}>
+            <span className="document-margin-mark-dot" aria-hidden="true" />
+            <span className="document-margin-mark-text">{text}</span>
+          </button>
           {open && sheet ? createPortal(<div className={`note-sheet${sheetFull && sheetDrag === null ? " is-full" : ""}${sheetDrag !== null ? " is-dragging" : ""}`} ref={sheetRef} data-note-sheet
             data-sheet-stop={["peek", "half", "full"][sheetStop]}
             style={{ height: sheetDrag !== null ? `${sheetDrag}px` : sheetStop === 2 ? undefined : `${NOTE_SHEET_STOPS[sheetStop] * 100}dvh` }}
@@ -468,7 +491,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
               : item.anchored ? null : <span className="document-margin-label">About this document</span>}
             <div className="note-sheet-body"><MobileKeyboardDirect>{item.node}</MobileKeyboardDirect></div>
           </div>, asideRef.current?.closest(".app-shell") ?? document.body) : null}
-          {open && !sheet ? <div className="document-margin-mark-note" data-margin-note-id={item.id} data-mobile-keyboard-direct style={{ width: noteWidth }}
+          {open && !sheet ? <div className={`document-margin-mark-note${openRight ? " is-right" : ""}`} data-margin-note-id={item.id} data-mobile-keyboard-direct style={{ width: noteWidth }}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
             {item.anchored ? null : <span className="document-margin-label">About this document</span>}
             <MobileKeyboardDirect>{item.node}</MobileKeyboardDirect>

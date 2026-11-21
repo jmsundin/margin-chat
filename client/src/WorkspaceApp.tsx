@@ -76,7 +76,7 @@ import {
   getSpaceRootIds, isInSpace, orderSpaces, removeDocumentFromSession, renameSession, switchSession,
 } from "./lib/workspaceSessions";
 import DocumentChildrenMenu from "./components/DocumentChildrenMenu";
-import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem } from "./components/DocumentMargin";
+import { DOCUMENT_MARGIN_GUTTER, DOCUMENT_MARKS_PHONE_WIDTH, DOCUMENT_MARKS_WIDTH, type DocumentMarginItem } from "./components/DocumentMargin";
 import NotebookCustomise from "./components/NotebookCustomise";
 import NoteChatPanel from "./components/NoteChatPanel";
 import type { MapSpotlight } from "./lib/mapSpotlight";
@@ -1640,7 +1640,8 @@ function WorkspaceAppContent({
   const quietPage = useSyncExternalStore(subscribeQuietPage, readQuietPage, () => true);
   const notebookPrefs = useSyncExternalStore(subscribeNotebookPrefs, readNotebookPrefs, () => DEFAULT_NOTEBOOK_PREFS);
   /** Marks only in the margin: chosen in Customise, and always on phones with the quiet page. */
-  const marginMarks = notebookPrefs.marginMode === "marks" || (isMobileViewport && quietPage);
+  const marginMarks = notebookPrefs.marginMode === "bubbles" || (isMobileViewport && quietPage);
+  const marksWidth = isMobileViewport ? DOCUMENT_MARKS_PHONE_WIDTH : DOCUMENT_MARKS_WIDTH;
   const [customiseOpen, setCustomiseOpen] = useState(false);
   const closeCustomise = useCallback(() => setCustomiseOpen(false), []);
   /** The document whose Ask about this note panel is open. */
@@ -7141,7 +7142,7 @@ function WorkspaceAppContent({
       childNavigation={view === "graph" ? renderChildrenMenu(conversation, view, dock) : undefined}
       claimHighlights={view === "chat" ? getClaimHighlights(conversation) : undefined}
       onOpenClaim={(claimId) => setClaimsView({ id: conversation.id, focus: claimId })}
-      marginNotes={(mode === "board" || mode === "code") && view === "chat" ? [] : getMarginItems(conversation, view)} marginWidth={marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
+      marginNotes={(mode === "board" || mode === "code") && view === "chat" ? [] : getMarginItems(conversation, view)} marginWidth={marginMarks ? marksWidth : getMarginColumnWidth(conversation) + DOCUMENT_MARGIN_GUTTER + 10}
       marginMarks={marginMarks} marginNoteWidth={Math.min(320, Math.max(220, getMarginColumnWidth(conversation)))}
       activeMarginNoteId={activeConversation.id}
       pageMode={modes && (mode === "write" || mode === "read" || mode === "code") ? mode === "code" ? "write" : mode : undefined}
@@ -7312,7 +7313,7 @@ function WorkspaceAppContent({
   /** Extra frame width the margin adds, so the text column keeps its width. */
   function getDocumentMarginSpace(conversation: Conversation, includePreview = true) {
     if (!showsMarginInPanel(conversation)) return 0;
-    return marginMarks ? DOCUMENT_MARKS_WIDTH : getMarginColumnWidth(conversation, includePreview) + DOCUMENT_MARGIN_GUTTER + 10;
+    return marginMarks ? marksWidth : getMarginColumnWidth(conversation, includePreview) + DOCUMENT_MARGIN_GUTTER + 10;
   }
   function renderMarginFamily(note: Conversation, view: "chat" | "graph", fitContent = false) {
     return <div className="margin-document-family">

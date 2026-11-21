@@ -21,19 +21,51 @@
 /* The empty line after a note's text only shows while you write in that note. */
 .document-margin .rich-document-block.is-continuation.is-empty:not(:focus-within, .is-focused) { display: none; }
 
-/* Marks only: a dot beside each passage; its note opens over the page's edge, on paper. */
+/* Bubbles: a small bubble beside each passage with the note's first words. Pointing at it
+   shows more of them; clicking it opens the note, out over the bubble, on paper. */
 .document-margin.is-marks { overflow: visible; border-left: 0; z-index: 3; }
-.document-margin-mark-slot { position: absolute; left: 0; right: 0; height: 16px; display: flex; justify-content: center; }
-.document-margin-mark { position: relative; width: 16px; height: 16px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; }
-.document-margin-mark::after { content: ""; position: absolute; inset: 4px; border-radius: 50%; background: var(--quiet-note-dot, var(--sage)); transition: transform .15s ease; }
-.document-margin-mark.is-ai::after { background: var(--quiet-ai-ink, var(--accent)); }
-.document-margin-mark:hover::after, .document-margin-mark.is-open::after, .document-margin-mark.is-pointed::after { transform: scale(1.35); }
-.document-margin-mark:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-/* Bigger targets for fingers, same small dot. */
-@media (pointer: coarse) { .document-margin-mark { width: 28px; height: 28px; margin-top: -6px; } .document-margin-mark::after { inset: 10px; } }
+.document-margin-mark-slot { position: absolute; left: 4px; right: 0; display: flex; justify-content: flex-start; }
+.document-margin-mark-slot:has(> .document-margin-mark:is(:hover, :focus-visible, .is-pointed)), .document-margin-mark-slot.is-open { z-index: 2; }
+.document-margin-mark {
+  --bubble-ink: var(--quiet-note-dot, var(--sage, #6f8f7a));
+  position: relative; display: inline-flex; align-items: center; gap: 6px; box-sizing: border-box;
+  max-width: 100%; height: 26px; margin: 0; padding: 0 10px 0 8px;
+  border: 1px solid color-mix(in srgb, var(--bubble-ink) 38%, transparent); border-radius: 13px;
+  background: color-mix(in srgb, var(--bubble-ink) 12%, var(--panel-strong, var(--bg, #fff)));
+  color: var(--ink, inherit); font: inherit; font-size: 12.5px; line-height: 1; text-align: left; cursor: pointer;
+  transition: max-width .18s ease, background-color .15s ease, box-shadow .15s ease;
+}
+.document-margin-mark.is-ai { --bubble-ink: var(--quiet-ai-ink, var(--accent)); }
+.is-quiet-page .document-margin-mark { font-family: var(--paper-serif, "Iowan Old Style", Georgia, serif); font-size: 13px; }
+.document-margin-mark-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--bubble-ink); }
+.document-margin-mark-text { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+/* Pointing at a bubble, or at its passage, shows more of its words, out to the right. */
+.document-margin-mark:is(:hover, :focus-visible, .is-pointed, .is-open) {
+  max-width: 280px; background: var(--panel-strong, var(--bg, #fff)); border-color: color-mix(in srgb, var(--bubble-ink) 60%, transparent);
+  box-shadow: 0 6px 18px rgba(40, 32, 20, .14);
+}
+.document-margin-mark.is-pending .document-margin-mark-dot { animation: margin-bubble-thinking 1.2s ease-in-out infinite; }
+@keyframes margin-bubble-thinking { 50% { opacity: .35; } }
+.document-margin-mark:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: 1px; }
+@media (prefers-reduced-motion: reduce) { .document-margin-mark { transition: none; } .document-margin-mark.is-pending .document-margin-mark-dot { animation: none; } }
+/* Phones: the bubble reaches into the page's right padding and wraps its words onto two lines,
+   so it reads as a button with a title and is a full finger tall, while the text keeps the screen. */
+@media (pointer: coarse), (max-width: 700px) {
+  .document-margin-mark-slot { left: -22px; right: 2px; }
+  .document-margin-mark {
+    display: block; width: 100%; height: auto; min-height: 36px; padding: 5px 6px 5px 7px; border-radius: 10px;
+    font-size: 11.5px; line-height: 1.25; box-shadow: 0 1px 3px rgba(40, 32, 20, .12);
+  }
+  .is-quiet-page .document-margin-mark { font-size: 12px; }
+  .document-margin-mark-dot { float: left; width: 7px; height: 7px; margin: 4px 4px 0 0; }
+  .document-margin-mark-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; white-space: normal; overflow-wrap: anywhere; }
+  .document-margin-mark:is(:hover, .is-pointed) { max-width: 100%; }
+}
 .document-margin-mark-note { position: absolute; top: -8px; right: calc(100% - 2px); max-width: calc(100vw - 48px); z-index: 4;
   padding: 2px 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-strong, var(--bg));
   box-shadow: 0 14px 36px rgba(40, 32, 20, .16); }
+/* With room beside the page, the bubble grows into its note, where it was. */
+.document-margin-mark-note.is-right { top: -6px; left: -2px; right: auto; }
 .document-margin-mark-note > .margin-document-family { min-width: 0; }
 
 /* A note the user clicked opens up to half again as wide, into the room right of the page; the
@@ -74,6 +106,8 @@
 /* The page's frame lets that one note out too; nothing else in it reaches past its edge. */
 .chat-panel.document-panel:has(> .document-panel-content > .document-margin .document-margin-item.is-expanded),
 .chat-panel.document-panel:has(> .document-panel-content > .document-margin.has-left-notes) { overflow: visible; }
+/* A bubble being pointed at, or opened, reaches past the page's frame too. */
+.chat-panel.document-panel:has(> .document-panel-content > .document-margin.is-marks :is(.document-margin-mark:is(:hover, :focus-visible, .is-pointed), .document-margin-mark-slot.is-open)) { overflow: visible; }
 /* A note keeps its place and its words' left edge when it becomes the one you're in: the active
    panel's gap above and the wider pane's side padding would push its text down and over. */
 .document-margin-item > .margin-document-family > .margin-document-frame > .chat-panel.document-panel.is-compact-document.is-active { margin-block: 0; }

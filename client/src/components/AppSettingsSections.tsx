@@ -87,10 +87,10 @@ export function AppearanceSettings({ onSetTheme, theme }: {
       <div className="app-settings-section">
         <div className="app-settings-copy">
           <span className="app-settings-label">Notes and questions appear</span>
-          <p className="app-settings-description">In the right margin beside their passage, or as small marks you click to open. Phones use marks while the quiet page is on.</p>
+          <p className="app-settings-description">As small bubbles with each note's first words, which you click to open, or as full notes in a wide right margin. Phones use bubbles while the quiet page is on.</p>
         </div>
         <OptionGroup label="Notes and questions appear" onChange={(marginMode) => saveNotebookPrefs({ marginMode })}
-          options={[["right", "Right margin"], ["marks", "Marks only"]]} value={notebook.marginMode} />
+          options={[["bubbles", "Bubbles"], ["full", "Full notes"]]} value={notebook.marginMode} />
       </div>
 
     </div>

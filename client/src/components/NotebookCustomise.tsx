@@ -14,8 +14,8 @@ const STANCES: Option<AIStance>[] = [
   { value: "antagonistic", label: "Antagonistic", hint: "Questions from a sharp sceptic who disagrees with you." },
 ];
 const MARGINS: Option<MarginMode>[] = [
-  { value: "right", label: "Right margin", hint: "Notes and questions sit beside their passage." },
-  { value: "marks", label: "Marks only", hint: "A dot beside each passage; click it to read the note. Phones always use marks." },
+  { value: "bubbles", label: "Bubbles", hint: "A small bubble beside each passage with the note's first words; click it to read the note." },
+  { value: "full", label: "Full notes", hint: "Every note open in a wide right margin beside its passage. Phones keep bubbles." },
 ];
 
 export interface NotebookCustomiseProps {
