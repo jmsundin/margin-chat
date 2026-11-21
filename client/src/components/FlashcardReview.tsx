@@ -283,6 +283,8 @@ export default function FlashcardReview({ flashcards, docIds, title, onClose, on
       if (event.defaultPrevented || event.altKey || editing) return;
       const target = event.target as HTMLElement | null;
       if (target?.closest("input, textarea, [contenteditable='true']")) return;
+      // Keys pressed in a dialog opened over Review (Make flashcards) belong to that dialog.
+      if (target instanceof Node && dialog.current && !dialog.current.contains(target) && target !== document.body) return;
       if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
       if ((event.key === "z" || event.key === "Z") && !event.shiftKey) {
         if (lastAnswer) { event.preventDefault(); takeBack(); }
