@@ -1,4 +1,4 @@
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useState, type ReactNode } from "react";
 import {
   ConversationGroupSelect,
   NewConversationGroupForm,
@@ -10,11 +10,20 @@ import {
 import type { ConversationGroup, ThreadSummary } from "../types";
 import RoadmapTiles, { type RoadmapTile } from "./RoadmapTiles";
 
-export type TileTab = "documents" | "roadmaps";
+/**
+ * Tile view's tabs. Documents and Roadmaps are what you made; Groups and Spaces are two different
+ * ways of keeping documents together: a group is a label, like a tag, and a space is a workspace
+ * you're actively working in, with its own tabs to come back to.
+ */
+export type TileTab = "documents" | "roadmaps" | "groups" | "spaces";
+const TILE_TABS: readonly TileTab[] = ["documents", "roadmaps", "groups", "spaces"];
 const TAB_KEY = "margin-chat:tile-tab";
 /** The tab Tile view last showed on this device. */
 export function readTileTab(): TileTab {
-  try { return window.localStorage.getItem(TAB_KEY) === "roadmaps" ? "roadmaps" : "documents"; } catch { return "documents"; }
+  try {
+    const saved = window.localStorage.getItem(TAB_KEY);
+    return TILE_TABS.includes(saved as TileTab) ? saved as TileTab : "documents";
+  } catch { return "documents"; }
 }
 export function rememberTileTab(tab: TileTab) {
   try { window.localStorage.setItem(TAB_KEY, tab); } catch { /* remembered for this visit only */ }
@@ -46,14 +55,19 @@ interface MainChatTileViewProps {
   onOpenThread: (conversationId: string) => void;
   onToggleGroup: (groupId: string) => void;
   threads: ThreadSummary[];
+  /** The tab shown, when there is more than Documents to show. */
+  tab?: TileTab;
+  onTab?(tab: TileTab): void;
   /** With Roadmaps on, Tile view has a Roadmaps tab: every roadmap as a tile. */
   roadmaps?: {
     tiles: RoadmapTile[];
     onOpen(id: string): void;
     onDraft(goal: string): string | null;
-    tab: TileTab;
-    onTab(tab: TileTab): void;
   };
+  /** With Groups on, a Groups tab: documents sorted under their group, and where groups are made. */
+  groupsEnabled?: boolean;
+  /** With Spaces on, a Spaces tab: every space as a tile. */
+  spaces?: { count: number; content: ReactNode };
 }
 
 function SearchIcon() {
@@ -77,7 +91,8 @@ function SearchIcon() {
 interface ThreadTileCardProps {
   activeThreadId: string;
   groups: Record<string, ConversationGroup>;
-  onAssignGroup: (conversationId: string, groupId: string | null) => void;
+  /** Only on the Groups tab: the card's own Group picker. */
+  onAssignGroup?: (conversationId: string, groupId: string | null) => void;
   onOpenThread: (conversationId: string) => void;
   thread: ThreadSummary;
 }
@@ -121,12 +136,12 @@ function ThreadTileCard({
           </span>
         </div>
       </button>
-      <ConversationGroupSelect
+      {onAssignGroup ? <ConversationGroupSelect
         className="is-tile"
         conversationId={thread.id}
         groups={groups}
         onAssign={onAssignGroup}
-      />
+      /> : null}
     </article>
   );
 }
@@ -140,13 +155,23 @@ export default function MainChatTileView({
   onToggleGroup,
   threads,
   roadmaps,
+  groupsEnabled = false,
+  spaces,
+  tab: shownTab = "documents",
+  onTab,
 }: MainChatTileViewProps) {
   const [query, setQuery] = useState("");
-  const tab: TileTab = roadmaps ? roadmaps.tab : "documents";
-  const chooseTab = (next: TileTab) => roadmaps?.onTab(next);
-  const tabs = roadmaps ? <div className="thread-tile-tabs" role="tablist" aria-label="Show">
-    <button type="button" role="tab" aria-selected={tab === "documents"} onClick={() => chooseTab("documents")}>Documents</button>
-    <button type="button" role="tab" aria-selected={tab === "roadmaps"} onClick={() => chooseTab("roadmaps")}>Roadmaps{roadmaps.tiles.length ? ` ${roadmaps.tiles.length}` : ""}</button>
+  const available: { id: TileTab; label: string }[] = [
+    { id: "documents", label: "Documents" },
+    ...(roadmaps ? [{ id: "roadmaps" as const, label: `Roadmaps${roadmaps.tiles.length ? ` ${roadmaps.tiles.length}` : ""}` }] : []),
+    ...(groupsEnabled ? [{ id: "groups" as const, label: `Groups${Object.keys(groups).length ? ` ${Object.keys(groups).length}` : ""}` }] : []),
+    ...(spaces ? [{ id: "spaces" as const, label: `Spaces${spaces.count ? ` ${spaces.count}` : ""}` }] : []),
+  ];
+  // A tab whose feature is off shows Documents.
+  const tab: TileTab = available.some((option) => option.id === shownTab) ? shownTab : "documents";
+  const tabs = available.length > 1 ? <div className="thread-tile-tabs" role="tablist" aria-label="Show">
+    {available.map((option) => <button key={option.id} type="button" role="tab" aria-selected={tab === option.id}
+      onClick={() => onTab?.(option.id)}>{option.label}</button>)}
   </div> : null;
   const deferredQuery = useDeferredValue(query);
   if (roadmaps && tab === "roadmaps") {
@@ -155,6 +180,13 @@ export default function MainChatTileView({
       <RoadmapTiles roadmaps={roadmaps.tiles} onOpen={roadmaps.onOpen} onDraft={roadmaps.onDraft} />
     </section>;
   }
+  if (spaces && tab === "spaces") {
+    return <section className="thread-tile-view">
+      <div className="thread-tile-toolbar">{tabs}</div>
+      {spaces.content}
+    </section>;
+  }
+  const byGroup = tab === "groups";
   const normalizedQuery = deferredQuery.trim().toLowerCase();
   const normalizedThreads = normalizeThreads(threads);
   const filteredThreads = normalizedThreads
@@ -174,7 +206,9 @@ export default function MainChatTileView({
         body: "Start a new main chat and it will appear here.",
         title: "No threads yet.",
       };
-  const groupSections = [
+  const groupSections = !byGroup ? [{
+    collapsed: false, color: "transparent", id: null as string | null, name: "", threads: filteredThreads,
+  }] : [
     ...Object.values(groups).map((group) => ({
       collapsed: group.collapsed,
       color: group.color,
@@ -209,7 +243,7 @@ export default function MainChatTileView({
             value={query}
           />
         </label>
-        <NewConversationGroupForm onCreate={onCreateGroup} />
+        {byGroup ? <NewConversationGroupForm onCreate={onCreateGroup} /> : null}
       </div>
 
       {filteredThreads.length ? (
@@ -219,7 +253,7 @@ export default function MainChatTileView({
               className="thread-tile-group"
               key={section.id ?? "ungrouped"}
             >
-              <header className="thread-tile-group-header">
+              {byGroup ? <header className="thread-tile-group-header">
                 <button
                   aria-expanded={!section.collapsed}
                   disabled={!section.id}
@@ -239,7 +273,7 @@ export default function MainChatTileView({
                     </span>
                   ) : null}
                 </button>
-              </header>
+              </header> : null}
 
               {!section.collapsed ? (
                 section.threads.length ? (
@@ -249,7 +283,7 @@ export default function MainChatTileView({
                         key={thread.id}
                         activeThreadId={activeThreadId}
                         groups={groups}
-                        onAssignGroup={onAssignGroup}
+                        onAssignGroup={byGroup ? onAssignGroup : undefined}
                         onOpenThread={onOpenThread}
                         thread={thread}
                       />
@@ -257,7 +291,7 @@ export default function MainChatTileView({
                   </div>
                 ) : (
                   <p className="thread-tile-group-empty">
-                    Move a chat here to start this group.
+                    Nothing in this group yet. Pick it from a document&apos;s Group menu.
                   </p>
                 )
               ) : null}
