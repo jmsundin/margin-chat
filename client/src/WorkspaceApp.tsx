@@ -20,7 +20,7 @@ import { applySelectionFormat, hasSelectionFormat, type SelectionFormat } from "
 import { copySelection, hideNativeSelectionMenu, isReselectingSelection } from "./lib/selectionMenu";
 import { apiStorageNamespace } from "./lib/apiTransport";
 import { openThreadAsChat, useBrowserThreadImports, useBrowserWorkspaceCapture, type BrowserCaptureRequest, type BrowserThreadRequest } from "./lib/browserWorkspace";
-import { canMoveToMargin, createMarginDocument, isCompactDocument as isMarginNoteDocument, sideDocumentToMarginNote, isHiddenFromAI } from "@margin-chat/workspace-contracts";
+import { canMoveToMargin, createMarginDocument, isCompactDocument as isMarginNoteDocument, marginNoteToSideDocument, sideDocumentToMarginNote, isHiddenFromAI } from "@margin-chat/workspace-contracts";
 import { getNoteSnap as getNoteSnapFor, loadNotesBeside, saveNotesBeside } from "./lib/notesBeside";
 import { getNextTheme, type ThemeMode } from "./lib/appearance";
 import "./workspace-improvements.css";
@@ -60,6 +60,7 @@ import VersionHistoryPanel from "./components/VersionHistoryPanel";
 import { resolveWikiLinkDocument, wikiLinkSuggestions, type WikiLinkDocument } from "./lib/wikiLinkSuggestions";
 import MarginDocumentFrame, { getMarginDocumentSize, type MarginDocumentSize } from "./components/MarginDocumentFrame";
 import OpenBesideIcon from "./components/OpenBesideIcon";
+import DocumentNewButtons, { SideDocumentIcon } from "./components/DocumentNewButtons";
 import DocumentLinkPicker from "./components/DocumentLinkPicker";
 import { SpaceMenuContext, SpaceStartPanel, SpaceSwitcher, SpaceTiles, type SpaceMenuActions } from "./components/Spaces";
 import DocumentTabs from "./components/DocumentTabs";
@@ -2601,6 +2602,25 @@ function WorkspaceAppContent({
     }
     return false;
   });
+  // ⌘⇧M a new margin note, ⌘⇧D a new side document, on the selection or the caret's paragraph of the focused page.
+  const handleNewNoteShortcut = useEffectEvent((event: KeyboardEvent) => {
+    if (!(event.metaKey || event.ctrlKey) || (event.metaKey && event.ctrlKey) || !event.shiftKey || event.altKey || event.isComposing) return false;
+    const key = event.key.toLowerCase();
+    if (key !== "m" && key !== "d") return false;
+    if (mainViewMode !== "chat" || !activeConversation || activeConversation.nodeType === "board") return false;
+    if (!event.repeat) {
+      if (key === "m") handleNewMarginNote(activeConversation.id);
+      else handleNewSideDocument(activeConversation.id);
+    }
+    return true;
+  });
+  useEffect(() => {
+    function listener(event: KeyboardEvent) {
+      if (handleNewNoteShortcut(event)) { event.preventDefault(); event.stopPropagation(); }
+    }
+    document.addEventListener("keydown", listener, true);
+    return () => document.removeEventListener("keydown", listener, true);
+  }, []);
   useEffect(() => {
     function listener(event: KeyboardEvent) {
       // Capture before editor keymaps; a keep or a switch also stops the browser's bookmark and tab shortcuts.
@@ -5035,21 +5055,6 @@ function WorkspaceAppContent({
     return id;
   }
 
-  /**
-   * Opens a note beside its page, like any other document: the same note, id and text, shown wider.
-   * Nothing about the note changes; putting it away shows it in the margin again, level with its passage.
-   */
-  function handleOpenNoteBeside(conversationId: string) {
-    const conversation = state.conversations[conversationId];
-    if (!isMarginNoteDocument(conversation)) return;
-    setNotesBeside((current) => current.includes(conversationId) ? current : [...current, conversationId]);
-    setState((current) => current.conversations[conversationId]
-      ? placeDocumentAfterParent(focusDocument(current, conversationId), conversationId) : current);
-    // Clicking the note focused its page first; the opened note should still scroll into view.
-    suppressNextChatAutoCenterRef.current = false;
-    setDocumentFocusSequence((sequence) => sequence + 1);
-  }
-
   /** Puts a note opened beside its page back in the page's margin, and goes back to the page. */
   function handlePutNoteBack(conversationId: string) {
     if (!notesBesideSet.has(conversationId)) return false;
@@ -5103,20 +5108,51 @@ function WorkspaceAppContent({
     window.requestAnimationFrame(focus);
   }
 
-  /** The phone's + menu acts on the selection, else the paragraph at the caret, else the whole document. */
-  function prepareCreateMenu(): MobileCreateTarget {
-    if (selectionDraft?.conversationId === activeConversation.id) { createMenuPassage.current = selectionDraft; return "selection"; }
-    const paragraph = caretParagraphIn(activeConversation.id);
+  /**
+   * A new margin note or side document acts on the selection, else the paragraph at the caret, else the whole document.
+   * The phone's + menu, the header's Note and Side doc buttons, the ⋮ menu and ⌘⇧M / ⌘⇧D all start here.
+   */
+  function prepareNewTarget(conversationId: string): MobileCreateTarget {
+    if (selectionDraft?.conversationId === conversationId) { createMenuPassage.current = selectionDraft; return "selection"; }
+    const paragraph = caretParagraphIn(conversationId);
     createMenuPassage.current = paragraph ? { ...paragraph, prompt: "", sourceKind: "message", sourceContent: paragraph.quote } : null;
     return paragraph ? "paragraph" : "document";
   }
-  function handleCreateMenuSideDocument() {
+  function prepareCreateMenu(): MobileCreateTarget { return prepareNewTarget(activeConversation.id); }
+  function handleCreateMenuSideDocument(conversationId: string = activeConversation.id) {
     if (createMenuPassage.current) handleCreateSelectionSideDocument(createMenuPassage.current);
-    else handleAddSideChat(activeConversation.id);
+    else handleAddSideChat(conversationId);
   }
-  function handleCreateMenuNote() {
+  function handleCreateMenuNote(conversationId: string = activeConversation.id) {
     if (createMenuPassage.current) { handleCreateSelectionNote(createMenuPassage.current); return; }
-    focusNewDocumentEditor(handleCreateNote({ conversationId: activeConversation.id, content: "", sourceMessageId: null }));
+    focusNewDocumentEditor(handleCreateNote({ conversationId, content: "", sourceMessageId: null }));
+  }
+  /** New margin note on the selection, the caret's paragraph, or the document (header Note button, ⋮, ⌘⇧M). */
+  function handleNewMarginNote(conversationId: string) {
+    prepareNewTarget(conversationId);
+    handleCreateMenuNote(conversationId);
+  }
+  /** New side document from the selection, the caret's paragraph, or the document (header Side doc button, ⋮, ⌘⇧D). */
+  function handleNewSideDocument(conversationId: string) {
+    prepareNewTarget(conversationId);
+    handleCreateMenuSideDocument(conversationId);
+  }
+  /** Only where Move to margin can bring it back: vault files and public topics stay as they are. */
+  function canTurnIntoSideDocument(conversation: Conversation | undefined) {
+    return Boolean(conversation && isCompactDocument(conversation) && conversation.parentId && !conversation.vaultFile && !conversation.publicTopic);
+  }
+  /** A margin note becomes a side document of its own: its own pane, path crumb and map node. Move to margin undoes it. */
+  function handleTurnNoteIntoSideDocument(conversationId: string) {
+    if (!canTurnIntoSideDocument(state.conversations[conversationId])) return;
+    setNotesBeside((current) => current.filter((id) => id !== conversationId));
+    setState((current) => {
+      const target = current.conversations[conversationId];
+      if (!isMarginNoteDocument(target)) return current;
+      const next = { ...current, conversations: { ...current.conversations, [conversationId]: marginNoteToSideDocument(target) } };
+      return placeDocumentAfterParent(focusDocument(next, conversationId), conversationId);
+    });
+    suppressNextChatAutoCenterRef.current = false;
+    setDocumentFocusSequence((sequence) => sequence + 1);
   }
 
   /** Files picked from the + menu join the vault; one document opens right away. */
@@ -7066,11 +7102,12 @@ function WorkspaceAppContent({
         // Documents with a tab close from its ×; notes and branches have no tab, so their menu keeps Close.
         onMinimize={handleMinimizeDocument}
         onClose={!hasDocumentTab(conversation.id) ? handleCloseDocument : quietTabsHidden() ? handleCloseTab : undefined} onRestore={handleSelectConversation} onRename={handleRenameThread}
-        onNewMarginNote={(id) => handleCreateNote({ conversationId: id, content: "", sourceMessageId: null })}
+        onNewMarginNote={handleNewMarginNote}
+        onNewSideDocument={handleNewSideDocument}
         // On a played page this is the phone's way to ask about what the game shows; the question carries its screen.
         onAskAboutNote={conversation.document || conversation.kind === "note" || isPlayPage(conversation) && !isHiddenFromAI(conversation) ? (id) => setNoteChatFor(id) : undefined}
         onMoveToMargin={canMoveToMargin(conversation, state.conversations) ? handleMoveSideDocumentToMargin : undefined}
-        onOpenBeside={isCompactDocument(conversation) ? handleOpenNoteBeside : undefined}
+        onMoveToSideDocument={canTurnIntoSideDocument(conversation) ? handleTurnNoteIntoSideDocument : undefined}
         onPutBackInMargin={notesBesideSet.has(conversation.id) ? handlePutNoteBack : undefined}
         onToggleHiddenFromAI={handleToggleHiddenFromAI}
         // Board, Language, Read and Review are modes now, switched from the button in the document's header.
@@ -7115,8 +7152,12 @@ function WorkspaceAppContent({
     const roadmap = view === "chat" && isPathDocument(conversation) ? buildMapPath(conversation, state.conversations) : null;
     const steps = view === "chat" ? (roadmapSteps.get(conversation.id) ?? []).filter((step) => step.pathId !== conversation.id).slice(0, 2) : [];
     const modeSwitch = view === "chat" && !isMobileViewport ? renderDocumentModeSwitch(conversation) : null;
-    if (!claimCount && !roadmap && !steps.length && !modeSwitch) return null;
+    // Note and Side doc: the two ways to add to a page, always one click away on desktop (phones use the + button).
+    const newButtons = view === "chat" && !isMobileViewport && !isCompactDocument(conversation) && conversation.nodeType !== "board"
+      ? <DocumentNewButtons iconsOnly={Boolean(conversation.parentId)} onNote={() => handleNewMarginNote(conversation.id)} onSideDocument={() => handleNewSideDocument(conversation.id)} /> : null;
+    if (!claimCount && !roadmap && !steps.length && !modeSwitch && !newButtons) return null;
     return <>
+      {newButtons}
       {modeSwitch}
       {roadmap ? <button type="button" className="document-roadmap-chip" title="Show this roadmap on the map"
         onClick={() => showRoadmapOnMap(conversation.id)}>Roadmap <span>{roadmap.finished}/{roadmap.total}</span></button> : null}
@@ -7201,7 +7242,7 @@ function WorkspaceAppContent({
           ? <div className="document-page-path">{renderDocumentBreadcrumbs()}</div> : undefined}
       headerControls={dockHeader ? null : <>
         {renderDocumentControls(conversation, view)}
-        {inMargin && view === "chat" && isCompactDocument(conversation) ? renderOpenBesideButton(conversation) : null}
+        {inMargin && view === "chat" && canTurnIntoSideDocument(conversation) ? renderTurnIntoSideDocButton(conversation) : null}
       </>}
       // A note's own notes are listed at the end of its page and drawn on the map beside it, so document view has no Children menu.
       childNavigation={view === "graph" ? renderChildrenMenu(conversation, view, dock) : undefined}
@@ -7385,7 +7426,6 @@ function WorkspaceAppContent({
   function renderMarginFamily(note: Conversation, view: "chat" | "graph", fitContent = false) {
     return <div className="margin-document-family">
       <MarginDocumentFrame data-document-id={note.id} size={note.document?.marginNote?.size} fitContent={fitContent}
-        onOpen={view === "chat" ? () => handleOpenNoteBeside(note.id) : undefined}
         onResize={(size) => handleResizeMarginDocument(note.id, size)}
         onResizePreview={(size) => setMarginResizePreviews((current) => ({ ...current, [note.id]: size ?? undefined }))}
         onPointerDownCapture={() => handleFocusVisibleDocument(note.id)}
@@ -7395,12 +7435,13 @@ function WorkspaceAppContent({
       {renderDocumentMarginNotes(note, view)}
     </div>;
   }
-  /** The note's own "open to the side" button, next to its ⋮ and ×, where people look for window controls. */
-  function renderOpenBesideButton(note: Conversation) {
+  /** The note's own "make it a page" button, next to its ⋮ and ×: a note that outgrew the margin becomes a side document. */
+  function renderTurnIntoSideDocButton(note: Conversation) {
     return <button type="button" className="document-window-button note-open-beside-button"
-      aria-label={`Open beside the page: ${note.title || "Untitled note"}`} title={`Open beside (${isApplePlatform() ? "⌘↵" : "Ctrl+Enter"})`}
-      onClick={() => handleOpenNoteBeside(note.id)}>
-      <OpenBesideIcon />
+      aria-label={`Turn into side document: ${note.title || "Untitled note"}`}
+      title="Turn into side document: its own page beside this one (⋮ → Move to margin puts it back)"
+      onClick={() => handleTurnNoteIntoSideDocument(note.id)}>
+      <SideDocumentIcon size={16} />
     </button>;
   }
   /** "Thinks with you ▾": how the AI joins in, on the page's own row. Opens Customise. */
@@ -7438,7 +7479,6 @@ function WorkspaceAppContent({
     if (!showsMarginInPanel(conversation, view)) return undefined;
     const claims = view === "chat" ? getClaimMarginItems(conversation) : [];
     const items = getMarginDocuments(conversation).map((note): DocumentMarginItem => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true), foldable: true,
-      onOpenBeside: view === "chat" ? () => handleOpenNoteBeside(note.id) : undefined,
       label: getEditableDocumentText(note).trim().split(/\r?\n/)[0]?.slice(0, 80) || note.title,
       ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()),
       pending: Boolean(note.document?.generations.some((generation) => generation.status === "streaming")) }));
@@ -8193,9 +8233,11 @@ function WorkspaceAppContent({
                 pressed={(format) => hasSelectionFormat(selectionBlock.content, selectionDraft.startOffset, selectionDraft.endOffset, format as SelectionFormat)}
                 onFormat={(format) => handleFormatSelection(format as SelectionFormat)} /> : null}
               <SelectionToolbarRow
-                // Note, Link and Ask AI stay in view; everything else waits in ⋯ (thread "Simplify Margin Chat with opt-in features").
+                // Note, Side doc, Link and Ask AI stay in view; everything else waits in ⋯ (thread "Simplify Margin Chat with opt-in features").
                 actions={[
                   { icon: "note", label: "Note", ariaLabel: selectionDraft.sourceKind === "standalone-note" ? "Create a side note" : "Add a margin note", onSelect: () => handleCreateSelectionNote() },
+                  // Margin note and side document side by side: a thought beside the passage, or a new page from it.
+                  { icon: "side", label: "Side doc", ariaLabel: "Create a side document from this passage", onSelect: () => handleCreateSelectionSideDocument() },
                   { icon: "link", label: "Link", ariaLabel: "Link selected text to an existing document or block", pressed: selectionIntent === "link",
                     onSelect: () => { setSelectionLinkError(null); setSelectionIntent((intent) => intent === "link" ? "actions" : "link"); } },
                 ]}

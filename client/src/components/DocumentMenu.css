@@ -94,3 +94,11 @@
 /* The More page: a small heading names each block, so the list reads as four short groups. */
 .document-menu-heading { padding: 6px 10px 2px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; }
 .document-menu .document-menu-footer .document-menu-more-features { color: var(--muted); }
+
+/* New margin note / New side document: first in the menu, with their icons and shortcuts. */
+.document-menu button.document-menu-new { display: flex; align-items: center; gap: 9px; }
+.document-menu-new > span { flex: 1; white-space: nowrap; }
+.document-menu-new kbd { color: var(--muted); font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; }
+.document-menu-new svg { flex-shrink: 0; color: var(--sage); }
+.document-menu-new.is-side svg { color: #8fb3d9; }
+:root[data-theme="light"] .document-menu-new.is-side svg { color: #3c6b94; }

@@ -23,10 +23,10 @@ type MobileCreateMenuProps = {
   onVoiceTyping?: () => boolean;
 };
 
-const SIDE_HINT: Record<MobileCreateTarget, string> = { selection: "From the selected text", paragraph: "From this paragraph", document: "Beside this document" };
-const NOTE_HINT: Record<MobileCreateTarget, string> = { selection: "On the selected text", paragraph: "On this paragraph", document: "On this document" };
+const SIDE_HINT: Record<MobileCreateTarget, string> = { selection: "A new page from the selected text", paragraph: "A new page from this paragraph", document: "A new page from this one" };
+const NOTE_HINT: Record<MobileCreateTarget, string> = { selection: "A quick thought on the selected text", paragraph: "A quick thought on this paragraph", document: "A quick thought on this page" };
 
-/** The phone's + button: a new document in a new tab, a side document, a margin note or files from the phone. */
+/** The phone's + button: a margin note, a side document, a new document in a new tab or files from the phone. */
 export function MobileCreateMenu({ slot, prepare, onNewDocument, onNewBoard, onSideDocument, onMarginNote, onUpload, onVoiceTyping }: MobileCreateMenuProps) {
   const [target, setTarget] = useState<MobileCreateTarget | null>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
@@ -73,6 +73,13 @@ export function MobileCreateMenu({ slot, prepare, onNewDocument, onNewBoard, onS
       // Opens above the + at the top of the button stack, lined up with its right edge.
       style={{ bottom: window.innerHeight - row.top + 10, right: Math.max(8, window.innerWidth - row.right) }}
       onMouseDown={(event) => event.preventDefault()}>
+      {/* The two ways to add to this page come first: a thought in its margin, or a new page beside it. */}
+      <button type="button" role="menuitem" onClick={run(onMarginNote)}>
+        <SelectionIcon name="note" /><span><strong>Margin note</strong><small>{NOTE_HINT[target]}</small></span>
+      </button>
+      <button type="button" role="menuitem" onClick={run(onSideDocument)}>
+        <SelectionIcon name="side" /><span><strong>Side document</strong><small>{SIDE_HINT[target]}</small></span>
+      </button>
       <button type="button" role="menuitem" onClick={run(onNewDocument)}>
         <svg className="selection-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <path d="M3 2.5h6l3 3v8H3z" /><path d="M9 2.5v3h3" />
@@ -83,12 +90,6 @@ export function MobileCreateMenu({ slot, prepare, onNewDocument, onNewBoard, onS
           <rect x="2.5" y="3" width="11" height="8.5" rx="1" /><path d="M5 8.5l2-2 1.5 1.5L11 5.5M6 14l2-2.5 2 2.5" />
         </svg><span><strong>New board</strong><small>A canvas to draw and think on</small></span>
       </button> : null}
-      <button type="button" role="menuitem" onClick={run(onSideDocument)}>
-        <SelectionIcon name="side" /><span><strong>Side document</strong><small>{SIDE_HINT[target]}</small></span>
-      </button>
-      <button type="button" role="menuitem" onClick={run(onMarginNote)}>
-        <SelectionIcon name="note" /><span><strong>Margin note</strong><small>{NOTE_HINT[target]}</small></span>
-      </button>
       <button type="button" role="menuitem" onClick={run(() => uploadRef.current?.click())}>
         <svg className="selection-toolbar-icon" viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
           <path d="M8 10.5V2.5M5 5.5l3-3 3 3" /><path d="M2.5 10v3.5h11V10" />

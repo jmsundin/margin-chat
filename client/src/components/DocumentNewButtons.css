@@ -1,0 +1,15 @@
+.document-new-buttons { display: inline-flex; gap: 4px; flex-shrink: 0; }
+.document-new-button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px 4px 7px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--button-surface);
+  color: var(--ink); font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer;
+}
+.document-new-button:hover { border-color: var(--line-strong, var(--line)); }
+.document-new-button:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+.document-new-button.is-note svg { color: var(--sage); }
+.document-new-button.is-side svg { color: #8fb3d9; }
+:root[data-theme="light"] .document-new-button.is-side svg { color: #3c6b94; }
+/* Narrow desktop windows: icons only, the labels live in the tooltips. */
+@media (max-width: 1100px) { .document-new-button span { display: none; } .document-new-button { padding: 5px 7px; } }
+.document-new-buttons.is-icons-only .document-new-button span { display: none; }
+.document-new-buttons.is-icons-only .document-new-button { padding: 5px 7px; }
