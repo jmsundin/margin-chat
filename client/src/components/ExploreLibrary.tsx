@@ -109,8 +109,14 @@ function ExploreTiles({ section, siblings, titleOf, conversations, selectedId, o
 
 /** A section opens into what it holds once it is this many pixels across on screen (a shelf of notes, a little sooner). */
 const OPEN_RADIUS = 110, OPEN_SHELF_RADIUS = 76;
-/** Note titles show once their shelf is this big on screen. */
-const TITLE_SHELF_RADIUS = 96;
+/**
+ * Notes are dots with no titles: a wall of overlapping titles can't be read, and Clusters is for finding
+ * the section. A note's title shows while you point at it or move to it with the keyboard.
+ */
+const fitLabel = (label: string, r: number, fontSize: number) => {
+  const maxChars = Math.max(4, Math.floor((r * 1.8) / (fontSize * 0.6)));
+  return label.length > maxChars ? `${label.slice(0, maxChars - 1)}…` : label;
+};
 
 function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId, onFollow, onOpenNote }: {
   root: LibrarySection; target: LibrarySection; flyRequest: number; links: Array<{ sourceId: string; targetId: string }>;
@@ -119,6 +125,7 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
   const [ref, size, element] = useSize<HTMLDivElement>();
   const circles = useMemo(() => packLibrary(root), [root]);
   const byId = useMemo(() => new Map(circles.map((circle) => [circle.id, circle])), [circles]);
+  const [pointedNote, setPointedNote] = useState<string | null>(null);
   // Each note's chain of sections, outermost first, ending with its own circle.
   const chains = useMemo(() => {
     const out = new Map<string, PackedCircle[]>();
@@ -219,13 +226,15 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
         const open = isOpen(circle);
         const section = circle.section!;
         const fontSize = Math.min(15, Math.max(11, r / 5));
-        const maxChars = Math.max(4, Math.floor((r * 1.8) / (fontSize * 0.6)));
-        const name = section.label.length > maxChars ? `${section.label.slice(0, maxChars - 1)}…` : section.label;
+        const name = fitLabel(section.label, r, fontSize);
+        // An open section's name sits across its top, where the circle is narrower than its middle.
+        const headingSize = circle.depth === 1 ? 15 : 13;
+        const heading = fitLabel(section.label, r * 0.8, headingSize);
         return <g key={circle.id} className={`explore-cluster${open ? " is-open" : ""}`} style={{ "--section": circle.color } as CSSProperties}
           role="button" tabIndex={0} aria-label={`${section.label}, ${noteCount(section.allIds.length)}${open ? "" : ". Open"}`}
           onClick={() => pick(circle)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pick(circle); } }}>
           <circle cx={x} cy={y} r={r} />
-          {open ? <text className="explore-cluster-heading" x={x} y={y - r + Math.min(22, r * 0.2) + 4} textAnchor="middle" style={{ fontSize: circle.depth === 1 ? 15 : 13 }}>{section.label}</text>
+          {open ? <text className="explore-cluster-heading" x={x} y={y - r + Math.min(22, r * 0.2) + 4} textAnchor="middle" style={{ fontSize: headingSize }}>{heading}<title>{section.label}</title></text>
             : r > 22 ? <>
               <text className="explore-cluster-name" x={x} y={y} textAnchor="middle" style={{ fontSize }}>{name}</text>
               <text className="explore-cluster-count" x={x} y={y + fontSize + 2} textAnchor="middle">{section.allIds.length}{r > 48 && section.sections.length ? ` · ${section.sections.length} inside` : ""}</text>
@@ -234,16 +243,23 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
       })}
       {notes.map((circle) => {
         const { x, y } = screen(circle);
-        const shelf = circle.parentId ? byId.get(circle.parentId) : undefined;
-        const shelfR = (shelf?.r ?? 0) * k;
         const dot = Math.max(4, Math.min(circle.r * k * 0.5, 13));
         const title = titleOf(circle.noteId!);
-        const room = shelfR > 200 ? 30 : 15;
         return <g key={circle.id} className={`explore-cluster-note${selectedId === circle.noteId ? " is-selected" : ""}`} style={{ "--section": circle.color } as CSSProperties}
           role="button" tabIndex={0} aria-label={title} onClick={() => pick(circle)}
+          onPointerEnter={() => setPointedNote(circle.noteId!)} onPointerLeave={() => setPointedNote((current) => current === circle.noteId ? null : current)}
+          onFocus={() => setPointedNote(circle.noteId!)} onBlur={() => setPointedNote((current) => current === circle.noteId ? null : current)}
           onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); pick(circle); } }}>
           <circle cx={x} cy={y} r={dot}><title>{title}</title></circle>
-          {shelfR > TITLE_SHELF_RADIUS ? <text x={x} y={y + dot + 13} textAnchor="middle" style={{ fontSize: shelfR > 200 ? 12.5 : 11 }}>{title.length > room ? `${title.slice(0, room - 1)}…` : title}</text> : null}
+        </g>;
+      })}
+      {/* The title of the note pointed at, drawn last so no other dot covers it. */}
+      {notes.filter((circle) => circle.noteId === pointedNote).map((circle) => {
+        const { x, y } = screen(circle);
+        const dot = Math.max(4, Math.min(circle.r * k * 0.5, 13));
+        const title = titleOf(circle.noteId!);
+        return <g key="pointed" className="explore-cluster-note" aria-hidden="true">
+          <text x={x} y={y + dot + 15} textAnchor="middle" style={{ fontSize: 12.5 }}>{title.length > 48 ? `${title.slice(0, 47)}…` : title}</text>
         </g>;
       })}
     </svg>

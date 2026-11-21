@@ -178,3 +178,46 @@
 .topic-details-actions { flex: 0 0 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
 .topic-details-actions button.is-primary { border-color: var(--sage); background: var(--sage); color: var(--bg); font-weight: 600; }
 .topic-details-actions [role="alert"] { color: var(--danger, #c0392b); font-size: 12.5px; }
+
+/* Around a note: the note in the middle, your notes on the inner ring, public topics outlined on the outer ring. */
+/* A blue for public topics that leans toward the ink, so it reads on light and dark maps. */
+.explore-library.is-around { --around-public: color-mix(in srgb, #6a82e6 72%, var(--ink)); }
+.explore-around-legend { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; font-size: 12px; color: var(--muted); }
+.explore-around-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-left: 8px; }
+.explore-around-legend i.is-mine { background: color-mix(in srgb, var(--sage) 30%, transparent); border: 1.5px solid var(--sage); }
+.explore-around-legend i.is-public { border: 1.5px dashed var(--around-public); }
+.explore-around { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+.explore-around-lines { position: absolute; inset: 0; pointer-events: none; }
+.explore-around-ring { fill: none; stroke: var(--line); stroke-dasharray: 2 7; }
+.explore-around-edge { stroke: var(--line-strong); stroke-width: 1.4; }
+.explore-around-edge.is-similar { stroke-dasharray: 2 4; }
+.explore-around-edge.is-public { stroke: var(--around-public); stroke-dasharray: 4 5; opacity: 0.45; }
+.explore-around-node { position: absolute; transform: translate(-50%, -8px); width: 140px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 0 4px 4px;
+  border: 0; border-radius: 8px; background: transparent; color: var(--ink); font: inherit; text-align: center; cursor: pointer; }
+.explore-around-node > i { width: 16px; height: 16px; border-radius: 50%; margin-bottom: 4px; background: var(--graph-canvas-bg, var(--bg-deep)); }
+.explore-around-node.is-mine > i { background: color-mix(in srgb, var(--sage) 30%, var(--graph-canvas-bg, var(--bg-deep))); border: 2px solid var(--sage); }
+.explore-around-node.is-similar > i { border-style: dotted; }
+.explore-around-node.is-public > i { border: 2px dashed var(--around-public); width: 14px; height: 14px; }
+.explore-around-node strong { font-size: 13px; font-weight: 600; line-height: 1.25; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere;
+  padding: 1px 4px; border-radius: 5px; background: color-mix(in srgb, var(--graph-canvas-bg, var(--bg-deep)) 82%, transparent); }
+.explore-around-node.is-public strong { color: var(--around-public); font-weight: 500; }
+.explore-around-node small { font-size: 11px; color: var(--muted); }
+.explore-around-node:hover strong, .explore-around-node:focus-visible strong { text-decoration: underline; }
+.explore-around-node:focus-visible { outline: 2px solid var(--sage); outline-offset: 2px; }
+.explore-around-center { position: absolute; transform: translate(-50%, -50%); width: 124px; height: 124px; border-radius: 50%; border: 0; padding: 14px;
+  display: flex; align-items: center; justify-content: center; background: var(--sage); color: var(--graph-canvas-bg, var(--bg-deep)); font: inherit; cursor: pointer;
+  box-shadow: 0 0 0 8px color-mix(in srgb, var(--sage) 16%, transparent); }
+.explore-around-center strong { font-size: 13.5px; line-height: 1.2; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.explore-around-center:focus-visible { outline: 2px solid var(--ink); outline-offset: 4px; }
+.explore-around-note { margin: 0; color: var(--muted); font-size: 12.5px; }
+.explore-around-note.is-floating { position: absolute; transform: translateX(-50%); max-width: 280px; text-align: center; pointer-events: none; }
+/* Narrow: two lists instead of rings, which would be too small to read. */
+.explore-around-list { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 4px 12px 16px; }
+.explore-around-list h3 { margin: 10px 2px 2px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); }
+.explore-around-list button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 9px 11px; border-radius: 9px; font: inherit; text-align: left; cursor: pointer; color: var(--ink); }
+.explore-around-list button strong { font-size: 14px; font-weight: 600; }
+.explore-around-list button small { font-size: 12px; color: var(--muted); }
+.explore-around-list-center { border: 0; background: var(--sage); color: var(--graph-canvas-bg, var(--bg-deep)) !important; font-weight: 700; font-size: 15px !important; }
+.explore-around-list-mine { border: 1px solid var(--line); background: var(--panel-bg); }
+.explore-around-list-public { border: 1.5px dashed var(--around-public); background: transparent; }
+.explore-around-list-public strong { color: var(--around-public); }

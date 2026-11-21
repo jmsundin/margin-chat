@@ -78,6 +78,7 @@ import { blockFallbackName, groupTopicsIntoThemes, mapZoomLevel, mapZoomLevelSca
 import { useMapLevelLabels, type MapLevelTarget } from "../lib/useMapLevelLabels";
 import { buildLibrary, type ExploreLayout } from "../lib/exploreLibrary";
 import ExploreLibrary from "./ExploreLibrary";
+import { pickAroundNeighbours, type AroundLayout, type AroundNeighbour } from "../lib/aroundRings";
 import ExploreLayoutMenu from "./ExploreLayoutMenu";
 import { MapZoomLadder, MapZoomTrail, type MapZoomCrumb } from "./MapZoomLevels";
 import { describeSpotlight, spotlightHeat, spotlightNeighbours, type MapSpotlight, type SpotlightHeat } from "../lib/mapSpotlight";
@@ -415,6 +416,11 @@ export interface ConversationGraphViewProps {
   exploreSourceMenu?: (onTop: () => void) => ReactNode;
   /** Tiles or Clusters of a public source (Wikipedia, an AI topic), drawn instead of your notes. */
   renderPublicExplore?: (layout: Exclude<ExploreLayout, "canvas">, leading: ReactNode) => ReactNode;
+  /** How the map around one note is drawn: Rings (the note in the middle, its neighbours around it) or the Canvas. */
+  aroundLayout?: AroundLayout;
+  onAroundLayoutChange?: (layout: AroundLayout) => void;
+  /** Draws Rings around a note: the notes for its inner ring, the Layout menu, and how to move the middle. */
+  renderAround?: (around: { centerId: string; neighbours: AroundNeighbour[]; leading: ReactNode; select: (id: string) => void }) => ReactNode;
 }
 
 /** Where things are on screen, for drawing over the map. */
@@ -1253,6 +1259,9 @@ export default function ConversationGraphView({
   exploreSourceMenu,
   renderPublicExplore,
   onExploreLayoutChange,
+  aroundLayout,
+  onAroundLayoutChange,
+  renderAround,
   renderSearchFallback,
   onSearchSubmit,
   searchRequest,
@@ -1326,6 +1335,11 @@ export default function ConversationGraphView({
   // sections, so the library came up empty ("0 notes") over the map and hid its scope switch: it stays the map.
   const libraryActive = !!exploreLayout && exploreLayout !== "canvas" && !scopeHidden && navigation.state.contentLens !== "concepts"
     && scope.kind !== "focus";
+  // Around one note (not the Note family view), Explore draws Rings unless Canvas was picked there.
+  // Rings are your notes; on Wikipedia or an AI topic Explore draws that source instead.
+  const aroundRingsOffered = Boolean(renderAround && onAroundLayoutChange && exploreLayout && onExploreLayoutChange) && !scopeHidden
+    && !renderPublicExplore && navigation.state.contentLens !== "concepts";
+  const ringsActive = aroundRingsOffered && aroundLayout === "rings" && scope.kind === "focus" && navigation.state.documentLayoutMode !== "family";
   const topicsGrouping = canvasGrouping === "topics" || libraryActive;
   const canvasTopics = isCanvasMode && navigation.state.contentLens !== "concepts" && topicsGrouping;
   const findsTopics = isClustersMode || canvasTopics;
@@ -1580,6 +1594,12 @@ export default function ConversationGraphView({
   const scopedIds = useMemo(() => meaningRing.length ? new Set([...linkScopedIds, ...meaningRing.map((item) => item.id)]) : linkScopedIds,
     [linkScopedIds, meaningRing]);
   const meaningRingIds = useMemo(() => meaningRing.map((item) => item.id), [meaningRing]);
+  // Rings: linked notes first, then notes close in meaning (the meaning ring, shown even when its switch is off).
+  const aroundNeighbours = useMemo(() => {
+    if (!ringsActive || scope.kind !== "focus") return [];
+    const similar = focusMeaningRing(scope.conversationId, topicEmbeddings.neighbours.get(scope.conversationId), new Set([scope.conversationId]), conversations);
+    return pickAroundNeighbours(scope.conversationId, allDocumentConnections, similar, (id) => Boolean(conversations[id]));
+  }, [ringsActive, scope, topicEmbeddings.neighbours, topicEmbeddings.revision, allDocumentConnections, conversations]);
   const documentFamily = useMemo(() => {
     if (scope.kind !== "focus" || navigation.state.documentLayoutMode !== "family") return undefined;
     const center = conversations[scope.conversationId];
@@ -1925,10 +1945,15 @@ export default function ConversationGraphView({
   }, [canvasGroupBoxes, levelLabels.labels, conversations]);
   // Explore's library: the same themes, topics and blocks, as sections inside sections.
   const layoutMenu = exploreLayout && onExploreLayoutChange && !scopeHidden
-    // Around one document the map is drawn as the Canvas whatever was picked; picking Tiles or Clusters there
-    // widens it to All, where the library has sections to show.
-    ? <ExploreLayoutMenu value={scope.kind === "focus" ? "canvas" : exploreLayout} publicSource={Boolean(renderPublicExplore)}
-      onChange={(layout) => { if (layout !== "canvas" && scope.kind === "focus") chooseScope("all"); onExploreLayoutChange(layout); }} /> : null;
+    // Around one document the map is drawn as Rings or the Canvas, whatever was picked for All; picking Tiles or
+    // Clusters there widens it to All, where the library has sections to show.
+    ? <ExploreLayoutMenu value={scope.kind === "focus" ? ringsActive ? "rings" : "canvas" : exploreLayout} publicSource={Boolean(renderPublicExplore)}
+      layouts={scope.kind === "focus" && aroundRingsOffered ? ["rings", "canvas", "tiles", "clusters"] : undefined}
+      onChange={(layout) => {
+        if (layout === "rings" || (layout === "canvas" && scope.kind === "focus" && aroundRingsOffered)) { onAroundLayoutChange?.(layout); return; }
+        if (scope.kind === "focus") chooseScope("all");
+        onExploreLayoutChange(layout);
+      }} /> : null;
   const libraryRoot = useMemo(() => libraryActive ? buildLibrary({ themes: canvasThemeBoxes, boxes: canvasGroupBoxes, blockNames, summaries: levelSummaries,
     titleOf: (id) => conversations[id]?.title?.trim() || "Untitled" }) : null,
   [libraryActive, canvasThemeBoxes, canvasGroupBoxes, blockNames, levelSummaries, conversations]);
@@ -4632,7 +4657,8 @@ export default function ConversationGraphView({
           ref={viewportRef}
         >
           <div ref={gridRef} className="conversation-graph-grid" style={gridLayerStyle} aria-hidden="true" />
-          {exploreLayout && exploreLayout !== "canvas" && !scopeHidden && renderPublicExplore ? renderPublicExplore(exploreLayout, layoutMenu)
+          {ringsActive && scope.kind === "focus" && renderAround ? renderAround({ centerId: scope.conversationId, neighbours: aroundNeighbours, leading: layoutMenu, select: selectConversation })
+            : exploreLayout && exploreLayout !== "canvas" && !scopeHidden && renderPublicExplore ? renderPublicExplore(exploreLayout, layoutMenu)
             : libraryRoot && exploreLayout && exploreLayout !== "canvas" ? <ExploreLibrary root={libraryRoot} layout={exploreLayout} conversations={conversations}
               links={documentConnections} selectedId={selectedConversationId} leading={layoutMenu} sourceMenu={exploreSourceMenu} onOpenNote={selectConversation} />
             // On the Canvas the Layout menu floats in the top left corner rather than taking a row.
