@@ -94,6 +94,12 @@
 :is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-entry.is-current .vault-pdf-outline-title { font-weight: 600; }
 :is(.vault-file-pdf, .chat-outline) .vault-pdf-outline-empty { padding: 14px 12px; color: var(--muted); font-size: .8rem; line-height: 1.45; }
 
+.vault-file-pdf .vault-pdf-roadmap { flex: none; padding: 8px; border-top: 1px solid var(--line); }
+.vault-file-pdf .vault-pdf-roadmap button { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel-strong); color: var(--ink); font: inherit; font-size: .78rem; cursor: pointer; }
+.vault-file-pdf .vault-pdf-roadmap button:hover:not(:disabled) { border-color: var(--accent); }
+.vault-file-pdf .vault-pdf-roadmap button:disabled { color: var(--muted); cursor: default; }
+@media (pointer: coarse) { .vault-file-pdf .vault-pdf-roadmap button { min-height: 40px; } }
+
 .vault-file-toolbar .vault-pdf-sidebar-toggle { display: inline-grid; place-items: center; padding: 0 7px; }
 .vault-pdf-sidebar-toggle svg { width: 15px; height: 15px; }
 

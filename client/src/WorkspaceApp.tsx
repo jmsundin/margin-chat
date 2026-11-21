@@ -230,6 +230,8 @@ import { buildLookupMessages, defaultLanguagePair, guessTextLanguage, languageNa
 import { loadVaultFileContext, nearestVaultFile } from "./lib/vaultFileContext";
 import { useChatStreams } from "./lib/useChatStreams";
 import { addAIChildNodes, type AIChildNodeProposal } from "./lib/aiChildNodes";
+import { pdfNavigationFor, requestPdfPage } from "./lib/pdfNavigation";
+import { pdfContentsDraftGoal, pdfOutlineRoadmapProposal, pdfRoadmapTitle, type PdfRoadmapSource } from "./lib/pdfRoadmap";
 import { applyTextEdit, canUndoProposal, undoEditArguments, withProposalUpdate } from "./lib/agentProposals";
 import { addImportedWebDocuments } from "./lib/webImportDocuments";
 import { fetchImportImage, importedImageSources, saveImportedImages, type ImportedImageSource } from "./lib/webImportImages";
@@ -845,7 +847,7 @@ function WorkspaceAppContent({
    */
   const [linkGuests, setLinkGuests] = useState<Array<{ id: string; sourceId: string }>>([]);
   /** A linked document still downloading from the cloud, to open beside its link's document once it arrives. */
-  const [pendingWikiLinkOpen, setPendingWikiLinkOpen] = useState<{ sourceId: string; id: string } | null>(null);
+  const [pendingWikiLinkOpen, setPendingWikiLinkOpen] = useState<{ sourceId: string; id: string; roadmap?: true } | null>(null);
   const [recentModelSelections, setRecentModelSelections] = useState<
     RecentBackendServiceSelection[]
   >(() => loadRecentModelSelections(recentModelSelectionsStorageKey));
@@ -1213,6 +1215,8 @@ function WorkspaceAppContent({
   useEffect(() => {
     if (!pendingWikiLinkOpen || !state.conversations[pendingWikiLinkOpen.id]) return;
     setPendingWikiLinkOpen(null);
+    // A roadmap made just now (from a PDF's contents) opens in Learn, as a roadmap tile does.
+    if (pendingWikiLinkOpen.roadmap) { handleOpenRoadmapFromTiles(pendingWikiLinkOpen.id); return; }
     openLinkedDocumentBeside(state.conversations[pendingWikiLinkOpen.sourceId] ? pendingWikiLinkOpen.sourceId : activeConversation.id, pendingWikiLinkOpen.id);
   }, [pendingWikiLinkOpen, state.conversations]);
   const activeMarginNotesVisible = !closedMarginNotes[activeConversation.id]
@@ -6020,6 +6024,8 @@ function WorkspaceAppContent({
 
   /** A `[[link]]`'s pop-up, or Cmd/Ctrl and click on it: the linked document opens beside the one it's in. */
   function handleOpenWikiLink(sourceId: string, document: WikiLinkDocument) {
+    // A link to a page of a PDF opens it there, once it is on screen.
+    if (document.page) requestPdfPage(document.id, document.page);
     // A roadmap stage's index hands over to the lesson it links to, which opens in its place (Back returns).
     if (state.conversations[document.id] && isStageDocumentId(sourceId)) { handleSwitchDocumentInPlace(sourceId, document.id); return; }
     if (state.conversations[document.id]) { openLinkedDocumentBeside(sourceId, document.id); return; }
@@ -6341,6 +6347,59 @@ function WorkspaceAppContent({
     return null;
   }
 
+  /** The roadmap already made from a PDF's contents: a roadmap under the PDF with the name one gets. */
+  function pdfRoadmapOf(conversations: AppState["conversations"], pdfId: string): string | null {
+    const pdf = conversations[pdfId];
+    if (!pdf?.vaultFile || pdf.vaultFile.kind !== "pdf") return null;
+    const title = pdfRoadmapTitle(pdf.title).toLowerCase();
+    return pdf.childIds.find((id) => conversations[id]?.nodeType === "roadmap" && conversations[id].title.trim().toLowerCase() === title) ?? null;
+  }
+
+  /**
+   * Make a roadmap from a PDF's contents: a new roadmap document under the PDF, opened beside it, with
+   * a step for each part of the contents. A PDF without contents of its own gets Draft with AI instead,
+   * reading the table of contents on its first pages; that draft waits on the roadmap for approval.
+   */
+  function handleMakePdfRoadmap(pdfId: string, source: PdfRoadmapSource) {
+    const pdf = currentStateRef.current.conversations[pdfId];
+    if (!pdf?.vaultFile) return;
+    const existing = pdfRoadmapOf(currentStateRef.current.conversations, pdfId);
+    if (existing) {
+      if (!features.roadmaps) setFeature("roadmaps", true);
+      handleOpenRoadmapFromTiles(existing);
+      return;
+    }
+    const fromContents = source.outline.length > 0;
+    if (!fromContents && isHiddenFromAI(pdf)) { setDocumentErrors((current) => ({ ...current, [pdfId]: HIDDEN_FROM_AI_MESSAGE })); return; }
+    const title = pdfRoadmapTitle(pdf.title);
+    const roadmapId = createId("conversation");
+    const blockId = createId("block");
+    const now = new Date().toISOString();
+    const proposal = fromContents ? pdfOutlineRoadmapProposal(source.outline, { roadmapId, roadmapTitle: title, pdfTitle: pdf.title, pageCount: source.pageCount, labels: source.labels }) : null;
+    if (fromContents && !proposal) { setDocumentErrors((current) => ({ ...current, [pdfId]: "This PDF's contents list has nothing to make steps from." })); return; }
+    const ids = proposal ? roadmapDraftIds(proposal, createId) : null;
+    const intro = fromContents ? `A roadmap for reading [[${pdf.title}]], made from its contents. Each step opens the PDF at its pages.`
+      : `A roadmap for reading [[${pdf.title}]].`;
+    const made = (current: AppState) => {
+      if (!current.conversations[pdfId] || current.conversations[roadmapId]) return current;
+      const added = addAIChildNodes(current, pdfId, [{ id: "roadmap", title, content: intro, blockId: "", from: 0, to: 0 }],
+        { now, createId: (prefix) => prefix === "conversation" ? roadmapId : blockId });
+      if (!added.createdIds.length) return current;
+      if (proposal && ids) return applyRoadmapDraft(added.state, proposal, ids, { updatedAt: now })?.state ?? added.state;
+      const roadmap = added.state.conversations[roadmapId];
+      return { ...added.state, conversations: { ...added.state.conversations, [roadmapId]: makeRoadmapDocument(roadmap, now) } };
+    };
+    currentStateRef.current = made(currentStateRef.current);
+    setState(made);
+    // Asking for a roadmap is asking for Roadmaps, which draws it; the feature is off until then.
+    if (!features.roadmaps) setFeature("roadmaps", true);
+    setPendingWikiLinkOpen({ sourceId: pdfId, id: roadmapId, roadmap: true });
+    if (!fromContents) {
+      const problem = handleDraftRoadmap(roadmapId, pdfContentsDraftGoal(pdf.title, source.firstPages ?? []), { agent: false });
+      if (problem) setDocumentErrors((current) => ({ ...current, [roadmapId]: problem }));
+    }
+  }
+
   /** Ask Agent mode to change this roadmap as the user describes; the change goes in when the run ends, with Undo. */
   function handleReviseRoadmap(conversationId: string, request: string): string | null {
     const conversation = currentStateRef.current.conversations[conversationId];
@@ -6469,6 +6528,12 @@ function WorkspaceAppContent({
   function handleMakeRoadmapFrom(conversationId: string) {
     const conversation = state.conversations[conversationId];
     if (!conversation) return;
+    // A PDF open on screen with contents of its own gets its roadmap from them, as its Contents tab's button does.
+    const navigation = conversation.vaultFile?.kind === "pdf" ? pdfNavigationFor(conversationId) : null;
+    if (navigation?.outline?.length || pdfRoadmapOf(state.conversations, conversationId)) {
+      handleMakePdfRoadmap(conversationId, { outline: navigation?.outline ?? [], labels: navigation?.labels ?? null, pageCount: navigation?.pageCount ?? 0, firstPages: null });
+      return;
+    }
     const title = conversation.title || "this document";
     const made = mapPathActions.onDraftPath(`Learn ${title}, building on my document \u201c${title}\u201d and the notes around it`);
     if ("error" in made) { setRevealNotice(made.error); return; }
@@ -7194,6 +7259,8 @@ function WorkspaceAppContent({
       linkSuggestions={(query) => wikiLinkSuggestions({ conversations: state.conversations, cloudDocuments: vault.cloudDocuments, currentId: conversation.id }, query)}
       resolveWikiLink={(target) => resolveWikiLinkDocument(target, state.conversations, vault.cloudDocuments)}
       onOpenWikiLink={(document) => handleOpenWikiLink(conversation.id, document)}
+      pdfRoadmap={conversation.vaultFile?.kind === "pdf" ? { exists: Boolean(pdfRoadmapOf(state.conversations, conversation.id)),
+        onMake: (source) => handleMakePdfRoadmap(conversation.id, source) } : undefined}
       isActive={conversation.id === activeConversation.id} isSubmitting={Boolean(pendingConversationIds[conversation.id])}
       aiControls={<AIControls conversation={conversation} conversations={state.conversations} disabled={Boolean(pendingConversationIds[conversation.id])} onChange={(settings) => handleAISettingsChange(conversation.id, settings)}
         onApplyPreset={(preset) => handleApplyAIPreset(conversation.id, preset)} usage={aiUsage} />}
