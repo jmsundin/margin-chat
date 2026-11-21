@@ -142,8 +142,8 @@ async function selectSourcePassage() {
 async function selectPassage() {
   await selectSourcePassage();
   const toolbar = element('[role="toolbar"][aria-label="Selected text actions"]');
-  for (const label of ["Note", "Link", "Ask AI"]) assert(button(label, toolbar), `The selection toolbar offers ${label}.`);
-  assert(![...toolbar.querySelectorAll("button")].some((item: any) => item.textContent?.trim().startsWith("Side doc")), "Notes and side documents are one thing: the toolbar offers only Note.");
+  // Margin notes and side documents are two kinds, side by side (thread "Rethink margin notes and side documents").
+  for (const label of ["Note", "Side doc", "Link", "Ask AI"]) assert(button(label, toolbar), `The selection toolbar offers ${label}.`);
   assert.equal(browser.document.querySelector('[aria-label="Branch prompt"]'), null, "Selecting text shows the toolbar, not a prompt.");
   await click(element('[aria-label="Ask AI about this passage"]'));
   assert(element('[aria-label="Branch prompt"]'), "Ask AI opens the prompt under the toolbar.");

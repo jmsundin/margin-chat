@@ -12,6 +12,8 @@ browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 browser.localStorage.setItem("margin-chat:quiet-page", "false");
 // The wide margin with every note open: this harness reads notes in place rather than as bubbles.
 browser.localStorage.setItem("margin-chat:notebook", JSON.stringify({ marginMode: "full" }));
+// The sidebar starts closed each time the app opens; this test reads document titles in it.
+browser.sessionStorage.setItem("margin-chat:left-sidebar-open", "true");
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
 const workspaceStyles = browser.document.createElement("style");
 workspaceStyles.textContent = await Bun.file(new URL("../../client/src/document-workspace.css", import.meta.url)).text();

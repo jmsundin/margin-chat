@@ -35,7 +35,8 @@ export async function flushForAppUpdate() {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   const check = () => {
-    if (document.querySelector('dialog[open], [role="dialog"][aria-modal="true"]')) {
+    // Settings → Updates is where someone asked for the update, so it doesn't count as open work.
+    if (document.querySelector('dialog[open]:not([data-app-update-safe]), [role="dialog"][aria-modal="true"]:not([data-app-update-safe])')) {
       throw new Error("Finish or close the open dialog in each tab, then try again.");
     }
     for (const { guard } of guards.values()) {

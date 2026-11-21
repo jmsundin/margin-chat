@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import NotificationToast from "./NotificationToast";
 import { acknowledgeVersion, clearRestartForUpdate, markRestartForUpdate, onQuietMoment, readAcknowledgedVersion, readRestartForUpdate, watchAppUpdates } from "../lib/appUpdates";
+import { publishReadyUpdate, readReadyUpdate, type ReadyUpdate } from "../lib/appUpdateCheck";
 import { listenForAppRestart, listenForDesktopUpdate, reloadForDesktopUpdate, requestAppRestart, type DesktopUpdateKind } from "../lib/appUpdateRestart";
 
 export default function AppUpdateNotice({ commit }: { commit: string }) {
@@ -78,6 +79,13 @@ export default function AppUpdateNotice({ commit }: { commit: string }) {
   latestRestart.current = restart;
   const updateReady = Boolean(waiting) || desktopReady !== null;
   useEffect(() => updateReady ? onQuietMoment(() => void latestRestart.current(true)) : undefined, [updateReady]);
+  // Settings → Updates restarts through the same path as the toast.
+  useEffect(() => {
+    if (!updateReady) return undefined;
+    const update: ReadyUpdate = { restart: () => latestRestart.current(false) };
+    publishReadyUpdate(update);
+    return () => { if (readReadyUpdate() === update) publishReadyUpdate(null); };
+  }, [updateReady]);
 
   if (!notificationHost) return null;
   return createPortal(
