@@ -96,7 +96,7 @@ import "./GraphViewModes.css";
 import {
   aggregateGraphEdges, getGraphScopeConversationIds, getGraphWorldBounds,
   getGraphConceptConversationIds, readGraphConcepts, writeGraphConcepts,
-  searchGraphSources, resolveGraphEvidence,
+  searchGraphSources, resolveGraphEvidence, bestResultPerDocument,
   type GraphConcept, type GraphEvidenceRef, type GraphScope, type GraphAggregatedEdge,
 } from "../lib/graphExploration";
 import { useGraphExplorationNavigation } from "../lib/useGraphExplorationNavigation";
@@ -4510,8 +4510,8 @@ export default function ConversationGraphView({
               if (matches[0]) { setSearchOpen(false); onFocusCanvas?.(); openEvidence(matches[0].evidence); }
             }} />
           {searchOpen && query.trim() ? <div className="graph-map-search-results" aria-label="Map search results">
-            {sourceItems.slice(0, 5).map((item) => <button type="button" key={item.id} onClick={() => { setSearchOpen(false); onFocusCanvas?.(); openEvidence(item.evidence); }}>
-              <strong>{item.title}</strong><span>{item.preview}</span>
+            {bestResultPerDocument(sourceItems).slice(0, 5).map((item) => <button type="button" key={item.id} onClick={() => { setSearchOpen(false); onFocusCanvas?.(); openEvidence(item.evidence); }}>
+              <strong>{markMatch(item.title, query.trim())}</strong><span>{markMatch(item.preview, query.trim())}</span>
             </button>)}
             {!sourceItems.length && !renderSearchFallback ? <p>No matching chats or notes in this view.</p> : null}
             {renderSearchFallback && deferredQuery === query ? renderSearchFallback(query.trim(), () => setSearchOpen(false), matchedConversationIds(sourceItems)) : null}
@@ -5269,4 +5269,11 @@ function RelationInspector({ edge, conversations, onClose, onOpenSource, onSetRe
     </label> : null}
     {onSetRelation && edge.kind === "relation" ? <button type="button" onClick={() => onSetRelation(null, true)}>Remove relation</button> : null}
   </section>;
+}
+
+/** The searched words marked in a result, so you can see why it matched. */
+function markMatch(text: string, term: string): ReactNode {
+  if (!term) return text;
+  const parts = text.split(new RegExp(`(${term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "giu"));
+  return parts.length < 2 ? text : parts.map((part, at) => at % 2 ? <mark key={at} className="graph-map-search-mark">{part}</mark> : part);
 }
