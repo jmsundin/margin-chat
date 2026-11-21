@@ -69,7 +69,7 @@ import { PAGE_SHEET, SHEET_NARROW_MAP, fitDocumentSheet, getDefaultDocumentSheet
 import { getDocumentNeighbors, loadDocumentNavigationStyle, saveDocumentNavigationStyle, type DocumentNavigationStyle } from "./lib/documentNeighbors";
 import { loadDocumentHeaderOpen, saveDocumentHeaderOpen } from "./lib/documentHeader";
 import { useFloatingHeaderClearance } from "./lib/floatingHeader";
-import { QUIET_SIDEBAR_KEY, readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
+import { readQuietPage, saveQuietPage, showsQuietTabs, subscribeQuietPage } from "./lib/quietPage";
 import { createDocumentLinkResolver, getDocumentGraphEdges } from "./lib/documentRelations";
 import { useSessionAutoNames } from "./lib/useSessionAutoNames";
 import {
@@ -343,7 +343,9 @@ const pageLanguageOf = (blocks: ReadonlyArray<{ kind?: string; content?: string 
 const pastedLinkOf = (blocks: ReadonlyArray<{ kind?: string; content?: string }>) => pageTextFacts(blocks).link;
 /** Width of the margin when it holds only claim cards. */
 const CLAIM_MARGIN_WIDTH = 220;
-const LEFT_SIDEBAR_STORAGE_KEY = "margin-chat-left-sidebar-open";
+// The left sidebar starts closed each time the app opens (thread "Start with the left sidebar
+// closed"). Within one tab or window it is kept in sessionStorage, so a reload leaves it as it was.
+const LEFT_SIDEBAR_SESSION_KEY = "margin-chat:left-sidebar-open";
 const CHAT_PANEL_WIDTH_STORAGE_KEY = "margin-chat-panel-width";
 const HIDDEN_FROM_AI_MESSAGE = "This document is hidden from AI, so nothing in it was sent. To ask AI about it, turn off “Hide from AI” in its menu.";
 const BRANCH_PROMPT_PLACEHOLDER = "Ask about the selected text...";
@@ -443,13 +445,9 @@ function getIsMobileViewport() {
   ).matches;
 }
 
-function sidebarStorageKey() {
-  return readQuietPage() ? QUIET_SIDEBAR_KEY : LEFT_SIDEBAR_STORAGE_KEY;
-}
-
 function loadInitialLeftSidebarOpen(): boolean {
   if (typeof window === "undefined") {
-    return true;
+    return false;
   }
 
   if (getIsMobileViewport()) {
@@ -457,22 +455,10 @@ function loadInitialLeftSidebarOpen(): boolean {
   }
 
   try {
-    // The quiet page starts with the sidebar closed; once you open it, it stays open.
-    const storedValue = window.localStorage.getItem(sidebarStorageKey());
-    if (storedValue === null && readQuietPage()) return false;
-
-    if (storedValue === "true") {
-      return true;
-    }
-
-    if (storedValue === "false") {
-      return false;
-    }
+    return window.sessionStorage.getItem(LEFT_SIDEBAR_SESSION_KEY) === "true";
   } catch {
-    return true;
+    return false;
   }
-
-  return true;
 }
 
 function getChatPanelWidthBounds() {
@@ -2269,8 +2255,8 @@ function WorkspaceAppContent({
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(
-        sidebarStorageKey(),
+      window.sessionStorage.setItem(
+        LEFT_SIDEBAR_SESSION_KEY,
         leftSidebarOpen ? "true" : "false",
       );
     } catch {
