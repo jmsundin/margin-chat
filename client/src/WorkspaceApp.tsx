@@ -124,6 +124,8 @@ import { transferDocumentBlock } from "./lib/documentBlockTransfer";
 import NotificationToast from "./components/NotificationToast";
 import { revealInFolderLabel } from "./lib/vaultFsDesktop";
 import FolderDeletionPrompt from "./components/FolderDeletionPrompt";
+import RediscoverCard from "./components/RediscoverCard";
+import RelatedBeside from "./components/RelatedBeside";
 import OnlyCopyPrompt from "./components/OnlyCopyPrompt";
 import VaultFolderGate from "./components/VaultFolderGate";
 import AIControls from "./components/AIControls";
@@ -7697,6 +7699,10 @@ function WorkspaceAppContent({
             action={{ label: "Vault settings", onClick: () => { setProfileInitialTab("storage"); setProfileModalOpen(true); } }}
           />
         </div>
+        {!inExtension && !activeIsLinkGuest ? <RediscoverCard ready={vault.ready} state={state} activeId={activeConversation.id}
+          onOpen={(conversationId, blockId) => handleNavigateDocumentConnector({ conversationId, blockId })} /> : null}
+        {!inExtension && !activeIsLinkGuest && vault.ready ? <RelatedBeside state={state} active={activeConversation}
+          onOpenBeside={(conversationId) => openLinkedDocumentBeside(activeConversation.id, conversationId)} /> : null}
         <div className="workspace-shell">
 
 
