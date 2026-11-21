@@ -1,4 +1,5 @@
 import { apiStorageNamespace } from "./lib/apiTransport";
+import { setOwnerFeatureAccess } from "./lib/features";
 import { rememberLogin } from "./lib/newDeviceNotice";
 import { forgetAccountOnThisDevice } from "./lib/vaultLocal";
 import { hasAppUpdateGuard, useAppUpdateGuard } from "./lib/appUpdateSafety";
@@ -107,6 +108,11 @@ function MemberApp({ extension, browserCaptureRequest, onBrowserCaptureHandled, 
   const [checkoutReturn, setCheckoutReturn] = useState(() => getCheckoutReturn(new URLSearchParams(window.location.search)));
   const [billingPortalReturn, setBillingPortalReturn] = useState(() => new URLSearchParams(window.location.search).get("billing") === "return");
   const [route, setRoute] = useState<SiteRoute>(() => resolveSiteRoute(window.location, Boolean(extension)));
+  // Features not ready for everyone show only for the accounts the server names.
+  useEffect(() => {
+    if (!authUser) setOwnerFeatureAccess([]);
+    else if (Array.isArray(authUser.ownerFeatures)) setOwnerFeatureAccess(authUser.ownerFeatures);
+  }, [authUser]);
   const authUserIdRef = useRef(authUser?.id);
   authUserIdRef.current = authUser?.id;
   const billingRefreshSequence = useRef(0);

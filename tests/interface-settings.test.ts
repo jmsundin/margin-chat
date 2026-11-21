@@ -9,6 +9,7 @@ import { readDocumentEditorKind } from "../client/src/lib/documentEditorPreferen
 import { onSyncedSettingChange, startInterfaceSettingsSync, writeSyncedSetting } from "../client/src/lib/interfaceSettings";
 import {
   FEATURES_KEY, applyFeaturePreset, featuresFromUsage, hasFeatureChoices, matchingPreset, parseFeatures, readFeatures, matchFeatures, saveFeatures, setFeature, unchosenFeatures,
+  setOwnerFeatureAccess,
 } from "../client/src/lib/features";
 
 const databases: PGlite[] = [];
@@ -138,7 +139,7 @@ describe("interface settings sync on a device", () => {
 
 describe("features", () => {
   let browser: ReturnType<typeof fakeBrowser> | null = null;
-  afterEach(() => browser?.restore());
+  afterEach(() => { browser?.restore(); setOwnerFeatureAccess([]); });
 
   test("start with everything off and read unknown or broken values as off", () => {
     browser = fakeBrowser({});
@@ -151,6 +152,7 @@ describe("features", () => {
 
   test("presets set every switch, and the matching preset is found again", () => {
     browser = fakeBrowser({});
+    setOwnerFeatureAccess(["voice", "flashcards"]);
     applyFeaturePreset("student");
     expect(readFeatures()).toEqual({ flashcards: true, roadmaps: false, boards: false, claims: false, voice: true, groups: false, spaces: false, outline: true, tiles: false, mapTools: false, language: true });
     expect(matchingPreset(readFeatures())).toBe("student");
@@ -164,6 +166,7 @@ describe("features", () => {
   });
 
   test("⌘K finds a feature by the start of its name or a word for it", () => {
+    setOwnerFeatureAccess(["voice", "flashcards"]);
     expect(matchFeatures("flash").map((feature) => feature.id)).toEqual(["flashcards"]);
     expect(matchFeatures("dictat").map((feature) => feature.id)).toEqual(["voice"]);
     expect(matchFeatures("boards").map((feature) => feature.id)).toEqual(["boards"]);

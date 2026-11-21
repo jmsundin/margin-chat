@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { FLASHCARD_STYLES, type FlashcardDraft, type FlashcardStyle } from "../lib/flashcardAI";
 import { quizParts } from "../lib/flashcardQuiz";
 import { FlashcardFace, QuizPreview } from "./FlashcardReview";
@@ -84,7 +85,8 @@ export default function MakeCardsDialog({ title, decks, passage, initialStyle = 
   const heading = style === "quiz" ? "Make quiz questions" : style === "mix" ? "Make cards and questions" : "Make flashcards";
   const destination = newTopic ? "a new document" : passage ? "the document under the passage" : "the end of the document";
 
-  return (
+  // On the page itself, so no panel's own layer (a transformed or stacked parent) can cover it.
+  return createPortal(
     <div className="make-cards-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
       <div className="make-cards" role="dialog" aria-modal="true" aria-label={heading}>
         <header className="make-cards-head">
@@ -147,6 +149,7 @@ export default function MakeCardsDialog({ title, decks, passage, initialStyle = 
           </footer>
         </> : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

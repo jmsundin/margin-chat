@@ -51,7 +51,7 @@ import {
 } from "react";
 import BranchRail from "./components/BranchRail";
 import "./components/FeatureSettings.css";
-import { FEATURES, dismissFeatureHint, featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, unchosenFeatures, useDismissedFeatureHints, useFeatures, type FeatureId } from "./lib/features";
+import { FEATURES, dismissFeatureHint, featureAvailable, featuresFromUsage, hasFeatureChoices, saveFeatures, setFeature, unchosenFeatures, useDismissedFeatureHints, useFeatures, type FeatureId } from "./lib/features";
 import { interfaceSettingsLoaded, onInterfaceSettingsLoaded, startInterfaceSettingsSync } from "./lib/interfaceSettings";
 import { parseDocumentFlashcards } from "./lib/flashcards";
 import ServicePickerModal from "./components/ServicePickerModal";
@@ -1690,6 +1690,7 @@ function WorkspaceAppContent({
   }
   function featureHintFor(conversation: Conversation): { id: Parameters<typeof dismissFeatureHint>[0]; text: string; action: string; dismiss: string; act: () => void } | null {
     const turnOn = (id: FeatureId, text: string) => {
+      if (!featureAvailable(id)) return null;
       const name = FEATURES.find((feature) => feature.id === id)!.name;
       return { id, text, action: `Turn on ${name}`, dismiss: `keep ${name} off`, act: () => setFeature(id, true) };
     };
