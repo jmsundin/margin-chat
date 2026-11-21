@@ -13393,3 +13393,12 @@ body .live-markdown-editor {
 .plan-picker a {
   color: var(--accent);
 }
+
+.update-settings { align-items: flex-start; }
+.update-settings .thread-dialog-button { flex: 0 0 auto; text-decoration: none; white-space: nowrap; }
+.update-settings-status { color: var(--ink); }
+.update-settings-status.is-error { color: var(--danger); }
+@media (max-width: 720px) {
+  .update-settings { flex-direction: column; gap: 12px; }
+}
+.update-settings .thread-dialog-button:not(.is-primary) { border-color: var(--line-strong); }

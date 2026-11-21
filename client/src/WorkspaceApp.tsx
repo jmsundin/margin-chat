@@ -946,7 +946,7 @@ function WorkspaceAppContent({
   const [documentLinkNotice, setDocumentLinkNotice] = useState<{ message: string; conversationId?: string; blockId?: string } | null>(null);
   const [uploadNotice, setUploadNotice] = useState<{ message: string; kind: "info" | "success" | "error" } | null>(null);
   const [jevEnabled, setJevEnabled] = useJevPreference(storageUserId);
-  const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
+  const [profileModalOpen, setProfileModalOpen] = useState(() => ["account", "billing", "api-keys", "agents", "appearance", "voice", "storage", "updates"].includes(new URLSearchParams(window.location.search).get("settings") ?? ""));
   const [historyImportOpen, setHistoryImportOpen] = useState(false);
   /** Help: the guides panel beside the workspace. */
   const [helpOpen, setHelpOpen] = useState(false);
@@ -964,7 +964,7 @@ function WorkspaceAppContent({
   }, [vault.ready, inExtension, storageUserId]);
   const [profileInitialTab, setProfileInitialTab] = useState<SettingsSection | null>(() => {
     const tab = new URLSearchParams(window.location.search).get("settings");
-    return tab === "account" || tab === "billing" || tab === "api-keys" || tab === "agents" || tab === "appearance" || tab === "voice" || tab === "storage" ? tab : null;
+    return tab === "account" || tab === "billing" || tab === "api-keys" || tab === "agents" || tab === "appearance" || tab === "voice" || tab === "storage" || tab === "updates" ? tab : null;
   });
   const previousPendingChats = useRef(pendingConversationIds);
   /** Roadmap Explain and Dive deeper asks waiting for AI to finish writing in their step's document. */

@@ -7,6 +7,8 @@ import type { useMarkdownVault } from "../lib/useMarkdownVault";
 import { Fragment, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AiFeatureSettings, AppearanceSettings, useVoiceTypingEnabled, VoiceTypingSettings, type ThemeMode } from "./AppSettingsSections";
 import { FeatureSettings } from "./FeatureSettings";
+import { UpdateSettings } from "./UpdateSettings";
+import { useReadyUpdate } from "../lib/appUpdateCheck";
 import { FEATURES, useFeatures } from "../lib/features";
 import type {
   ApiKeyProvider,
@@ -24,7 +26,7 @@ import type { LocalDirectoryStatus } from "../lib/workspaceStorage";
 import { requestEmailVerification, type StateUploadProgress } from "../lib/api";
 import { switchDesktopMode, useDesktopMode } from "../lib/desktopMode";
 
-export type SettingsSection = "features" | "account" | "billing" | "api-keys" | "agents" | "appearance" | "voice" | "storage";
+export type SettingsSection = "features" | "account" | "billing" | "api-keys" | "agents" | "appearance" | "voice" | "storage" | "updates";
 
 interface SettingsPageProps {
   /** The section to open; null or left out opens the section list on phones and Account on computers. */
@@ -82,6 +84,7 @@ const SECTIONS: Array<{ id: SettingsSection; label: string; description: string;
   { id: "appearance", label: "Editor & look", description: "Theme, the page and how the AI joins in.", keywords: "theme dark light editor live preview quiet page simple minimal toolbar focus" },
   { id: "voice", label: "Voice typing", description: "Talk instead of typing in any text field.", keywords: "dictation mic microphone hold space talk speech" },
   { id: "storage", label: "Vault & storage", description: "Where your Markdown files live and how they sync.", keywords: "markdown vault folder cloud sync download upload files storage deleted backup" },
+  { id: "updates", label: "Updates", description: "Your version, and the newest one.", keywords: "update upgrade latest new version check restart install release about" },
 ];
 
 /** Sections that only do something with an account. */
@@ -116,6 +119,7 @@ const SECTION_ICONS: Record<SettingsSection, string> = {
   appearance: "M4 20h4L19 9l-4-4L4 16ZM13 7l4 4",
   voice: "M12 3a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0V6a3 3 0 0 1 3-3ZM5 11a7 7 0 0 0 14 0M12 18v3",
   storage: "M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z",
+  updates: "M20 12a8 8 0 1 1-2.3-5.6M20 4v5h-5M12 8v5l3 2",
 };
 
 function SettingsIcon({ path }: { path: string }) {
@@ -244,6 +248,7 @@ export default function SettingsPage({
   const phone = useSyncExternalStore(subscribePhoneLayout, readPhoneLayout, () => false);
   const featureSet = useFeatures();
   const voiceTypingOn = useVoiceTypingEnabled() && featureSet.voice;
+  const updateReady = useReadyUpdate() !== null;
   const featuresOn = FEATURES.filter((feature) => featureSet[feature.id]).length;
   const [selectedTab, setActiveTab] = useState<SettingsSection | null>(initialTab ?? null);
   const [query, setQuery] = useState("");
@@ -449,6 +454,7 @@ export default function SettingsPage({
     appearance: theme ? (theme === "dark" ? "Dark" : "Light") : undefined,
     voice: dictationSupported() ? (voiceTypingOn ? "On" : "Off") : undefined,
     storage: local ? "This computer" : cloudSyncEnabled ? "Cloud" : "This device",
+    updates: updateReady ? "Update ready" : undefined,
   };
   const visibleSections = SECTIONS.filter((section) => section.id !== "voice" || dictationSupported())
     .filter((section) => !hiddenSection(section.id))
@@ -463,6 +469,7 @@ export default function SettingsPage({
       aria-label="Settings"
       aria-modal="true"
       className={`settings-page${phone ? " is-phone" : ""}`}
+      data-app-update-safe={activeTab === "updates" && showSection ? "" : undefined}
       role="dialog"
     >
       <header className="settings-page-top">
@@ -737,6 +744,8 @@ export default function SettingsPage({
             {activeTab === "features" ? <FeatureSettings guest={guest} /> : null}
 
             {activeTab === "voice" ? <VoiceTypingSettings /> : null}
+
+            {activeTab === "updates" ? <UpdateSettings /> : null}
 
             {activeTab === "storage" ? (
               <div className="profile-storage-section">

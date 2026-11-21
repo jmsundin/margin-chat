@@ -11,6 +11,7 @@ import { createVaultFolders } from "./vaultFolders.mjs";
 import { createVaultSyncManager } from "./vaultSync.mjs";
 import { startLocalBackend } from "./localMode.mjs";
 import { CAPABILITIES_PATH, MODE_PATHS, readAppMode, saveAppMode } from "./appMode.mjs";
+import { CHECK_UPDATES_PATH, checkForUpdatesNow } from "./updateCheck.mjs";
 
 // The packaged app serves the built web client from margin://app and forwards
 // /api to the hosted backend, so the client keeps its same-origin relative fetches.
@@ -141,6 +142,7 @@ async function serveClientFile(url) {
 function handleAppRequest(request) {
   const url = new URL(request.url);
   if (url.pathname === INSTALL_UPDATE_PATH) return installShellUpdateNow();
+  if (url.pathname === CHECK_UPDATES_PATH) return checkUpdatesForPage();
   if (url.pathname === CAPABILITIES_PATH) {
     return Response.json({ modes: true, mode: LOCAL_MODE ? "local" : "account" }, { headers: { "Cache-Control": "no-store" } });
   }
@@ -324,12 +326,16 @@ function announceUpdate(detail) {
 }
 const announceClientUpdate = (version) => announceUpdate({ kind: "client", commit: version.commit });
 
+// One client check at a time, shared by the timer and "Check for updates" in Settings.
+let runningClientCheck = null;
+function checkClientNow() {
+  return (runningClientCheck ??= clientBundles.update()
+    .then((version) => { if (version) announceClientUpdate(version); return version; })
+    .finally(() => { runningClientCheck = null; }));
+}
+
 function startClientUpdates() {
-  let running = null;
-  const check = () => (running ??= clientBundles.update()
-    .then((version) => { if (version) announceClientUpdate(version); })
-    .catch((error) => console.warn("Client update failed; trying again later.", error))
-    .finally(() => { running = null; }));
+  const check = () => checkClientNow().catch((error) => console.warn("Client update failed; trying again later.", error));
   void check();
   setInterval(check, CLIENT_UPDATE_INTERVAL);
   // A window coming back into view is a good moment to look again.
@@ -363,16 +369,33 @@ function installShellUpdateNow() {
 
 // New versions of the app itself download in the background and install when
 // the page restarts at a quiet moment, or when the person quits.
+let runningShellCheck = null;
+function checkShellNow() {
+  return (runningShellCheck ??= shellUpdater.check()
+    .then((update) => {
+      if (update && !update.manual) announceUpdate({ kind: "app", version: update.version });
+      return update;
+    })
+    .finally(() => { runningShellCheck = null; }));
+}
+
+/** Answers "Check for updates" in Settings: checks now, and the page shows what is ready. */
+async function checkUpdatesForPage() {
+  const body = await checkForUpdatesNow({
+    appVersion: app.getVersion(),
+    checkClient: LOCAL_MODE ? null : checkClientNow,
+    currentClient: () => clientBundles.current(),
+    checkShell: checkShellNow,
+    downloadUrl: DOWNLOAD_URL,
+  });
+  return Response.json(body, { headers: { "Cache-Control": "no-store" } });
+}
+
 function startShellUpdates() {
   let offeredManual = null;
-  let running = null;
-  const check = () => (running ??= shellUpdater.check()
+  const check = () => checkShellNow()
     .then(async (update) => {
-      if (!update) return;
-      if (!update.manual) {
-        announceUpdate({ kind: "app", version: update.version });
-        return;
-      }
+      if (!update || !update.manual) return;
       // A .deb install or an app run from the disk image can't replace itself.
       if (offeredManual === update.version) return;
       offeredManual = update.version;
@@ -390,8 +413,7 @@ function startShellUpdates() {
       const { response } = window ? await dialog.showMessageBox(window, options) : await dialog.showMessageBox(options);
       if (response === 0) openExternally(DOWNLOAD_URL);
     })
-    .catch((error) => console.warn("App update check failed; trying again later.", error))
-    .finally(() => { running = null; }));
+    .catch((error) => console.warn("App update check failed; trying again later.", error));
   setTimeout(check, 30 * 1000);
   setInterval(check, SHELL_UPDATE_INTERVAL);
   // Quitting installs a downloaded update, so the next launch is the new version.
