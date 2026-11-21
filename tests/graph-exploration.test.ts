@@ -9,7 +9,7 @@ import {
   normalizeGraphConcepts,
   readGraphConcepts,
   resolveGraphEvidence,
-  searchGraphSources,
+  searchGraphSources, bestResultPerDocument,
   writeGraphConcepts,
   type GraphConcept,
   type GraphEvidenceRef,
@@ -220,5 +220,18 @@ describe("map geometry and collapsed structural links", () => {
   test("duplicate source edges do not inflate the aggregate count", () => {
     const edges = aggregateGraphEdges({ ...scene, edges: [...scene.edges, scene.edges[1]] }, groups);
     expect(edges.find((edge) => edge.source.id === "a" && edge.target.id === "b")?.count).toBe(2);
+  });
+});
+
+describe("map search ranking", () => {
+  test("puts notes whose title has the words first, then whole-word passages that use them often", () => {
+    const conversations = {
+      old: conversation("old", { title: "Agent evaluations", updatedAt: "2026-01-01T00:00:00.000Z", messages: [{ id: "a", role: "user", content: "notes", createdAt }] }),
+      busy: conversation("busy", { title: "Benchmarks", updatedAt: "2026-03-01T00:00:00.000Z", messages: [{ id: "b", role: "user", content: "evaluations, evaluations and more evaluations", createdAt }] }),
+      newest: conversation("newest", { title: "Memory systems", updatedAt: "2026-06-01T00:00:00.000Z", messages: [{ id: "c", role: "user", content: "one passing mention of reevaluations", createdAt }] }),
+    };
+    const results = searchGraphSources(conversations, "evaluations");
+    expect(bestResultPerDocument(results).map((result) => result.evidence.conversationId)).toEqual(["old", "busy", "newest"]);
+    expect(results[0].sourceLabel).toBe("Title");
   });
 });
