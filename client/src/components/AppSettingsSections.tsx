@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, readHoldSpacePreference, saveDictationButtonPreference, saveHoldSpacePreference, subscribeDictationButtonPreference } from "../lib/dictation";
 import { readQuietPage, saveQuietPage, subscribeQuietPage } from "../lib/quietPage";
 import { setFeature, useFeature } from "../lib/features";
+import { saveRediscoverOn } from "../lib/rediscover";
+import { useRediscoverOn } from "./RediscoverCard";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "../lib/notebookPrefs";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
 import { VAULT_SEARCH_DISCLOSURE, type VaultPassageIndex } from "../lib/useVaultPassageIndex";
@@ -45,6 +47,7 @@ export function AppearanceSettings({ onSetTheme, theme }: {
 }) {
   const quietPage = useSyncExternalStore(subscribeQuietPage, readQuietPage, () => true);
   const notebook = useSyncExternalStore(subscribeNotebookPrefs, readNotebookPrefs, () => DEFAULT_NOTEBOOK_PREFS);
+  const rediscover = useRediscoverOn();
   return (
     <div className="app-settings-body">
       {theme && onSetTheme ? <div className="app-settings-section">
@@ -64,6 +67,17 @@ export function AppearanceSettings({ onSetTheme, theme }: {
         </div>
         <input id="quiet-page" type="checkbox" role="switch" aria-describedby="quiet-page-disclosure"
           checked={quietPage} onChange={(event) => saveQuietPage(event.target.checked)} />
+      </div>
+
+      <div className="app-settings-section app-settings-switch-section">
+        <div className="app-settings-copy">
+          <label className="app-settings-label" htmlFor="rediscover">Rediscover</label>
+          <p className="app-settings-description" id="rediscover-disclosure">
+            Once a day at most, when you open Margin Chat, a small card brings back an older note you haven't seen in a while. Your answers set when it comes back. Nothing is sent as a notification.
+          </p>
+        </div>
+        <input id="rediscover" type="checkbox" role="switch" aria-describedby="rediscover-disclosure"
+          checked={rediscover} onChange={(event) => saveRediscoverOn(event.target.checked)} />
       </div>
 
       <div className="app-settings-section">
