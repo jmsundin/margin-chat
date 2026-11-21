@@ -39,6 +39,8 @@ export function getDocumentPreview(conversation: Conversation, length = 140): st
   const body = title && firstLine && firstLine[1].trim().toLocaleLowerCase() === title ? text.slice(firstLine[0].length) : text;
   return body.slice(0, 600)
     .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1").replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    // A [[link]] reads as its label, or the document it names without the place in it.
+    .replace(/!?\[\[([^\]|]*)(?:\|([^\]]*))?\]\]/g, (_, target: string, label?: string) => label || target.split(/[#^]/)[0])
     .replace(/[#*_`>]/g, "").replace(/\s+/g, " ").trim().slice(0, length) || "No content yet";
 }
 
