@@ -62,8 +62,45 @@
   .document-margin-mark:is(:hover, .is-pointed) { max-width: 100%; }
 }
 .document-margin-mark-note { position: absolute; top: -8px; right: calc(100% - 2px); max-width: calc(100vw - 48px); z-index: 4;
-  padding: 2px 0; border: 1px solid var(--line); border-radius: 12px; background: var(--panel-strong, var(--bg));
-  box-shadow: 0 14px 36px rgba(40, 32, 20, .16); }
+  padding: 8px 0 4px; border: 0; border-radius: 10px; background: var(--panel-bg, var(--bg)); box-shadow: none; }
+
+/* ---- An open note is ink in the margin ----
+   Its name and when it was started, then the words: yours, and the AI's in serif. No card, no buttons.
+   The note's ⋮ shows only while you point at it; Space on an empty line still asks AI.
+   Clicking the page folds it back to its bubble. */
+.document-margin-note-head { display: flex; flex-direction: column; gap: 1px; padding: 0 30px 6px 10px; min-width: 0; }
+.document-margin-note-title { font-size: 13.5px; font-weight: 600; line-height: 1.3; color: var(--ink); overflow-wrap: anywhere; }
+.document-margin-note-title.is-unnamed { font-weight: 500; font-style: italic; color: var(--muted); }
+.document-margin-note-time { font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.document-margin-note-time:empty { display: none; }
+.note-sheet > .document-margin-note-head { padding: 0 20px 4px; }
+.document-margin-note-head + .margin-document-family, .note-sheet-body .margin-document-family { min-width: 0; }
+.document-margin.is-marks .document-margin-mark-note .margin-document-frame > .chat-panel.document-panel,
+.document-margin.is-marks .document-margin-mark-note .margin-document-frame > .chat-panel.document-panel.is-active { border-color: transparent; background: transparent; box-shadow: none; }
+.document-margin.is-marks .document-margin-mark-note .margin-document-frame { width: 100% !important; }
+/* The name above says what the dot used to; the resize corner, the + and the Ask AI chips under the caret go. */
+.document-margin.is-marks .document-margin-mark-note .margin-document-frame::before,
+:is(.document-margin-mark-note, .note-sheet) .margin-document-frame > .margin-document-resize,
+:is(.document-margin-mark-note, .note-sheet) .live-document-insert,
+:is(.document-margin-mark-note, .note-sheet) .live-document-ask-group,
+.document-margin.is-marks .document-margin-mark-note .live-document-modes { display: none !important; }
+/* Only the ⋮ stays, at the top right, and only while you point at the note (or its menu is open). */
+.document-margin.is-marks .document-margin-mark-note .document-header { position: absolute; top: -2px; right: 0; left: auto; padding: 0; background: transparent; }
+.document-margin.is-marks .document-margin-mark-note .document-header :is(.document-minimize-button, .document-close-button, .note-open-beside-button, .document-origin) { display: none !important; }
+.document-margin.is-marks .document-margin-mark-note .document-header .document-header-menu-trigger { opacity: 0; transition: opacity .15s ease; }
+.document-margin.is-marks .document-margin-mark-note:is(:hover, :focus-within) .document-header .document-header-menu-trigger,
+.document-margin.is-marks .document-margin-mark-note .document-header .document-header-menu-trigger[aria-expanded="true"] { opacity: 1; }
+@media (hover: none) { .document-margin.is-marks .document-margin-mark-note .document-header .document-header-menu-trigger { opacity: 1; } }
+.document-margin.is-marks .document-margin-mark-note .document-body { --document-top-padding: 0px; --document-left-padding: 10px; --document-right-padding: 28px; }
+.document-margin.is-marks .document-margin-mark-note .margin-document-frame:hover > .chat-panel.document-panel,
+.is-quiet-page .document-margin.is-marks .document-margin-mark-note .margin-document-frame:hover > .chat-panel.document-panel { background: transparent; }
+/* Without the + beside each line there's no need for its gutter: the words line up under the name. */
+.document-margin.is-marks .document-margin-mark-note .live-document-host .cm-line,
+.document-margin.is-marks .document-margin-mark-note :is(.live-document-widget, .live-document-after, .live-document-media-form) { padding-left: 0; margin-left: 0; }
+.document-margin.is-marks .document-margin-mark-note .live-document-host .cm-line.cm-lp-quote { padding-left: 14px; background-position: 0 0; }
+/* Your words in the page's sans, the AI's in its serif ink. */
+.document-margin.is-marks .document-margin-mark-note .live-document-host .live-document-block[data-authorship="ai"] {
+  font-family: var(--paper-serif, Georgia, serif); font-size: 16px; line-height: 1.5; color: var(--ink); background: none; }
 /* With room beside the page, the bubble grows into its note, where it was. */
 .document-margin-mark-note.is-right { top: -6px; left: -2px; right: auto; }
 .document-margin-mark-note > .margin-document-family { min-width: 0; }

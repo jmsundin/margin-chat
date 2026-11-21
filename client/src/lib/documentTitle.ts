@@ -24,6 +24,8 @@ const PLACEHOLDER_DOCUMENT_TITLES = new Set([
 export const MIN_DOCUMENT_TITLE_CONTENT_LENGTH = 160;
 /** Stays under the title endpoint's 8,000 character prompt limit. */
 export const MAX_DOCUMENT_TITLE_CONTENT_LENGTH = 6_000;
+/** A margin note is short, so a sentence or two is enough to name it. */
+export const MIN_MARGIN_NOTE_TITLE_CONTENT_LENGTH = 30;
 /** Wait for typing to pause before asking for a title. */
 export const DOCUMENT_TITLE_IDLE_MS = 2_500;
 
@@ -35,10 +37,10 @@ export function isPlaceholderDocumentTitle(title: string): boolean {
  * The content to title a document from, or null when it should keep its title.
  * `provisionalTitle` is a stand-in the app set itself (such as the first prompt), which a generated title may replace.
  */
-export function getDocumentTitleSource(conversation: Conversation, provisionalTitle?: string): string | null {
+export function getDocumentTitleSource(conversation: Conversation, provisionalTitle?: string, minLength = MIN_DOCUMENT_TITLE_CONTENT_LENGTH): string | null {
   const replaceable = isPlaceholderDocumentTitle(conversation.title) || conversation.title === provisionalTitle;
   if (!conversation.document || !replaceable) return null;
   const text = getEditableDocumentText(conversation).replace(/\s+/gu, " ").trim();
-  if (text.length < MIN_DOCUMENT_TITLE_CONTENT_LENGTH) return null;
+  if (text.length < minLength) return null;
   return text.slice(0, MAX_DOCUMENT_TITLE_CONTENT_LENGTH);
 }
