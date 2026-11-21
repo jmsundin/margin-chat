@@ -219,7 +219,7 @@ import {
   requestDocumentTitle,
   requestUploadDocument,
 } from "./lib/api";
-import { DOCUMENT_TITLE_IDLE_MS, MAX_DOCUMENT_TITLE_CONTENT_LENGTH, getDocumentTitleSource, isPlaceholderDocumentTitle } from "./lib/documentTitle";
+import { DOCUMENT_TITLE_IDLE_MS, MAX_DOCUMENT_TITLE_CONTENT_LENGTH, MIN_MARGIN_NOTE_TITLE_CONTENT_LENGTH, getDocumentTitleSource, isPlaceholderDocumentTitle } from "./lib/documentTitle";
 import { DocumentTitleSuggestionContext, suggestLocalDocumentTitle, toPlainDocumentTitle, type SuggestDocumentTitle } from "./lib/documentTitleSuggestion";
 import {
   getRecentModelSelectionsStorageKey,
@@ -3352,7 +3352,9 @@ function WorkspaceAppContent({
     documentTitleTimers.current.set(conversationId, setTimeout(() => {
       documentTitleTimers.current.delete(conversationId);
       const conversation = currentStateRef.current.conversations[conversationId];
-      const content = conversation && getDocumentTitleSource(conversation, provisionalDocumentTitles.current.get(conversationId));
+      // A margin note is named from a sentence or two, so its pill and its open view show a real name.
+      const content = conversation && getDocumentTitleSource(conversation, provisionalDocumentTitles.current.get(conversationId),
+        isMarginNoteDocument(conversation) ? MIN_MARGIN_NOTE_TITLE_CONTENT_LENGTH : undefined);
       if (!conversation || !content) return;
       const placeholderTitle = conversation.title;
       const applyTitle = (title: string) => setState((current) => {
@@ -5270,10 +5272,11 @@ function WorkspaceAppContent({
     if (!passage) return;
     const draft = joinSelectedLines(passage);
     if (!draft) return;
+    const stand = excerpt(draft.quote.trim().replace(/\s+/g, " "), 52);
     const noteId = handleCreateNote({
       content: "",
       // An empty note is named after its passage, so it can be told apart in lists.
-      title: excerpt(draft.quote.trim().replace(/\s+/g, " "), 52) || undefined,
+      title: stand || undefined,
       conversationId: draft.conversationId,
       kind: "comment",
       sourceMessageId: draft.messageId,
@@ -5283,6 +5286,8 @@ function WorkspaceAppContent({
       sourceStandaloneNoteId: draft.sourceNoteId,
       sourceBlockId: draft.sourceBlockId,
     });
+    // The passage's words only stand in for a name: once the note has a sentence or two, the AI names it.
+    if (stand) provisionalDocumentTitles.current.set(noteId, stand);
     setSelectionDraft(null);
     window.getSelection()?.removeAllRanges();
     focusNewDocumentEditor(noteId);
@@ -7468,6 +7473,7 @@ function WorkspaceAppContent({
     const claims = view === "chat" ? getClaimMarginItems(conversation) : [];
     const items = getMarginDocuments(conversation).map((note): DocumentMarginItem => ({ id: note.id, anchored: Boolean(note.branchAnchor), node: renderMarginFamily(note, view, true), foldable: true,
       label: getEditableDocumentText(note).trim().split(/\r?\n/)[0]?.slice(0, 80) || note.title,
+      title: isPlaceholderDocumentTitle(note.title) || provisionalDocumentTitles.current.get(note.id) === note.title ? undefined : note.title, createdAt: note.createdAt,
       ai: Boolean(note.document?.blocks.length) && note.document!.blocks.every((block) => block.authorship === "ai" || !block.content.trim()),
       pending: Boolean(note.document?.generations.some((generation) => generation.status === "streaming")) }));
     return items.length || claims.length ? [...items, ...claims] : undefined;

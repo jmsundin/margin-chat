@@ -22,6 +22,10 @@ export interface DocumentMarginItem {
   foldable?: boolean;
   /** Opens the note beside the page; a folded line shows the button when you point at it. */
   onOpenBeside?: () => void;
+  /** The note's name (the AI names a note once it has words); unset while it still has a placeholder name. */
+  title?: string;
+  /** When the note was started, shown under its name while it's open. */
+  createdAt?: string;
 }
 
 interface Props {
@@ -64,10 +68,37 @@ const LEFT_PAD = 16;
 /** Where a note's dot sits from its top (see .margin-document-frame::before in quiet-page.css). */
 const NOTE_DOT_Y = 22;
 
-/** What a bubble says: the note's first words, without the markdown that starts a line. */
+/** What a bubble says: the note's name once it has one, otherwise its first words, without the markdown that starts a line. */
 function bubbleText(item: DocumentMarginItem) {
+  if (item.title?.trim()) return item.title.trim();
   const text = (item.label ?? "").replace(/^\s*(?:#{1,6}\s+|[-*+]\s+(?:\[[ xX]\]\s+)?|>\s*|\d+[.)]\s+)/, "").replace(/[*_`~]+/g, "").trim();
   return text || (item.pending ? "Thinking…" : "Margin note");
+}
+
+/** "Today, 2:45 PM", "Yesterday, 9:10 AM", "Nov 18, 2:45 PM", or with the year when it isn't this year. */
+export function noteTimeLabel(iso: string | undefined, now = new Date()): string {
+  const date = iso ? new Date(iso) : null;
+  if (!date || Number.isNaN(date.getTime())) return "";
+  const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  const day = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const days = Math.round((day(now) - day(date)) / 86_400_000);
+  if (days === 0) return `Today, ${time}`;
+  if (days === 1) return `Yesterday, ${time}`;
+  const sameYear = date.getFullYear() === now.getFullYear();
+  return `${date.toLocaleDateString(undefined, { month: "short", day: "numeric", ...(sameYear ? {} : { year: "numeric" }) })}, ${time}`;
+}
+
+/**
+ * The top of an open note: its name and when it was started, quietly, above the words.
+ * A note about the whole document says so under its name.
+ */
+function NoteHead({ item }: { item: DocumentMarginItem }) {
+  const time = noteTimeLabel(item.createdAt);
+  const title = item.title?.trim();
+  return <div className="document-margin-note-head">
+    <span className={`document-margin-note-title${title ? "" : " is-unnamed"}`}>{title || (item.pending ? "Thinking…" : "New note")}</span>
+    <span className="document-margin-note-time">{[item.anchored ? "" : "About this document", time].filter(Boolean).join(" · ")}</span>
+  </div>;
 }
 
 /** How far in from the note's left edge its dot is: past the editor's gutter, or at the edge without a quiet page. */
@@ -487,13 +518,13 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
               aria-label={sheetFull ? "Show the page above the note (or drag to resize)" : "Make the note full screen (or drag to resize)"}
               onPointerDown={sheetHandleDown} onPointerMove={sheetHandleMove} onPointerUp={sheetHandleEnd} onPointerCancel={sheetHandleEnd}
               onClick={sheetHandleClick}><span aria-hidden="true" /></button>
-            {sheetFull ? <button type="button" className="note-sheet-back" onClick={() => setOpenId(null)}>‹ {label.replace(/^Notes for /, "")}</button>
-              : item.anchored ? null : <span className="document-margin-label">About this document</span>}
+            {sheetFull ? <button type="button" className="note-sheet-back" onClick={() => setOpenId(null)}>‹ {label.replace(/^Notes for /, "")}</button> : null}
+            <NoteHead item={item} />
             <div className="note-sheet-body"><MobileKeyboardDirect>{item.node}</MobileKeyboardDirect></div>
           </div>, asideRef.current?.closest(".app-shell") ?? document.body) : null}
           {open && !sheet ? <div className={`document-margin-mark-note${openRight ? " is-right" : ""}`} data-margin-note-id={item.id} data-mobile-keyboard-direct style={{ width: noteWidth }}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
-            {item.anchored ? null : <span className="document-margin-label">About this document</span>}
+            <NoteHead item={item} />
             <MobileKeyboardDirect>{item.node}</MobileKeyboardDirect>
           </div> : null}
         </div>;
