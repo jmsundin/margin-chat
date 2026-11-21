@@ -1,4 +1,4 @@
-import { FEATURE_GROUPS, FEATURE_PRESETS, FEATURES, applyFeaturePreset, matchingPreset, setFeature, useFeatures } from "../lib/features";
+import { FEATURE_GROUPS, FEATURE_PRESETS, applyFeaturePreset, matchingPreset, setFeature, useAvailableFeatures, useFeatures } from "../lib/features";
 import "./FeatureSettings.css";
 
 /**
@@ -7,6 +7,7 @@ import "./FeatureSettings.css";
  */
 export function FeatureSettings({ guest = false }: { guest?: boolean }) {
   const features = useFeatures();
+  const available = useAvailableFeatures();
   const preset = matchingPreset(features);
   return (
     <div className="app-settings-body feature-settings">
@@ -21,7 +22,7 @@ export function FeatureSettings({ guest = false }: { guest?: boolean }) {
           <button aria-pressed={preset === entry.id} className={preset === entry.id ? "feature-settings-preset is-active" : "feature-settings-preset"}
             key={entry.id} onClick={() => applyFeaturePreset(entry.id)} type="button">
             <strong>{entry.name}</strong>
-            <span>{entry.features.length ? entry.features.map((id) => FEATURES.find((feature) => feature.id === id)!.name).join(", ") : "Just the essentials"}</span>
+            <span>{available.filter((feature) => entry.features.includes(feature.id)).map((feature) => feature.name).join(", ") || "Just the essentials"}</span>
           </button>
         ))}
       </div>
@@ -29,7 +30,7 @@ export function FeatureSettings({ guest = false }: { guest?: boolean }) {
       {FEATURE_GROUPS.map((group) => (
         <div className="feature-settings-group" key={group} role="group" aria-labelledby={`feature-group-${group}`}>
           <h3 className="feature-settings-group-name" id={`feature-group-${group}`}>{group}</h3>
-          {FEATURES.filter((feature) => feature.group === group).map((feature) => (
+          {available.filter((feature) => feature.group === group).map((feature) => (
             <div className="app-settings-section app-settings-switch-section" key={feature.id}>
               <div className="app-settings-copy">
                 <label className="app-settings-label" htmlFor={`feature-${feature.id}`}>{feature.name}</label>

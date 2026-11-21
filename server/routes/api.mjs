@@ -38,6 +38,7 @@ import { createPublicMapService } from "../publicMap/index.mjs";
 import { handlePublicMapRequest, handleWebSearchRequest } from "./publicMap.mjs";
 import { createWebSearchService } from "../webSearch/index.mjs";
 import { createDictationService, MAX_DICTATION_AUDIO_BYTES } from "../dictation/index.mjs";
+import { canUseOwnerOnlyFeature, OWNER_ONLY_ROUTES } from "../features/ownerOnly.mjs";
 import { createDesktopDownloadService, describeDownloadRequest } from "../downloads/index.mjs";
 import { createTrialTopicsService } from "../trial/topics.mjs";
 import { requireCaptureAccess } from "../captures/index.mjs";
@@ -586,6 +587,12 @@ export function createApiHandler({
 
       if (["stateRead", "documentUpload", "documentDelete", "chat", "chatRun", "chatTitle", "dictationTranscribe", "dictationLive", "dictationLiveFinish", "dictationLiveRenew", "urlMap", "repoMap", "repoExplain", "topicExpansion", "jevStatus", "jevWorkspace", "jevSearch", "webImage", ...PUBLIC_MAP_ROUTES].includes(route?.id)) {
         requireExpectedVaultAccount(request, authContext.user);
+      }
+
+      // Features still being finished answer only the accounts in OWNER_ONLY_FEATURE_EMAILS.
+      const ownerOnlyFeature = route?.id && Object.hasOwn(OWNER_ONLY_ROUTES, route.id) ? OWNER_ONLY_ROUTES[route.id] : undefined;
+      if (ownerOnlyFeature && !canUseOwnerOnlyFeature(authContext.user, ownerOnlyFeature, env)) {
+        throw new HttpError(403, "This feature isn't available on your account yet.");
       }
 
       if (route?.id === "passwordChange") {

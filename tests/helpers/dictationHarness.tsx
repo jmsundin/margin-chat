@@ -99,7 +99,7 @@ const { insertDictation, startDictationPreview, joinDictation, findDictationTarg
 const { isApplePlatform } = await import("../../client/src/lib/workspaceViewShortcuts");
 const { default: DictationControl } = await import("../../client/src/components/DictationControl");
 // Voice typing is an opt-in feature (Settings → Features); these tests use it switched on.
-(await import("../../client/src/lib/features")).setFeature("voice", true);
+{ const features = await import("../../client/src/lib/features"); features.setOwnerFeatureAccess(["voice"]); features.setFeature("voice", true); }
 
 const checks: string[] = [];
 const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
