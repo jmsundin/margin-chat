@@ -5,21 +5,23 @@
  * - aiBehaviour "thinks": pressing Enter after a line or paragraph asks one question about it in the
  *   margin, and answers hand the thinking back with a follow-up question.
  *   "asks": the AI only answers what you ask.
- * - marginMode "right": notes sit in the right margin beside their passage.
- *   "marks": only a dot beside each passage; click it to open the note. Phones always use marks
- *   while the quiet page is on.
+ * - marginMode "bubbles" (the default): a small bubble beside each passage with the note's first
+ *   words; pointing at it shows more, clicking it opens the note. The margin stays narrow.
+ *   "full": every note sits open in a wide right margin beside its passage (phones keep bubbles
+ *   while the quiet page is on). Settings saved before bubbles ("right", "marks") read as bubbles,
+ *   so everyone starts from the narrow margin.
  * - proactive: no longer used (Thinks with you now asks on Enter); kept so saved settings still read.
  * - stance: how its questions lean: supportive, neutral or antagonistic.
  */
 export type AIBehaviour = "thinks" | "asks";
-export type MarginMode = "right" | "marks";
+export type MarginMode = "bubbles" | "full";
 export type AIStance = "supportive" | "neutral" | "antagonistic";
 export interface NotebookPrefs { aiBehaviour: AIBehaviour; marginMode: MarginMode; proactive: boolean; stance: AIStance }
 
 import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
 
 const KEY = "margin-chat:notebook";
-export const DEFAULT_NOTEBOOK_PREFS: NotebookPrefs = { aiBehaviour: "thinks", marginMode: "right", proactive: false, stance: "supportive" };
+export const DEFAULT_NOTEBOOK_PREFS: NotebookPrefs = { aiBehaviour: "thinks", marginMode: "bubbles", proactive: false, stance: "supportive" };
 const listeners = new Set<() => void>();
 let cached: { raw: string | null; prefs: NotebookPrefs } | null = null;
 
@@ -28,7 +30,7 @@ export function parseNotebookPrefs(raw: string | null): NotebookPrefs {
   try { value = raw ? JSON.parse(raw) ?? {} : {}; } catch { value = {}; }
   return {
     aiBehaviour: value.aiBehaviour === "asks" ? "asks" : "thinks",
-    marginMode: value.marginMode === "marks" ? "marks" : "right",
+    marginMode: (value.marginMode as string) === "full" ? "full" : "bubbles",
     proactive: value.proactive === true,
     stance: value.stance === "neutral" || value.stance === "antagonistic" ? value.stance : "supportive",
   };
