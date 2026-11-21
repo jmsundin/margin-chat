@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { AppState } from "@margin-chat/workspace-contracts";
 import {
-  applyRediscoverAnswer, dayNumber, pickRediscoverNote, readRediscoverLog, readRediscoverOn, rediscoverDueToday,
+  applyRediscoverAnswer, dayNumber, readRediscoverLevel, pickRediscoverNote, readRediscoverLog, readRediscoverOn, rediscoverDueToday,
   saveRediscoverLog, saveRediscoverOn, subscribeRediscoverOn, type RediscoverAnswer, type RediscoverPick,
 } from "../lib/rediscover";
 import { interfaceSettingsLoaded, onInterfaceSettingsLoaded } from "../lib/interfaceSettings";
@@ -20,6 +20,10 @@ const FEEDBACK: Partial<Record<RediscoverAnswer, string>> = {
 
 export function useRediscoverOn() {
   return useSyncExternalStore(subscribeRediscoverOn, readRediscoverOn, () => true);
+}
+
+export function useRediscoverLevel() {
+  return useSyncExternalStore(subscribeRediscoverOn, readRediscoverLevel, () => "open" as const);
 }
 
 /**

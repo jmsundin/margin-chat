@@ -38,9 +38,9 @@
 .rediscover-card button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @keyframes rediscover-appear { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .rediscover-card { animation: none; } }
-/* Phones: full width at the bottom, above the floating button row. */
+/* Phones: full width under the header row, clear of the floating buttons and notices at the bottom. */
 @media (max-width: 900px) {
-  .rediscover-card { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); left: 16px; margin: 0 auto; right: 16px; width: auto; max-width: 480px; }
+  .rediscover-card { bottom: auto; top: calc(64px + env(safe-area-inset-top, 0px)); left: 16px; margin: 0 auto; right: 16px; width: auto; max-width: 480px; }
   .rediscover-card-action { padding: 8px 12px; }
   .rediscover-card-close { height: 36px; width: 36px; }
   .rediscover-card-off { padding: 6px 2px; }

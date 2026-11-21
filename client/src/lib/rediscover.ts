@@ -155,7 +155,7 @@ const plural = (count: number, one: string, many = `${one}s`) => `${count} ${cou
  * The passages the person wrote themselves: document blocks they wrote or edited (imports and AI
  * text alone don't count), or the body of a Markdown note that hasn't been opened in the editor yet.
  */
-function ownPassages(conversation: Conversation): { id?: string; content: string }[] {
+export function ownPassages(conversation: Conversation): { id?: string; content: string }[] {
   const blocks = conversation.document?.blocks;
   if (blocks?.length) {
     return blocks.filter((block) => block.authorship === "user" || block.authorship === "mixed"
@@ -266,13 +266,29 @@ export function pickRediscoverNote({ state, opened = new Map(), log, now, skipId
 
 const listeners = new Set<() => void>();
 
+/**
+ * How much comes back: "off", "open" (the card when the app opens; the default) or "writing"
+ * (also an older related note while you write). Saved as "false", "true" and "writing".
+ */
+export type RediscoverLevel = "off" | "open" | "writing";
+
+export function readRediscoverLevel(): RediscoverLevel {
+  let raw: string | null = null;
+  try { raw = localStorage.getItem(REDISCOVER_ON_KEY); } catch { /* the default */ }
+  return raw === "false" ? "off" : raw === "writing" ? "writing" : "open";
+}
+
 export function readRediscoverOn(): boolean {
-  try { return localStorage.getItem(REDISCOVER_ON_KEY) !== "false"; } catch { return true; }
+  return readRediscoverLevel() !== "off";
+}
+
+export function saveRediscoverLevel(level: RediscoverLevel) {
+  writeSyncedSetting(REDISCOVER_ON_KEY, level === "off" ? "false" : level === "writing" ? "writing" : "true");
+  listeners.forEach((listener) => listener());
 }
 
 export function saveRediscoverOn(on: boolean) {
-  writeSyncedSetting(REDISCOVER_ON_KEY, String(on));
-  listeners.forEach((listener) => listener());
+  saveRediscoverLevel(on ? "open" : "off");
 }
 
 export function subscribeRediscoverOn(listener: () => void): () => void {

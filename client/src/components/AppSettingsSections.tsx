@@ -2,8 +2,8 @@ import { useSyncExternalStore } from "react";
 import { dictationShortcutLabel, dictationSupported, readDictationButtonPreference, readHoldSpacePreference, saveDictationButtonPreference, saveHoldSpacePreference, subscribeDictationButtonPreference } from "../lib/dictation";
 import { readQuietPage, saveQuietPage, subscribeQuietPage } from "../lib/quietPage";
 import { setFeature, useFeature } from "../lib/features";
-import { saveRediscoverOn } from "../lib/rediscover";
-import { useRediscoverOn } from "./RediscoverCard";
+import { saveRediscoverLevel, type RediscoverLevel } from "../lib/rediscover";
+import { useRediscoverLevel } from "./RediscoverCard";
 import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, saveNotebookPrefs, subscribeNotebookPrefs } from "../lib/notebookPrefs";
 import { JEV_DISCLOSURE, type JevStatus } from "../lib/jevAssistance";
 import { VAULT_SEARCH_DISCLOSURE, type VaultPassageIndex } from "../lib/useVaultPassageIndex";
@@ -47,7 +47,7 @@ export function AppearanceSettings({ onSetTheme, theme }: {
 }) {
   const quietPage = useSyncExternalStore(subscribeQuietPage, readQuietPage, () => true);
   const notebook = useSyncExternalStore(subscribeNotebookPrefs, readNotebookPrefs, () => DEFAULT_NOTEBOOK_PREFS);
-  const rediscover = useRediscoverOn();
+  const rediscover = useRediscoverLevel();
   return (
     <div className="app-settings-body">
       {theme && onSetTheme ? <div className="app-settings-section">
@@ -69,15 +69,15 @@ export function AppearanceSettings({ onSetTheme, theme }: {
           checked={quietPage} onChange={(event) => saveQuietPage(event.target.checked)} />
       </div>
 
-      <div className="app-settings-section app-settings-switch-section">
+      <div className="app-settings-section">
         <div className="app-settings-copy">
-          <label className="app-settings-label" htmlFor="rediscover">Rediscover</label>
-          <p className="app-settings-description" id="rediscover-disclosure">
-            Once a day at most, when you open Margin Chat, a small card brings back an older note you haven't seen in a while. Your answers set when it comes back. Nothing is sent as a notification.
+          <span className="app-settings-label">Rediscover</span>
+          <p className="app-settings-description">
+            Brings back older notes of yours. When you open: once a day at most, a small card with a note you haven't seen in a while. While writing too: an older note about what you're writing, once per document. Your answers set when a note comes back. Nothing is sent as a notification.
           </p>
         </div>
-        <input id="rediscover" type="checkbox" role="switch" aria-describedby="rediscover-disclosure"
-          checked={rediscover} onChange={(event) => saveRediscoverOn(event.target.checked)} />
+        <OptionGroup<RediscoverLevel> label="Rediscover" onChange={saveRediscoverLevel}
+          options={[["off", "Off"], ["open", "When you open"], ["writing", "While writing too"]]} value={rediscover} />
       </div>
 
       <div className="app-settings-section">
