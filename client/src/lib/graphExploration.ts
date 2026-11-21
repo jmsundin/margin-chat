@@ -183,14 +183,23 @@ export function searchGraphSources(
   // Matching the original string preserves UTF-16 offsets when Unicode case folding changes length.
   const pattern = new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "iu");
   const results: GraphSearchResult[] = [];
+  // Best matches first: the words in a title, then passages that use them as a whole word and often, then the newest.
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const every = new RegExp(escaped, "giu");
+  const word = new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "iu");
+  const scores = new Map<string, number>();
   const addSource = (conversation: Conversation, content: string, sourceLabel: string, source: GraphEvidenceRef, updatedAt: string) => {
     const match = pattern.exec(content);
     if (!match) return;
+    const uses = Math.min(30, content.match(every)?.length ?? 1);
+    const score = (sourceLabel === "Title" ? 1000 : 0) + (word.test(content) ? 50 : 0) + uses * 5
+      + (sourceLabel !== "Title" && pattern.test(conversation.title) ? 200 : 0);
     const startOffset = match.index;
     const endOffset = startOffset + match[0].length;
     const evidence: GraphEvidenceRef = { ...source, startOffset, endOffset, quote: match[0] };
     const start = Math.max(0, startOffset - 64);
     const end = Math.min(content.length, endOffset + 128);
+    scores.set(evidenceKey(evidence), score);
     results.push({
       evidence,
       id: evidenceKey(evidence),
@@ -208,7 +217,14 @@ export function searchGraphSources(
       }, source.updatedAt);
     }
   }
-  return results.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+  return results.sort((left, right) => (scores.get(right.id) ?? 0) - (scores.get(left.id) ?? 0)
+    || right.updatedAt.localeCompare(left.updatedAt) || left.id.localeCompare(right.id));
+}
+
+/** One result per document, the best one first, for short result lists. */
+export function bestResultPerDocument(results: GraphSearchResult[]): GraphSearchResult[] {
+  const seen = new Set<string>();
+  return results.filter((result) => !seen.has(result.evidence.conversationId) && Boolean(seen.add(result.evidence.conversationId)));
 }
 
 /** Never highlight stale offsets or guess between multiple occurrences of an edited quote. */

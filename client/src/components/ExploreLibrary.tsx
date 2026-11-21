@@ -125,6 +125,8 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
   const [ref, size, element] = useSize<HTMLDivElement>();
   const circles = useMemo(() => packLibrary(root), [root]);
   const byId = useMemo(() => new Map(circles.map((circle) => [circle.id, circle])), [circles]);
+  /** The section you are in: the smallest open one filling the screen (the last breadcrumb). */
+  const focusRef = useRef(root.id);
   const [pointedNote, setPointedNote] = useState<string | null>(null);
   // Each note's chain of sections, outermost first, ending with its own circle.
   const chains = useMemo(() => {
@@ -180,6 +182,7 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
     }
     const ids: string[] = [];
     for (let at: PackedCircle | undefined = deepest ?? undefined; at && at.depth > 0; at = at.parentId ? byId.get(at.parentId) : undefined) ids.unshift(at.id);
+    focusRef.current = deepest?.id ?? root.id;
     onFollow(ids);
   }, [camera, size, circles, isOpen, byId, onFollow]);
 
@@ -202,9 +205,20 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
     return groupLinks(links, standIn);
   }, [links, chains, isOpen]);
 
+  // Like zoomable circle packing: a click on a section inside the one you are in zooms into it; a click on the
+  // one you are in (but not on a section inside it), or outside it, zooms out one level.
+  const zoomOut = () => {
+    const focus = byId.get(focusRef.current);
+    if (!focus || focus.depth === 0) return;
+    fly(fitTo(focus.parentId ? byId.get(focus.parentId) : undefined, size.width, size.height));
+  };
   const pick = (circle: PackedCircle) => {
     if (dragged.current) return;
     if (circle.kind === "note" && circle.noteId) { onOpenNote(circle.noteId); return; }
+    if (circle.id === focusRef.current) { zoomOut(); return; }
+    const focus = byId.get(focusRef.current);
+    // A bigger section around the one you are in: a step out, not a jump to the top.
+    if (focus && circle.depth < focus.depth) { zoomOut(); return; }
     fly(fitTo(circle, size.width, size.height));
   };
 
@@ -212,7 +226,8 @@ function ExploreClusters({ root, target, flyRequest, links, titleOf, selectedId,
   const sections = visible.filter((circle) => circle.kind === "section");
   const notes = visible.filter((circle) => circle.kind === "note");
   return <div className="explore-clusters" ref={ref} {...handlers}>
-    <svg width={size.width} height={size.height} role="group" aria-label="Clusters of notes">
+    <svg width={size.width} height={size.height} role="group" aria-label="Clusters of notes"
+      onClick={(event) => { if (event.target === event.currentTarget && !dragged.current) zoomOut(); }}>
       <g className="explore-cluster-lines" aria-hidden="true">
         {lines.map((line) => {
           const a = byId.get(line.a), b = byId.get(line.b);

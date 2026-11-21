@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent as ReactPointerEvent, type ReactElement, type ReactNode } from "react";
 import type { GraphDockControls } from "./ConversationGraphView";
 import WikipediaPane from "./WikipediaPane";
 import { isPassageNote, type PassageNote } from "../lib/wikipediaReader";
@@ -13,6 +13,7 @@ import {
   isArrangement, readExplorer, removeBranch, SUGGESTED_TOPICS, wikipediaChildren, type ExplorerArrangement, type ExplorerSource, type ExplorerView,
 } from "../lib/topicExplorer";
 import { githubRepoFromText, readRepoMemory } from "../lib/repoGraph";
+import { getDocumentDockDropEdge } from "../lib/documentDock";
 import "./TopicExplorer.css";
 
 const RepoExplorer = lazy(() => import("./RepoExplorer"));
@@ -20,6 +21,10 @@ const RepoExplorer = lazy(() => import("./RepoExplorer"));
 const errorMessage = (error: unknown, fallback: string) => error instanceof Error ? error.message : fallback;
 const browserStorage = () => { try { return window.localStorage; } catch { return undefined; } };
 const MENU_WIDTH = 248;
+type DockSide = "left" | "right" | "top" | "bottom";
+const DOCK_SIDES: DockSide[] = ["left", "right", "top", "bottom"];
+const DOCK_SIDE_KEY = "margin-chat:topic-explorer-dock-side";
+const isDockSide = (value: unknown): value is DockSide => DOCK_SIDES.includes(value as DockSide);
 const ARRANGEMENT_KEY = "margin-topic-explorer-arrangement";
 type Positions = Record<string, { x: number; y: number }>;
 
@@ -74,6 +79,10 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
   /** Reading panes on the left: a Wikipedia article and one of the person's documents. */
   const [articleTitle, setArticleTitle] = useState<string | null>(null);
   const [documentId, setDocumentId] = useState<string | null>(null);
+  /** Where the document beside sits, like an editor group in VS Code: right unless moved. */
+  const [dockSide, setDockSide] = useState<DockSide>(() => readJson(DOCK_SIDE_KEY, isDockSide, "right"));
+  const [dropSide, setDropSide] = useState<DockSide | null>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
   const [passageNotes, setPassageNotes] = useState<PassageNote[]>(() => readJson(`${explorerStorageKey(workspaceKey)}:passages`, (value): value is PassageNote[] => Array.isArray(value) && value.every(isPassageNote), []));
   const canvasRef = useRef<HTMLDivElement>(null);
   // New nodes come into view: the whole map when it fits, otherwise the node and its branches.
@@ -493,11 +502,16 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
     {articleTitle ? <WikipediaPane title={articleTitle} account={account} notes={passageNotes} onNotesChange={setPassageNotes}
       onNavigate={openArticle} onClose={() => setArticleTitle(null)}
       onCreateDocument={createDocument} onExplore={exploreText} onAddTopics={addAnswerTopics} /> : null}
+    <div ref={stageRef} className={`topic-explorer-stage is-dock-${dockSide}`}>
     {documentId && renderDocument && documents.some((item) => item.id === documentId) ? <aside className="topic-explorer-pane is-document" aria-label="Document beside the explore map">
       <div className="conversation-graph-dock-body">
-        {renderDocument(documentId, { leading: null, pinned: false, onTogglePin: () => undefined, onClose: () => setDocumentId(null), onOpenDocument: openDocument })}
+        {renderDocument(documentId, { leading: <DockMover side={dockSide} stage={stageRef} onPreview={setDropSide} onMove={(side) => {
+          setDockSide(side);
+          try { browserStorage()?.setItem(DOCK_SIDE_KEY, JSON.stringify(side)); } catch { /* It still moves for this visit. */ }
+        }} />, pinned: false, onTogglePin: () => undefined, onClose: () => setDocumentId(null), onOpenDocument: openDocument })}
       </div>
     </aside> : null}
+    {dropSide ? <div className={`topic-explorer-drop is-${dropSide}`} aria-hidden="true"><span>Place the note {dropSide === "top" || dropSide === "bottom" ? `at the ${dropSide}` : `on the ${dropSide}`}</span></div> : null}
     <div ref={canvasRef} className="topic-explorer-canvas" onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp} onPointerCancel={onPointerUp}>
       {empty ? <div className="topic-explorer-start">
         <h2>Explore any topic</h2>
@@ -561,10 +575,11 @@ export default function TopicExplorer({ workspaceKey, account, savedTopics, mapT
       </>}
     </div>
     </div>
+    </div>
   </section>;
 }
 
-/** The small menu beside a clicked node. */
+/** One line beside a clicked node: its name and a row of icons, each with its own tooltip. */
 function NodeMenu({ box, canvas, label, detail, url, savedAs, branchCount, wikipedia, aiAsked, canAsk, busy, openLabel, onExpand, onRead, onSave, onOpen, onRemove, onClose }: {
   box: { x: number; y: number; width: number; height: number };
   canvas: { width: number; height: number };
@@ -576,39 +591,58 @@ function NodeMenu({ box, canvas, label, detail, url, savedAs, branchCount, wikip
   /** The AI subgraph's optional prompt: what the person wants this branch to cover. */
   const [prompting, setPrompting] = useState(false);
   const [focus, setFocus] = useState("");
-  const [height, setHeight] = useState(240);
-  useLayoutEffect(() => { if (ref.current) setHeight(ref.current.offsetHeight); });
-  useEffect(() => { ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true }); }, []);
-  const width = Math.min(MENU_WIDTH, canvas.width - 16);
+  const [measured, setMeasured] = useState({ width: MENU_WIDTH, height: 44 });
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (element && (element.offsetWidth !== measured.width || element.offsetHeight !== measured.height)) setMeasured({ width: element.offsetWidth, height: element.offsetHeight });
+  });
+  // The menu itself takes focus, so Escape closes it and Tab reaches the icons, without a tooltip showing before anything is pointed at.
+  useEffect(() => { ref.current?.focus({ preventScroll: true }); }, []);
+  const { width, height } = measured;
   const left = Math.min(Math.max(8, box.x + box.width / 2 - width / 2), canvas.width - width - 8);
   const below = box.y + box.height + 8;
   const top = below + height <= canvas.height - 8 || box.y - height - 8 < 8 ? Math.max(8, Math.min(below, canvas.height - height - 8)) : box.y - height - 8;
   const wikipediaDone = Boolean(wikipedia && !wikipedia.hasMore);
-  return <div ref={ref} className="topic-explorer-menu" role="menu" aria-label={`${label} options`} style={{ left, top, width }}>
-    <header>
-      <strong>{label}</strong>
-      <button type="button" className="topic-explorer-menu-close" aria-label="Close" onClick={onClose}>×</button>
-    </header>
-    {detail ? <p>{detail}</p> : null}
-    <div className="topic-explorer-menu-grow">
-      <button type="button" role="menuitem" disabled={busy || wikipediaDone} onClick={() => onExpand("wikipedia")}
-        title={wikipediaDone ? "Every Wikipedia link of this topic is shown" : "Add this topic's main linked Wikipedia articles"}>
-        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 5l4.5 14L12 8l4.5 11L21 5" /></svg>
-        <span>{wikipediaDone ? "All Wikipedia links shown" : wikipedia ? "More from Wikipedia" : "Wikipedia subgraph"}</span>
-      </button>
-      <button type="button" role="menuitem" aria-expanded={prompting} disabled={busy || !canAsk} onClick={() => setPrompting(!prompting)}
-        title={canAsk ? "AI names this topic's main subtopics. Uses AI credit." : "AI subgraphs need a membership with AI turned on"}>
-        <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" /></svg>
-        <span>{aiAsked ? "More from AI" : "AI subgraph"}</span>
-      </button>
+  const branches = `${branchCount} ${branchCount === 1 ? "branch" : "branches"}`;
+  /** An icon button; a choice that can't be used now still shows its tooltip saying why. */
+  const icon = (tip: string, path: ReactElement, onClick: () => void, options: { off?: boolean; className?: string; expanded?: boolean } = {}) =>
+    <button type="button" role="menuitem" className={`topic-explorer-menu-icon${options.className ? ` ${options.className}` : ""}`} data-tip={tip} aria-label={tip}
+      aria-disabled={options.off || undefined} aria-expanded={options.expanded} onClick={() => { if (!options.off) onClick(); }}>
+      <svg aria-hidden="true" viewBox="0 0 24 24">{path}</svg>
+    </button>;
+  return <div ref={ref} tabIndex={-1} className="topic-explorer-menu is-bar" role="menu" aria-label={`${label} options`} style={{ left, top, maxWidth: canvas.width - 16 }}
+    onKeyDown={(event) => {
+      if (event.key === "Escape") { event.stopPropagation(); onClose(); return; }
+      if (event.key !== "ArrowRight" && event.key !== "ArrowLeft") return;
+      const items = [...(ref.current?.querySelectorAll<HTMLButtonElement>(".topic-explorer-menu-row button") ?? [])];
+      const at = items.indexOf(document.activeElement as HTMLButtonElement);
+      if (at < 0) return;
+      event.preventDefault();
+      items[(at + (event.key === "ArrowRight" ? 1 : items.length - 1)) % items.length]?.focus();
+    }}>
+    <div className="topic-explorer-menu-row">
+      <strong title={detail ? `${label}: ${detail}` : label}>{label}</strong>
+      {icon(wikipediaDone ? "Every Wikipedia link is shown" : wikipedia ? "More topics from Wikipedia" : "Add linked topics from Wikipedia",
+        <path d="M3 5l4.5 14L12 8l4.5 11L21 5" />, () => onExpand("wikipedia"), { off: busy || wikipediaDone })}
+      {icon(!canAsk ? "AI sub-topics need a membership with AI turned on" : aiAsked ? "More sub-topics from AI (uses AI credit)" : "Sub-topics from AI (uses AI credit)",
+        <path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3ZM18.5 15.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z" />,
+        () => setPrompting(!prompting), { off: busy || !canAsk, className: "is-ai", expanded: canAsk ? prompting : undefined })}
+      <span className="topic-explorer-menu-gap" aria-hidden="true" />
+      {savedAs ? icon(openLabel, <path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" />, () => onOpen(savedAs))
+        : icon("Save to my map", <path d="M6 4h12v16l-6-4-6 4V4ZM12 8v5M9.5 10.5h5" />, () => onSave(false))}
+      {branchCount ? icon(`Save with its ${branches}`, <path d="M5 5h6v6H5zM13 13h6v6h-6zM8 11v5h5" />, () => onSave(true)) : null}
+      {onRead ? icon("Read on Wikipedia", <path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5V5.5ZM12 6v13.5" />, onRead)
+        : url ? <a role="menuitem" className="topic-explorer-menu-icon" href={url} target="_blank" rel="noreferrer noopener" data-tip="Read on Wikipedia" aria-label="Read on Wikipedia">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M4 5.5C6.5 4.5 9.5 4.5 12 6c2.5-1.5 5.5-1.5 8-.5V19c-2.5-1-5.5-1-8 .5-2.5-1.5-5.5-1.5-8-.5V5.5ZM12 6v13.5" /></svg></a> : null}
+      {icon(branchCount ? `Remove with its ${branches}` : "Remove from this map", <path d="M5 7h14M10 7V5h4v2M7 7l1 12h8l1-12" />, onRemove, { className: "is-quiet" })}
+      <button type="button" className="topic-explorer-menu-icon topic-explorer-menu-close" data-tip="Close (Esc)" aria-label="Close" onClick={onClose}>×</button>
     </div>
-    {!canAsk ? <small>AI subgraphs need a membership with AI turned on.</small> : null}
     {prompting && canAsk ? <form className="topic-explorer-menu-prompt" onSubmit={(event) => {
       event.preventDefault(); onExpand("ai", focus); setPrompting(false); setFocus("");
       // The prompt goes away, so focus stays in the menu and Escape still closes it.
-      window.setTimeout(() => ref.current?.querySelector<HTMLButtonElement>("button:not(:disabled)")?.focus({ preventScroll: true }), 0);
+      window.setTimeout(() => ref.current?.focus({ preventScroll: true }), 0);
     }}>
-      <textarea autoFocus rows={2} value={focus} maxLength={200} aria-label="What the AI subgraph should focus on"
+      <textarea autoFocus rows={2} value={focus} maxLength={200} aria-label="What the AI sub-topics should focus on"
         placeholder={`Optional: what about ${label} should it cover?`} onChange={(event) => setFocus(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
@@ -616,16 +650,61 @@ function NodeMenu({ box, canvas, label, detail, url, savedAs, branchCount, wikip
         }} />
       <div><small>Uses the path that led here and its branches as context.</small><button type="submit" disabled={busy}>Generate</button></div>
     </form> : null}
-    <div className="topic-explorer-menu-list">
-      {savedAs ? <button type="button" role="menuitem" onClick={() => onOpen(savedAs)}>{openLabel}</button>
-        : <button type="button" role="menuitem" onClick={() => onSave(false)}>Save to my map</button>}
-      {branchCount ? <button type="button" role="menuitem" onClick={() => onSave(true)}>Save with its {branchCount} {branchCount === 1 ? "branch" : "branches"}</button> : null}
-      {onRead ? <button type="button" role="menuitem" onClick={onRead}>Read on Wikipedia</button>
-        : url ? <a role="menuitem" href={url} target="_blank" rel="noreferrer noopener">Read on Wikipedia ↗</a> : null}
-      <button type="button" role="menuitem" className="is-quiet" onClick={onRemove}>Remove{branchCount ? " with its branches" : ""}</button>
-    </div>
   </div>;
 }
+
+/** The grip at the start of the note's header: drag it to any edge of the map, or click it to pick one. */
+function DockMover({ side, stage, onPreview, onMove }: { side: DockSide; stage: { current: HTMLDivElement | null }; onPreview(side: DockSide | null): void; onMove(side: DockSide): void }) {
+  const [open, setOpen] = useState(false);
+  const drag = useRef<{ pointerId: number; x: number; y: number; moved: boolean } | null>(null);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const away = (event: PointerEvent) => { if (!ref.current?.contains(event.target as Node)) setOpen(false); };
+    document.addEventListener("pointerdown", away, true);
+    return () => document.removeEventListener("pointerdown", away, true);
+  }, [open]);
+  const edgeAt = (x: number, y: number) => {
+    const bounds = stage.current?.getBoundingClientRect();
+    return bounds ? getDocumentDockDropEdge(bounds, x, y) : null;
+  };
+  return <div ref={ref} className="topic-explorer-dock-mover" onKeyDown={(event) => { if (event.key === "Escape" && open) { event.stopPropagation(); setOpen(false); } }}>
+    <button type="button" className="topic-explorer-dock-grip" aria-label="Move this note" aria-haspopup="menu" aria-expanded={open}
+      title="Drag to the left, right, top or bottom of the map, or click to choose"
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        drag.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false };
+      }}
+      onPointerMove={(event) => {
+        const move = drag.current;
+        if (move?.pointerId !== event.pointerId) return;
+        if (Math.hypot(event.clientX - move.x, event.clientY - move.y) > 8) move.moved = true;
+        if (move.moved) onPreview(edgeAt(event.clientX, event.clientY));
+      }}
+      onPointerUp={(event) => {
+        const move = drag.current;
+        if (move?.pointerId !== event.pointerId || !move.moved) return;
+        const edge = edgeAt(event.clientX, event.clientY);
+        if (edge) onMove(edge);
+        onPreview(null);
+      }}
+      onPointerCancel={() => { drag.current = null; onPreview(null); }}
+      onClick={() => { const dragged = drag.current?.moved; drag.current = null; if (!dragged) setOpen(!open); }}>
+      <svg viewBox="0 0 16 16" aria-hidden="true" fill="currentColor"><circle cx="5.5" cy="3.5" r="1.3" /><circle cx="10.5" cy="3.5" r="1.3" /><circle cx="5.5" cy="8" r="1.3" /><circle cx="10.5" cy="8" r="1.3" /><circle cx="5.5" cy="12.5" r="1.3" /><circle cx="10.5" cy="12.5" r="1.3" /></svg>
+    </button>
+    {open ? <div className="topic-explorer-dock-sides" role="menu" aria-label="Place the note">
+      {DOCK_SIDES.map((option) => <button key={option} type="button" role="menuitemradio" aria-checked={side === option} title={`Place the note ${option === "top" || option === "bottom" ? "at the" : "on the"} ${option}`}
+        aria-label={`Place the note ${option === "top" || option === "bottom" ? "at the" : "on the"} ${option}`} onClick={() => { onMove(option); setOpen(false); }}>
+        <svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="2" /><rect className="is-pane" {...DOCK_PANE_RECT[option]} rx="1" /></svg>
+      </button>)}
+    </div> : null}
+  </div>;
+}
+const DOCK_PANE_RECT: Record<DockSide, { x: number; y: number; width: number; height: number }> = {
+  left: { x: 5, y: 6, width: 6, height: 12 }, right: { x: 13, y: 6, width: 6, height: 12 },
+  top: { x: 5, y: 6, width: 14, height: 5 }, bottom: { x: 5, y: 13, width: 14, height: 5 },
+};
 
 /** Opens one of the person's documents in a pane beside the explore map. */
 function DocumentPicker({ documents, openId, onOpen }: { documents: Array<{ id: string; title: string }>; openId: string | null; onOpen(id: string): void }) {
