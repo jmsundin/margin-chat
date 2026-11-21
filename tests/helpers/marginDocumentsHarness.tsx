@@ -10,6 +10,8 @@ const browser = new Window({ url: "http://margin-documents.test" });
 browser.localStorage.setItem("margin-chat:test-classic-editor", "1");
 // These cover the full toolbars; the quiet page (on by default) hides some of them until hovered.
 browser.localStorage.setItem("margin-chat:quiet-page", "false");
+// This harness checks notes open in the margin, so it uses the full-notes margin rather than the default bubbles.
+browser.localStorage.setItem("margin-chat:notebook", JSON.stringify({ marginMode: "full" }));
 browser.happyDOM.setWindowSize({ width: 1600, height: 1000 });
 const workspaceStyles = browser.document.createElement("style");
 workspaceStyles.textContent = await Bun.file(new URL("../../client/src/document-workspace.css", import.meta.url)).text();
