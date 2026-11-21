@@ -72,6 +72,7 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
           { icon: "paste", label: "Paste", ariaLabel: "Paste at the cursor", onSelect: run(menu.paste) },
           ...(paragraph ? [
             { icon: "note" as const, label: "Note", ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note to this paragraph" : "Create a side note on this paragraph", onSelect: run(onNote) },
+            { icon: "side" as const, label: "Side doc", ariaLabel: "Create a side document from this paragraph", onSelect: run(onSideDocument) },
             { icon: "link" as const, label: "Link", ariaLabel: "Link this paragraph to an existing document or block", onSelect: run(onLink) },
           ] : []),
         ]}
@@ -98,8 +99,8 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
     style={{ top, left, width }} onMouseDown={(event) => event.preventDefault()}>
     <div className="mobile-selection-actions-row">
       {item("paste", "Paste", run(menu.paste), { ariaLabel: "Paste at the cursor" })}
-      {item("select", "Select", run(menu.selectParagraph), { ariaLabel: "Select paragraph" })}
       {paragraph ? item("note", "Note", run(onNote), { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note to this paragraph" : "Create a side note on this paragraph" }) : null}
+      {paragraph ? item("side", "Side doc", run(onSideDocument), { ariaLabel: "Create a side document from this paragraph" }) : null}
       {paragraph ? item("link", "Link", run(onLink), { ariaLabel: "Link this paragraph to an existing document or block" }) : null}
       {item("ai", "Ask AI", run(menu.askAI), { ariaLabel: "Ask AI here", ai: true })}
       <button type="button" aria-label="More actions at the cursor" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>
@@ -107,6 +108,8 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
       </button>
     </div>
     {moreOpen ? <div className="mobile-selection-actions-more" role="group" aria-label="More actions at the cursor">
+      {/* Select waits here so Note and Side doc both fit in the row. */}
+      {item("select", "Select", run(menu.selectParagraph), { ariaLabel: "Select paragraph" })}
       {paragraph ? item("find", "Find related", run(onFindRelated)) : null}
       <button type="button" aria-label="Dismiss actions" onClick={onClose}>
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8" /></svg><span>Close</span>

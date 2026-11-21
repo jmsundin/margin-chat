@@ -11,6 +11,8 @@ import GroupPickerModal from "./GroupPickerModal";
 import { SpaceMenuContext } from "./Spaces";
 import { useMobileKeyboard } from "./MobileKeyboard";
 import "./DocumentMenu.css";
+import { MarginNoteIcon, SideDocumentIcon } from "./DocumentNewButtons";
+import { isApplePlatform } from "../lib/workspaceViewShortcuts";
 
 export interface DocumentMenuProps {
   conversation: Conversation;
@@ -24,7 +26,10 @@ export interface DocumentMenuProps {
   onMinimize?: (id: string) => void;
   onClose?: (id: string) => void;
   onRestore?: (id: string) => void;
+  /** A margin note on the selection, the caret's paragraph or the whole page. */
   onNewMarginNote?: (id: string) => void;
+  /** A side document from the selection, the caret's paragraph or the whole page. */
+  onNewSideDocument?: (id: string) => void;
   /** Opens the Ask about this note chat beside the document. */
   onAskAboutNote?: (id: string) => void;
   /** Turns a margin note into a side document of its own. */
@@ -102,7 +107,7 @@ const AGENT_EDIT_OPTIONS: Array<{ policy: "locked" | "open" | null; label: strin
 
 /** The same document actions are available from its tab and its reading pane. */
 export default function DocumentMenu({ conversation, pinned = false, familyPinned = false, minimized = false, closed = false,
-  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onOpenBeside, onPutBackInMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning, onPickWritingView, onMoreFeatures }: DocumentMenuProps) {
+  onTogglePin, onTogglePinScope, onMinimize, onClose, onRestore, onNewMarginNote, onNewSideDocument, onAskAboutNote, onMoveToSideDocument, onMoveToMargin, onOpenBeside, onPutBackInMargin, onToggleHiddenFromAI, onSetAgentEdit, onMakeRoadmap, onShowOnMap, onToggleBoard, flashcardCount = 0, onReviewFlashcards, onMakeFlashcards, onCheckClaims, maximized = false, onToggleMaximize, onRename, onRevealInFolder, onVersionHistory, revealLabel = "Reveal in Finder", groups = {}, onAssignGroup, className = "", onFocusFallback, pageView = false, languageLearning, onPickWritingView, onMoreFeatures }: DocumentMenuProps) {
   const menuId = useId();
   const [open, setOpen] = useState(false);
   const [groupOpen, setGroupOpen] = useState(false);
@@ -112,6 +117,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
   /** The second page of the menu: the less common actions. */
   const [more, setMore] = useState(false);
   const phone = useMobileKeyboard().mobile;
+  const mod = isApplePlatform() ? "⇧⌘" : "Ctrl⇧";
   const authorship = useAuthorshipMode();
   const spaceActions = useContext(SpaceMenuContext);
   const [renameOpen, setRenameOpen] = useState(false);
@@ -219,7 +225,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
     };
   }, [renameOpen]);
 
-  const hasMore = Boolean(onAssignGroup || onRevealInFolder || spaceActions || onNewMarginNote || onMakeFlashcards || onMakeRoadmap
+  const hasMore = Boolean(onAssignGroup || onRevealInFolder || spaceActions || onMakeFlashcards || onMakeRoadmap
     || onCheckClaims || onToggleBoard || onToggleHiddenFromAI || onSetAgentEdit || pageView || onMoreFeatures || (onMinimize && phone && !minimized));
 
   function action(callback: ((id: string) => void) | undefined) {
@@ -260,6 +266,19 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
       {/* The everyday actions first; making things, organizing, AI access and page view wait under More,
           so the first menu a new user opens stays short. */}
       {!more ? <>
+      {/* The two ways to add to a page come first: a note in its margin, or a new page beside it. */}
+      {onNewMarginNote || onNewSideDocument ? <div role="group" className="document-menu-section">
+        {onNewMarginNote ? <button type="button" role="menuitem" className="document-menu-new"
+          title="A quick thought beside the selected passage, or the paragraph you're in."
+          onClick={() => action(onNewMarginNote)}>
+          <MarginNoteIcon /><span>New margin note</span>{phone ? null : <kbd>{mod}M</kbd>}
+        </button> : null}
+        {onNewSideDocument ? <button type="button" role="menuitem" className="document-menu-new is-side"
+          title="A new page that grows from this one, from the selected passage or the paragraph you're in."
+          onClick={() => action(onNewSideDocument)}>
+          <SideDocumentIcon /><span>New side document</span>{phone ? null : <kbd>{mod}D</kbd>}
+        </button> : null}
+      </div> : null}
       {onTogglePin || onRename || onVersionHistory ? <div role="group" className="document-menu-section">
         {onTogglePin ? <button type="button" role="menuitem" onClick={() => action(onTogglePin)}>
           {pinned ? "Unpin document" : "Pin document"}
@@ -283,7 +302,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           onClick={() => action(onPutBackInMargin)}>Put back in margin</button> : null}
         {onAskAboutNote ? <button type="button" role="menuitem" onClick={() => action(onAskAboutNote)}>Ask…</button> : null}
         {onMoveToSideDocument ? <button type="button" role="menuitem" title="Open this note as its own document beside the one it's on. It keeps its text and its link to the passage."
-          onClick={() => action(onMoveToSideDocument)}>Move to side document</button> : null}
+          onClick={() => action(onMoveToSideDocument)}>Turn into side document</button> : null}
         {onMoveToMargin ? <button type="button" role="menuitem" title="Put this document back in the margin of the one it came from, beside its passage. It keeps its text."
           onClick={() => action(onMoveToMargin)}>Move to margin</button> : null}
       </div> : null}
@@ -319,9 +338,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           <span aria-hidden="true">‹</span><span>More</span>
         </button>
       </div>
-      {onNewMarginNote || onMakeFlashcards || onMakeRoadmap ? <MenuSection label="Make">
-        {onNewMarginNote ? <button type="button" role="menuitem" aria-label="New margin note"
-          onClick={() => action(onNewMarginNote)}>Margin note</button> : null}
+      {onMakeFlashcards || onMakeRoadmap ? <MenuSection label="Make">
         {onMakeFlashcards ? <button type="button" role="menuitem" title="The AI suggests flashcards from this document; you choose which to add."
           onClick={() => action(onMakeFlashcards)}>Flashcards…</button> : null}
         {onMakeRoadmap ? <button type="button" role="menuitem" title="AI drafts a roadmap that builds on this document. It appears on the map, and you edit it there."
