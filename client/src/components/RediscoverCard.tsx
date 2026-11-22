@@ -11,6 +11,17 @@ import "./RediscoverCard.css";
 const SHOW_AFTER_MS = 4000;
 /** An unanswered card leaves by itself, counted as no answer. */
 const HIDE_AFTER_MS = 60_000;
+/** While something else asks for attention, the card checks again this often. */
+const WAIT_AGAIN_MS = 5000;
+
+/**
+ * One thing at a time: the card waits while a page tip, the phone's open sidebar, a note sheet,
+ * search or a dialog is showing, so it never covers them (on a phone it would sit right over them).
+ */
+export const REDISCOVER_WAITS_FOR = ".feature-hint, .workspace-mobile-backdrop, .note-sheet, .vault-search-backdrop, [role=dialog][aria-modal=true]";
+export function rediscoverShouldWait(root: ParentNode = document) {
+  return !!root.querySelector(REDISCOVER_WAITS_FOR);
+}
 
 const FEEDBACK: Partial<Record<RediscoverAnswer, string>> = {
   glad: "It will come back later, a little further apart each time.",
@@ -51,7 +62,9 @@ export default function RediscoverCard({ ready, state, activeId, onOpen }: {
   // Wait for the account's answers, so another device's card or "Stop showing" counts here too.
   useEffect(() => {
     if (!ready || !on || !settingsLoaded || tried.current) return;
-    const timer = window.setTimeout(() => {
+    let timer = 0;
+    const attempt = () => {
+      if (rediscoverShouldWait()) { timer = window.setTimeout(attempt, WAIT_AGAIN_MS); return; }
       tried.current = true;
       const now = Date.now();
       const today = dayNumber(now);
@@ -62,7 +75,8 @@ export default function RediscoverCard({ ready, state, activeId, onOpen }: {
       if (!next) return;
       saveRediscoverLog({ ...log, shown: today });
       setPick(next);
-    }, SHOW_AFTER_MS);
+    };
+    timer = window.setTimeout(attempt, SHOW_AFTER_MS);
     return () => window.clearTimeout(timer);
   }, [ready, on, settingsLoaded]);
 
