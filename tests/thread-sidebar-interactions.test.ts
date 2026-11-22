@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 
-test("sidebar secondary actions and the Spaces and Group menu sections stay operable", async () => {
+test("sidebar secondary actions and the Add to space and Add to group pickers stay operable", async () => {
   const child = Bun.spawn([process.execPath, "tests/helpers/sidebarActionsHarness.ts"], {
     cwd: new URL("..", import.meta.url).pathname,
     stdout: "pipe",
@@ -12,5 +12,5 @@ test("sidebar secondary actions and the Spaces and Group menu sections stay oper
   ]);
   clearTimeout(timeout);
   if (exitCode !== 0) throw new Error(`Sidebar interaction check failed:\n${stdout}\n${stderr}`);
-  expect(stdout).toContain("Sidebar action, keyboard dismissal, group creation, and Spaces/Group menu checks passed.");
+  expect(stdout).toContain("Sidebar action, keyboard dismissal, group creation, and Add to space/group picker checks passed.");
 }, 15000);

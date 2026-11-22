@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ConversationGroup } from "../types";
+import { usePickerDialog } from "../lib/usePickerDialog";
 import "./GroupPickerModal.css";
 
 export interface GroupPickerSuggestion {
@@ -31,8 +32,7 @@ type GroupOption = {
 
 function suggestionStatus(status?: string, isSuggesting?: boolean) {
   if (isSuggesting || status === "loading" || status === "checking") return "Finding a suggested group…";
-  if (status === "off") return "Suggestions are off. You can choose a group below.";
-  if (status === "unconfigured") return "Group suggestions aren’t set up yet. You can choose a group below.";
+  // Suggestions that are off or not set up say nothing: the list below is all there is to do.
   if (status === "unavailable") return "Suggestions are unavailable right now. You can still choose a group.";
   if (status === "paused") return "Suggestions will resume after the current reply.";
   return null;
@@ -45,52 +45,10 @@ export default function GroupPickerModal({
   const [activeKey, setActiveKey] = useState<string | null>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
   const titleId = useId();
   const listId = useId();
   const helpId = useId();
-
-  useEffect(() => {
-    if (!isOpen) return;
-    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    setQuery("");
-    setActiveKey(null);
-    inputRef.current?.focus();
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        event.stopImmediatePropagation();
-        closeRef.current();
-      } else if (event.key === "Tab") {
-        const items = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]):not([tabindex="-1"]), input:not([disabled])') ?? []);
-        const first = items[0], last = items.at(-1);
-        if (!first || !last) return;
-        const outside = !dialogRef.current?.contains(document.activeElement);
-        if (event.shiftKey && (document.activeElement === first || outside)) {
-          event.preventDefault();
-          last.focus();
-        } else if (!event.shiftKey && (document.activeElement === last || outside)) {
-          event.preventDefault();
-          first.focus();
-        }
-      }
-    }
-    function keepFocusInside(event: FocusEvent) {
-      if (event.target instanceof Node && !dialogRef.current?.contains(event.target)) inputRef.current?.focus();
-    }
-    document.addEventListener("keydown", handleKeyDown, true);
-    document.addEventListener("focusin", keepFocusInside);
-    return () => {
-      document.removeEventListener("keydown", handleKeyDown, true);
-      document.removeEventListener("focusin", keepFocusInside);
-      document.body.style.overflow = previousOverflow;
-      if (previousFocus?.isConnected) previousFocus.focus();
-    };
-  }, [isOpen]);
+  usePickerDialog(isOpen, dialogRef, inputRef, onClose, () => { setQuery(""); setActiveKey(null); });
 
   const normalizedQuery = query.trim().toLocaleLowerCase();
   const orderedGroups = Object.values(groups).sort((a, b) => a.name.localeCompare(b.name));

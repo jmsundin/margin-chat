@@ -8,6 +8,7 @@ import { readDocumentViewMode, saveDocumentViewMode } from "../lib/documentEdito
 import { saveAuthorshipMode, saveAuthorshipOnlyMine, useAuthorshipMode, type AuthorshipMode } from "../lib/documentAuthorship";
 import { ConversationGroupPickerContext } from "./ConversationGroupControls";
 import GroupPickerModal from "./GroupPickerModal";
+import SpacePickerModal from "./SpacePickerModal";
 import { SpaceMenuContext } from "./Spaces";
 import { useMobileKeyboard } from "./MobileKeyboard";
 import "./DocumentMenu.css";
@@ -156,7 +157,7 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
     };
   }, []);
 
-  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); setSpacesOpen(false); setPageViewOpen(false); setMore(false); } }, [open]);
+  useEffect(() => { if (!open) { returnedFocus.current = false; setAgentEditOpen(false); setPageViewOpen(false); setMore(false); } }, [open]);
   useOutsideDismiss(open, () => close(), menu, trigger);
 
   useEffect(() => {
@@ -350,23 +351,13 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
           onClick={() => { close(true); setGroupOpen(true); }}>
           <span>Group</span><span className="document-menu-group-name" title={groupName}>{groupName}</span><span aria-hidden="true">›</span>
         </button> : null}
-        {spaceActions ? <>
-        <button type="button" role="menuitem" className="document-menu-group-setting" aria-expanded={spacesOpen}
+        {spaceActions ? <button type="button" role="menuitem" className="document-menu-group-setting" aria-haspopup="dialog"
           title="Keep this document, with its side documents and notes, in a space you can come back to."
-          onClick={() => setSpacesOpen((value) => !value)}>
+          onClick={() => { close(true); setSpacesOpen(true); }}>
           <span>Add to space</span>
           <span className="document-menu-group-name">{spaceActions.spaces.filter((space) => spaceActions.isIn(space.id, conversation.id)).map((space) => space.name).join(", ")}</span>
-          <span aria-hidden="true">{spacesOpen ? "⌄" : "›"}</span>
-        </button>
-        {spacesOpen ? <div role="group" aria-label="Spaces" className="document-menu-choices">
-          {spaceActions.spaces.map((space) => <button key={space.id} type="button" role="menuitemcheckbox"
-            aria-checked={spaceActions.isIn(space.id, conversation.id)} onClick={() => { close(true); spaceActions.onToggle(space.id, conversation.id); }}>
-            <span className="document-menu-space"><span className="document-menu-space-dot" style={{ background: space.color }} aria-hidden="true" />{space.name}</span>
-            <span className="document-menu-check" aria-hidden="true">{spaceActions.isIn(space.id, conversation.id) ? "✓" : ""}</span>
-          </button>)}
-          <button type="button" role="menuitem" onClick={() => { close(true); spaceActions.onCreateWith(conversation.id); }}>New space with this</button>
-        </div> : null}
-        </> : null}
+          <span aria-hidden="true">›</span>
+        </button> : null}
         {onRevealInFolder ? <button type="button" role="menuitem" title="Show this document's file in your vault folder."
           onClick={() => action(onRevealInFolder)}>{revealLabel}</button> : null}
         {!minimized && onMinimize && phone
@@ -473,6 +464,11 @@ export default function DocumentMenu({ conversation, pinned = false, familyPinne
       onSelect={(id) => onAssignGroup(conversation.id, id)}
       onCreate={groupPicker.onCreateAndAssign ? (name) => groupPicker.onCreateAndAssign?.(conversation.id, name) : undefined}
       onClose={() => setGroupOpen(false)} /> : null}
+    {spacesOpen && spaceActions ? <SpacePickerModal isOpen documentTitle={title} spaces={spaceActions.spaces}
+      isIn={(spaceId) => spaceActions.isIn(spaceId, conversation.id)}
+      onToggle={(spaceId) => spaceActions.onToggle(spaceId, conversation.id)}
+      onCreate={(name) => spaceActions.onCreateWith(conversation.id, name)}
+      onClose={() => setSpacesOpen(false)} /> : null}
   </>;
 }
 

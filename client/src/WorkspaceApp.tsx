@@ -5934,8 +5934,8 @@ function WorkspaceAppContent({
     spaces: orderedSpaces,
     isIn: (spaceId, documentId) => isInSpace(state.sessions?.items[spaceId], state.conversations, documentId),
     onToggle: handleToggleSpaceDocument,
-    onCreateWith: (documentId) => {
-      handleCreateSession(undefined, [documentId]);
+    onCreateWith: (documentId, name) => {
+      handleCreateSession(name, [documentId]);
       handleSelectConversation(documentId, { nextViewMode: "chat" });
     },
   };

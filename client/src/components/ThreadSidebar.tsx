@@ -4,6 +4,7 @@ import { useProgressiveList } from "../lib/useProgressiveList";
 import { useSuggestedDocumentTitle } from "../lib/documentTitleSuggestion";
 import { ConversationGroupPickerContext } from "./ConversationGroupControls";
 import GroupPickerModal from "./GroupPickerModal";
+import SpacePickerModal from "./SpacePickerModal";
 import { SpaceMenuContext } from "./Spaces";
 import { getConversationGroupId } from "../lib/conversationGroups";
 import type { ChatOutlineItem } from "../lib/chatOutline";
@@ -424,6 +425,7 @@ export default function ThreadSidebar({
   const [draggedThreadId, setDraggedThreadId] = useState<string | null>(null);
   /** The document whose group is being picked or made, in the group picker. */
   const [groupPickerFor, setGroupPickerFor] = useState<string | null>(null);
+  const [spacePickerFor, setSpacePickerFor] = useState<ThreadSummary | null>(null);
   const spaceActions = useContext(SpaceMenuContext);
   const groupPicker = useContext(ConversationGroupPickerContext);
   const [workspaceActionsOpen, setWorkspaceActionsOpen] = useState(false);
@@ -1233,39 +1235,16 @@ export default function ThreadSidebar({
                     {revealInFolder.label}
                   </button>
                 ) : null}
-                {spaceActions ? <div className="thread-item-menu-section" role="group" aria-label={`Spaces for ${thread.title}`}>
-                  <span className="thread-item-menu-heading" title="A space is a workspace you're actively in: its documents open as tabs when you switch to it.">Spaces</span>
-                  {spaceActions.spaces.map((space) => {
-                    const inSpace = spaceActions.isIn(space.id, thread.id);
-                    return <button key={space.id} type="button" role="menuitemcheckbox" aria-checked={inSpace}
-                      className="thread-item-menu-action thread-item-menu-choice" onClick={() => spaceActions.onToggle(space.id, thread.id)}>
-                      <span className="thread-item-menu-swatch" style={{ background: space.color }} aria-hidden="true" />
-                      <span className="thread-item-menu-choice-name">{space.name}</span>
-                      <span className="thread-item-menu-check" aria-hidden="true">{inSpace ? "✓" : ""}</span>
-                    </button>;
-                  })}
-                  <button type="button" role="menuitem" className="thread-item-menu-action thread-item-menu-choice is-new"
-                    onClick={() => { setOpenMenuState(null); spaceActions.onCreateWith(thread.id); }}>
-                    <span aria-hidden="true" className="thread-item-menu-plus">＋</span><span>New space with this</span>
-                  </button>
-                </div> : null}
-                {groupsEnabled ? (() => {
-                  const groupId = getConversationGroupId(groups, thread.id);
-                  const choices = [{ id: null as string | null, name: "No group", color: "" }, ...Object.values(groups).map((group) => ({ id: group.id as string | null, name: group.name, color: group.color }))];
-                  return <div className="thread-item-menu-section" role="group" aria-label={`Group for ${thread.title}`}>
-                    <span className="thread-item-menu-heading" title="A group is a label, like a tag. Each document sits in one group.">Group</span>
-                    {choices.map((choice) => <button key={choice.id ?? "none"} type="button" role="menuitemradio" aria-checked={groupId === choice.id}
-                      className="thread-item-menu-action thread-item-menu-choice" onClick={() => { onAssignGroup(thread.id, choice.id); setOpenMenuState(null); }}>
-                      <span className={`thread-item-menu-swatch is-group${choice.id ? "" : " is-none"}`} style={choice.color ? { background: choice.color } : undefined} aria-hidden="true" />
-                      <span className="thread-item-menu-choice-name">{choice.name}</span>
-                      <span className="thread-item-menu-check" aria-hidden="true">{groupId === choice.id ? "✓" : ""}</span>
-                    </button>)}
-                    <button type="button" role="menuitem" className="thread-item-menu-action thread-item-menu-choice is-new"
-                      aria-haspopup="dialog" onClick={() => { setOpenMenuState(null); setGroupPickerFor(thread.id); }}>
-                      <span aria-hidden="true" className="thread-item-menu-plus">＋</span><span>New group…</span>
-                    </button>
-                  </div>;
-                })() : null}
+                {spaceActions ? <button type="button" role="menuitem" aria-haspopup="dialog" className="thread-item-menu-action"
+                  title="A space is a workspace you're actively in: its documents open as tabs when you switch to it."
+                  onClick={() => { setOpenMenuState(null); setSpacePickerFor(thread); }}>
+                  Add to space…
+                </button> : null}
+                {groupsEnabled ? <button type="button" role="menuitem" aria-haspopup="dialog" className="thread-item-menu-action"
+                  title="A group is a label, like a tag. Each document sits in one group."
+                  onClick={() => { setOpenMenuState(null); setGroupPickerFor(thread.id); }}>
+                  Add to group…
+                </button> : null}
                 <button
                   className="thread-item-menu-action is-danger"
                   onClick={() => handleOpenDelete(thread)}
@@ -1284,6 +1263,12 @@ export default function ThreadSidebar({
         onSelect={(groupId) => onAssignGroup(groupPickerFor, groupId)}
         onCreate={groupPicker.onCreateAndAssign ? (name) => groupPicker.onCreateAndAssign?.(groupPickerFor, name) : undefined}
         onClose={() => setGroupPickerFor(null)} /> : null}
+
+      {spacePickerFor && spaceActions ? <SpacePickerModal isOpen documentTitle={spacePickerFor.title} spaces={spaceActions.spaces}
+        isIn={(spaceId) => spaceActions.isIn(spaceId, spacePickerFor.id)}
+        onToggle={(spaceId) => spaceActions.onToggle(spaceId, spacePickerFor.id)}
+        onCreate={(name) => spaceActions.onCreateWith(spacePickerFor.id, name)}
+        onClose={() => setSpacePickerFor(null)} /> : null}
 
       {renameTarget ? createPortal(
         <div
