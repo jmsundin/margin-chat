@@ -10,7 +10,8 @@ export interface SpaceMenuActions {
   spaces: WorkspaceSession[];
   isIn: (spaceId: string, documentId: string) => boolean;
   onToggle: (spaceId: string, documentId: string) => void;
-  onCreateWith: (documentId: string) => void;
+  /** A new space holding this document; with no name it gets an automatic one. */
+  onCreateWith: (documentId: string, name?: string) => void;
 }
 export const SpaceMenuContext = createContext<SpaceMenuActions | null>(null);
 

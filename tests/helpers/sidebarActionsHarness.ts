@@ -139,14 +139,14 @@ try {
   assert.equal(events.at(-1), "reveal:chat");
   assert.equal(browser.document.querySelector(".thread-item-menu"), null, "The menu closes after revealing.");
 
-  // A document's menu has a Spaces section and a Group section to move it into either.
+  // A document's menu opens pickers to move it into a space or a group.
   const { SpaceMenuContext } = await import("../../client/src/components/Spaces");
   const inSpaces = new Set<string>();
   const spaceActions = {
     spaces: [{ id: "space-1", name: "Thesis", color: "#4f7bdf" }] as never[],
     isIn: (spaceId: string, documentId: string) => inSpaces.has(`${spaceId}:${documentId}`),
     onToggle: (spaceId: string, documentId: string) => { events.push(`space:${spaceId}:${documentId}`); },
-    onCreateWith: (documentId: string) => { events.push(`new-space:${documentId}`); },
+    onCreateWith: (documentId: string, name?: string) => { events.push(`new-space:${documentId}:${name}`); },
   };
   await act(async () => {
     root.render(createElement(SpaceMenuContext.Provider, { value: spaceActions as never }, createElement(ThreadSidebar, {
@@ -160,29 +160,49 @@ try {
       theme: "dark", threads: [thread, sideThread],
     } as never)));
   });
+  // The menu stays short: one item each opens a picker to search or choose a space or a group.
   await click('[aria-label="Open actions for Research"]');
-  const spacesSection = browser.document.querySelector('[aria-label="Spaces for Research"]') as any;
-  assert(spacesSection, "The menu has a Spaces section.");
-  const thesis = spacesSection.querySelector('[role="menuitemcheckbox"]');
-  assert.equal(thesis.textContent.trim(), "Thesis");
-  assert.equal(thesis.getAttribute("aria-checked"), "false");
-  await act(async () => { thesis.click(); });
+  assert.equal(browser.document.querySelector('[role="menuitemcheckbox"], [role="menuitemradio"]'), null, "Spaces and groups are not listed inline.");
+  const spaceItem = [...browser.document.querySelectorAll('.thread-item-menu [role="menuitem"]')].find((node) => node.textContent?.startsWith("Add to space…")) as any;
+  assert(spaceItem, "The menu has Add to space….");
+  assert.equal(spaceItem.getAttribute("aria-haspopup"), "dialog");
+  await act(async () => { spaceItem.click(); });
+  assert.equal(browser.document.querySelector(".thread-item-menu"), null, "The menu closes when the picker opens.");
+  let dialog = browser.document.querySelector('[role="dialog"]') as any;
+  assert.equal(dialog.querySelector("h2").textContent, "Add to spaces");
+  assert.match(dialog.textContent, /isn’t in a space yet/);
+  const spaceOptions = () => [...browser.document.querySelectorAll('[role="dialog"] [role="option"]')].map((option: any) => Object.assign(option, { label: option.querySelector(".group-picker-option-name").textContent })) as any[];
+  assert.deepEqual(spaceOptions().map((option) => option.label), ["Thesis", "New space with this"]);
+  await act(async () => { spaceOptions()[0].click(); });
   assert.equal(events.at(-1), "space:space-1:chat");
-  assert(browser.document.querySelector(".thread-item-menu"), "Ticking a space keeps the menu open for another.");
-  const groupSection = browser.document.querySelector('[aria-label="Group for Research"]') as any;
-  assert(groupSection, "The menu has a Group section.");
-  const groupChoices = [...groupSection.querySelectorAll('[role="menuitemradio"]')] as any[];
-  assert.deepEqual(groupChoices.map((choice) => choice.querySelector(".thread-item-menu-choice-name").textContent), ["No group", "Reading"]);
-  assert.equal(groupChoices[0].getAttribute("aria-checked"), "true");
-  await act(async () => { groupChoices[1].click(); });
+  assert(browser.document.querySelector('[role="dialog"]'), "Ticking a space keeps the picker open for another.");
+  const search = browser.document.querySelector('[aria-label="Search spaces"]') as any;
+  await act(async () => {
+    const setValue = Object.getOwnPropertyDescriptor(browser.HTMLInputElement.prototype, "value")!.set!;
+    setValue.call(search, "Health");
+    search.dispatchEvent(new browser.Event("input", { bubbles: true }));
+  });
+  assert.deepEqual(spaceOptions().map((option) => option.label), ["New space “Health”"], "Searching filters, and offers a new space with that name.");
+  await act(async () => { spaceOptions()[0].click(); });
+  assert.equal(events.at(-1), "new-space:chat:Health");
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null, "Making a space closes the picker.");
+
+  await click('[aria-label="Open actions for Research"]');
+  const groupItem = [...browser.document.querySelectorAll('.thread-item-menu [role="menuitem"]')].find((node) => node.textContent?.startsWith("Add to group…")) as any;
+  assert(groupItem, "The menu has Add to group….");
+  await act(async () => { groupItem.click(); });
+  dialog = browser.document.querySelector('[role="dialog"]') as any;
+  assert.equal(dialog.querySelector("h2").textContent, "Choose a group");
+  const reading = [...dialog.querySelectorAll('[role="option"]')].find((node: any) => node.textContent.includes("Reading")) as any;
+  await act(async () => { reading.click(); });
   assert.equal(events.at(-1), "group:chat:reading");
-  assert.equal(browser.document.querySelector(".thread-item-menu"), null, "Picking a group closes the menu.");
+  assert.equal(browser.document.querySelector('[role="dialog"]'), null, "Picking a group closes the picker.");
 
   await renderSidebar(true);
   assert.equal(container.querySelector('[aria-label="New side document"]'), null);
   await click('[aria-label="Open document Side research"]');
   assert.equal(events.at(-1), "select:side-document");
-  console.log("Sidebar action, keyboard dismissal, group creation, and Spaces/Group menu checks passed.");
+  console.log("Sidebar action, keyboard dismissal, group creation, and Add to space/group picker checks passed.");
 } finally {
   await act(async () => { root.unmount(); });
   await browser.happyDOM.abort();
