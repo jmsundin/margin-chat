@@ -58,8 +58,8 @@ export const DOCUMENT_MARGIN_GUTTER = 22;
 export const DOCUMENT_MARKS_WIDTH = 136;
 /**
  * On a phone the margin takes no room: a note on a passage is that passage, underlined, and a tap on it
- * opens the note; a note about the whole page is a tab at the screen's edge, which slides out to show
- * its title when you swipe the tabs left (or tap one).
+ * opens the note; a note about the whole page is a tab tucked part-way off the screen's edge showing the
+ * first letters of its title, which slides out to show the whole title when you swipe the tabs left (or tap one).
  */
 export const DOCUMENT_MARKS_PHONE_WIDTH = 0;
 /** How far a finger has to move sideways on the phone's note tabs to slide them out or back in. */
@@ -573,15 +573,13 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
         const underlined = sheet && placement?.anchorTop !== null && placement?.anchorTop !== undefined;
         return <div key={item.id} className={`document-margin-mark-slot${open ? " is-open" : ""}${underlined ? " is-underlined" : ""}`} style={{ top: placement?.top ?? 0, visibility: placement ? undefined : "hidden" }}>
           {/* Kept for keyboards and screen readers, out of sight: the passage is what you tap. */}
-          {/* On a phone, a note about the whole page is a tab at the edge (see tabClick). */}
+          {/* On a phone, a note about the whole page is a tab tucked part-way off the edge, showing the start of its title (see tabClick). */}
           <button type="button" className={`document-margin-mark${underlined ? " is-offscreen" : sheet ? " is-tab" : ""}${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${item.pending ? " is-pending" : ""}`}
             ref={(element) => { itemRefs.current[item.id] = element; }}
             aria-expanded={open} aria-label={sheet && !underlined && !tabsOut ? `Show the titles of this page's notes: ${text}` : `${open ? "Close" : "Open"} note: ${text}`}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
             {...(sheet && !underlined ? { onPointerDown: tabPointerDown, onPointerMove: tabPointerMove, onClick: () => tabClick(item.id) }
               : { onClick: () => setOpenId((current) => current === item.id ? null : item.id) })}>
-            {sheet && !underlined ? <svg className="document-margin-tab-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
-              <path d="M5 4h14v12H10l-5 4z" /><path d="M9 9h6M9 12h4" /></svg> : null}
             <span className="document-margin-mark-dot" aria-hidden="true" />
             <span className="document-margin-mark-text">{text}</span>
           </button>
