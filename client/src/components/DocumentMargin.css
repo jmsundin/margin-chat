@@ -231,3 +231,45 @@
 /* A folded note's highlight hugs its one line. */
 .document-margin-item.is-folded::before { inset: -2px -6px -2px 18px; }
 .is-quiet-page .document-margin-item.is-folded::before { inset: -2px -6px -2px 30px; }
+
+/* ---- Phones: notes take no room beside the page ----
+   A note on a passage is that passage: tinted, with a dotted underline in the note's ink, and tapping it opens the
+   note's sheet. The tap area reaches above and below the words (the tint stays on the words).
+   A note about the whole page is a thin mark at the screen's right edge; its name shows for a moment
+   when the page opens (.is-peeking), then tucks into the mark. The whole strip beside it is tappable. */
+.document-panel-content:has(> .document-margin.is-phone) > .document-body .message-anchor[data-annotation-branches] {
+  --note-ink: var(--quiet-note-dot, var(--sage, #6f8f7a));
+  background-color: color-mix(in srgb, var(--note-ink) 18%, transparent); background-clip: content-box;
+  /* Dotted, so it doesn't read as a link (links are solid underlines in the same green). */
+  text-decoration: underline dotted; text-decoration-color: var(--note-ink); text-decoration-thickness: 2.5px; text-underline-offset: 5px;
+  padding: 8px 0; border-radius: 3px; box-decoration-break: clone; -webkit-box-decoration-break: clone;
+  cursor: pointer; -webkit-tap-highlight-color: transparent; -webkit-touch-callout: none;
+}
+.document-margin.is-phone { width: 0; }
+.document-margin.is-phone .document-margin-mark-slot { left: auto; right: 0; width: 40px; justify-content: flex-end; }
+.document-margin.is-phone .document-margin-mark-slot.is-underlined { width: 1px; height: 1px; overflow: hidden; }
+.document-margin-mark.is-offscreen { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); border: 0; white-space: nowrap; }
+.document-margin.is-phone .document-margin-mark.is-peek {
+  position: relative; display: block; width: 40px; height: 36px; min-height: 0; max-width: none; padding: 0;
+  border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible;
+}
+/* The mark: a short bar of the note's ink against the screen's edge. */
+.document-margin.is-phone .document-margin-mark.is-peek .document-margin-mark-dot {
+  position: absolute; float: none; top: 7px; right: 0; width: 5px; height: 22px; margin: 0; border-radius: 3px 0 0 3px;
+  transition: width .15s ease;
+}
+.document-margin.is-phone .document-margin-mark.is-peek:is(:active, .is-open) .document-margin-mark-dot { width: 8px; }
+/* Its name, out to the left of the mark, while the page opens (not while its own sheet is up). */
+.document-margin.is-phone .document-margin-mark.is-peek .document-margin-mark-text {
+  position: absolute; top: 4px; right: 5px; display: block; max-width: min(220px, 60vw); padding: 6px 10px;
+  border: 1px solid color-mix(in srgb, var(--bubble-ink) 40%, transparent); border-right: 0; border-radius: 8px 0 0 8px;
+  background: var(--panel-strong, var(--bg, #fff)); box-shadow: 0 4px 14px rgba(40, 32, 20, .14);
+  color: var(--ink, inherit); font-size: 13px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  -webkit-line-clamp: unset; opacity: 0; transform: translateX(10px); pointer-events: none;
+  transition: opacity .3s ease, transform .3s ease;
+}
+.document-margin.is-phone.is-peeking .document-margin-mark.is-peek:not(.is-open) .document-margin-mark-text { opacity: 1; transform: none; }
+.document-margin.is-phone .document-margin-mark.is-peek:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: -2px; }
+@media (prefers-reduced-motion: reduce) {
+  .document-margin.is-phone .document-margin-mark.is-peek :is(.document-margin-mark-dot, .document-margin-mark-text) { transition: none; }
+}
