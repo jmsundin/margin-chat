@@ -248,16 +248,17 @@
 .document-margin.is-phone .document-margin-mark-slot { left: auto; right: 0; width: 40px; justify-content: flex-end; }
 .document-margin.is-phone .document-margin-mark-slot.is-underlined { width: 1px; height: 1px; overflow: hidden; }
 .document-margin-mark.is-offscreen { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); border: 0; white-space: nowrap; }
-/* A tab: the first letters of the note's title, on a tab tucked a third of the way off the screen's
-   right edge, with a stripe of the note's ink on its left. Swiped left (or tapped), every tab slides
+/* A tab: the first letters of the note's title, on a tab tucked off the screen's right edge so it
+   sticks out only as far as the margin beside the page's text (--tab-peek, measured, which keeps a
+   small gap from the text), with a stripe of the note's ink on its left. Swiped left (or tapped), every tab slides
    fully onto the screen to show its note's whole title; tapping a title opens it. */
 .document-margin.is-phone .document-margin-mark.is-tab {
   position: relative; display: flex; align-items: center; width: 66px; height: 40px; min-height: 0;
-  max-width: none; margin: 0 -22px 0 0; padding: 0 12px 0 10px; overflow: hidden;
+  max-width: none; margin: 0 calc(var(--tab-peek, 22px) - 66px) 0 0; padding: 0 12px 0 6px; overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--bubble-ink) 45%, var(--line)); border-left: 3px solid var(--bubble-ink); border-radius: 10px;
   background: var(--panel-strong, var(--bg, #fff)); box-shadow: 0 2px 8px rgba(40, 32, 20, .16);
   color: var(--ink, inherit); font-family: inherit; font-size: 14px; line-height: 18px; text-align: left; touch-action: pan-y;
-  transition: width .25s cubic-bezier(.2, .8, .2, 1), margin-right .25s cubic-bezier(.2, .8, .2, 1), box-shadow .2s ease;
+  transition: width .25s cubic-bezier(.2, .8, .2, 1), padding-left .25s ease, margin-right .25s cubic-bezier(.2, .8, .2, 1), box-shadow .2s ease;
 }
 .is-quiet-page .document-margin.is-phone .document-margin-mark.is-tab { font-family: var(--paper-serif, "Iowan Old Style", Georgia, serif); font-size: 15px; }
 .document-margin.is-phone .document-margin-mark.is-tab .document-margin-mark-dot { display: none; }
@@ -266,8 +267,9 @@
   display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: clip; -webkit-line-clamp: unset;
 }
 .document-margin.is-phone.has-tabs-out .document-margin-mark.is-tab {
-  width: max-content; max-width: calc(100vw - 24px); margin-right: 6px; box-shadow: 0 6px 20px rgba(40, 32, 20, .22);
+  width: max-content; max-width: calc(100vw - 24px); margin-right: 6px; padding-left: 10px; box-shadow: 0 6px 20px rgba(40, 32, 20, .22);
 }
+.document-margin.is-phone .document-margin-tabs-backdrop { position: fixed; inset: 0; background: transparent; touch-action: none; }
 .document-margin.is-phone.has-tabs-out .document-margin-mark.is-tab .document-margin-mark-text { text-overflow: ellipsis; }
 .document-margin.is-phone .document-margin-mark.is-tab.is-pending { animation: margin-bubble-thinking 1.2s ease-in-out infinite; }
 .document-margin.is-phone .document-margin-mark.is-tab:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: -3px; }
