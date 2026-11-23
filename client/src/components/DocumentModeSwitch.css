@@ -61,3 +61,5 @@
 @media (prefers-reduced-motion: reduce) { .document-mode-note { animation: none; } }
 @media (pointer: coarse) { .document-mode-note-actions button { min-height: 36px; } }
 
+/* Touch: the larger taps of the map button and ⋮ beside it stop at this pill's edge. */
+@media (pointer: coarse) { .document-mode-trigger { position: relative; z-index: 1; } }

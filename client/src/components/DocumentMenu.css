@@ -102,3 +102,8 @@
 .document-menu-new svg { flex-shrink: 0; color: var(--sage); }
 .document-menu-new.is-side svg { color: #8fb3d9; }
 :root[data-theme="light"] .document-menu-new.is-side svg { color: #3c6b94; }
+/* Touch: the ⋮ stays 28px to the eye but takes a 44px tap (Apple's minimum), so a thumb doesn't miss it. */
+@media (pointer: coarse) {
+  .document-menu-trigger { position: relative; }
+  .document-menu-trigger::after { content: ""; position: absolute; inset: -8px; }
+}
