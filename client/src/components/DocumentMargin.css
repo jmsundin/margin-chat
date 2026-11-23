@@ -235,8 +235,7 @@
 /* ---- Phones: notes take no room beside the page ----
    A note on a passage is that passage: tinted, with a dotted underline in the note's ink, and tapping it opens the
    note's sheet. The tap area reaches above and below the words (the tint stays on the words).
-   A note about the whole page is a thin mark at the screen's right edge; its name shows for a moment
-   when the page opens (.is-peeking), then tucks into the mark. The whole strip beside it is tappable. */
+   A note about the whole page is a tab at the screen's right edge (below). */
 .document-panel-content:has(> .document-margin.is-phone) > .document-body .message-anchor[data-annotation-branches] {
   --note-ink: var(--quiet-note-dot, var(--sage, #6f8f7a));
   background-color: color-mix(in srgb, var(--note-ink) 18%, transparent); background-clip: content-box;
@@ -249,27 +248,26 @@
 .document-margin.is-phone .document-margin-mark-slot { left: auto; right: 0; width: 40px; justify-content: flex-end; }
 .document-margin.is-phone .document-margin-mark-slot.is-underlined { width: 1px; height: 1px; overflow: hidden; }
 .document-margin-mark.is-offscreen { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); border: 0; white-space: nowrap; }
-.document-margin.is-phone .document-margin-mark.is-peek {
-  position: relative; display: block; width: 40px; height: 36px; min-height: 0; max-width: none; padding: 0;
-  border: 0; border-radius: 0; background: transparent; box-shadow: none; overflow: visible;
+/* A tab: a note icon in the note's ink, 40px tall, a little in from the edge so a thumb can reach it.
+   Swiped left (or tapped), every tab slides out to show its note's whole title; tapping a title opens it. */
+.document-margin.is-phone .document-margin-mark.is-tab {
+  position: relative; display: flex; align-items: center; gap: 8px; width: auto; height: 40px; min-height: 0;
+  max-width: 40px; margin: 0 6px 0 0; padding: 0 10px; overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--bubble-ink) 45%, var(--line)); border-radius: 12px;
+  background: var(--panel-strong, var(--bg, #fff)); box-shadow: 0 2px 8px rgba(40, 32, 20, .16);
+  color: var(--ink, inherit); font-family: inherit; font-size: 14px; line-height: 18px; touch-action: pan-y;
+  transition: max-width .25s cubic-bezier(.2, .8, .2, 1), box-shadow .2s ease;
 }
-/* The mark: a short bar of the note's ink against the screen's edge. */
-.document-margin.is-phone .document-margin-mark.is-peek .document-margin-mark-dot {
-  position: absolute; float: none; top: 7px; right: 0; width: 5px; height: 22px; margin: 0; border-radius: 3px 0 0 3px;
-  transition: width .15s ease;
+.document-margin-tab-icon { flex: 0 0 auto; fill: none; stroke: var(--bubble-ink); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.document-margin.is-phone .document-margin-mark.is-tab .document-margin-mark-dot { display: none; }
+.document-margin.is-phone .document-margin-mark.is-tab .document-margin-mark-text {
+  display: block; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; -webkit-line-clamp: unset; opacity: 0; transition: opacity .2s ease;
 }
-.document-margin.is-phone .document-margin-mark.is-peek:is(:active, .is-open) .document-margin-mark-dot { width: 8px; }
-/* Its name, out to the left of the mark, while the page opens (not while its own sheet is up). */
-.document-margin.is-phone .document-margin-mark.is-peek .document-margin-mark-text {
-  position: absolute; top: 4px; right: 5px; display: block; max-width: min(220px, 60vw); padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, var(--bubble-ink) 40%, transparent); border-right: 0; border-radius: 8px 0 0 8px;
-  background: var(--panel-strong, var(--bg, #fff)); box-shadow: 0 4px 14px rgba(40, 32, 20, .14);
-  color: var(--ink, inherit); font-size: 13px; line-height: 16px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  -webkit-line-clamp: unset; opacity: 0; transform: translateX(10px); pointer-events: none;
-  transition: opacity .3s ease, transform .3s ease;
-}
-.document-margin.is-phone.is-peeking .document-margin-mark.is-peek:not(.is-open) .document-margin-mark-text { opacity: 1; transform: none; }
-.document-margin.is-phone .document-margin-mark.is-peek:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: -2px; }
+.document-margin.is-phone.has-tabs-out .document-margin-mark.is-tab { max-width: calc(100vw - 24px); box-shadow: 0 6px 20px rgba(40, 32, 20, .22); }
+.document-margin.is-phone.has-tabs-out .document-margin-mark.is-tab .document-margin-mark-text { opacity: 1; }
+.document-margin.is-phone .document-margin-mark.is-tab.is-pending .document-margin-tab-icon { animation: margin-bubble-thinking 1.2s ease-in-out infinite; }
+.document-margin.is-phone .document-margin-mark.is-tab:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: 1px; }
+.document-margin.is-phone .document-margin-mark-slot:not(.is-underlined) { width: auto; }
 @media (prefers-reduced-motion: reduce) {
-  .document-margin.is-phone .document-margin-mark.is-peek :is(.document-margin-mark-dot, .document-margin-mark-text) { transition: none; }
+  .document-margin.is-phone .document-margin-mark.is-tab, .document-margin.is-phone .document-margin-mark.is-tab .document-margin-mark-text { transition: none; }
 }
