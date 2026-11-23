@@ -1,5 +1,5 @@
 import OpenBesideIcon from "./OpenBesideIcon";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import "./DocumentMargin.css";
 import { MobileKeyboardDirect } from "./MobileKeyboard";
@@ -64,6 +64,14 @@ export const DOCUMENT_MARKS_WIDTH = 136;
 export const DOCUMENT_MARKS_PHONE_WIDTH = 0;
 /** How far a finger has to move sideways on the phone's note tabs to slide them out or back in. */
 export const TAB_SWIPE_PX = 24;
+/** Gap kept between the end of the page's text and a tucked tab, and the narrowest a tucked tab gets. */
+export const TAB_TEXT_GAP_PX = 4;
+export const TAB_MIN_PEEK_PX = 14;
+
+/** How much of a tucked tab shows: the margin to the right of the page's text, less a small gap. */
+export function tabPeekWidth(edgeRight: number, textRight: number): number {
+  return Math.max(TAB_MIN_PEEK_PX, Math.round(edgeRight - textRight - TAB_TEXT_GAP_PX));
+}
 const MARK_SIZE = 26;
 /** Between bubbles on neighbouring lines. */
 const BUBBLE_GAP = 4;
@@ -437,6 +445,32 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const [tabsOut, setTabsOut] = useState(false);
   const tabSwipe = useRef<{ x: number; y: number; id: number; slid: boolean } | null>(null);
   useEffect(() => { setTabsOut(false); }, [documentId, sheet]);
+  // Tucked, a tab sticks out only as far as the margin beside the page's text.
+  const [tabPeek, setTabPeek] = useState<number | null>(null);
+  const hasTabs = sheet && marks && Object.values(placements).some((placement) => placement.anchorTop === null);
+  useLayoutEffect(() => {
+    if (!hasTabs) return;
+    const measure = () => {
+      const body = bodyRef.current, aside = asideRef.current;
+      if (!body || !aside) return;
+      const edge = Math.min(aside.getBoundingClientRect().right, document.documentElement.clientWidth);
+      const line = body.querySelector(".cm-line, .live-document-block, p");
+      let textRight: number;
+      if (line instanceof HTMLElement && line.getBoundingClientRect().width > 0) {
+        textRight = line.getBoundingClientRect().right - (parseFloat(getComputedStyle(line).paddingRight) || 0);
+      } else {
+        textRight = body.getBoundingClientRect().right - (parseFloat(getComputedStyle(body).paddingRight) || 0);
+      }
+      setTabPeek(tabPeekWidth(edge, textRight));
+    };
+    measure();
+    // The text column settles after the editor lays out (and moves when the page resizes).
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(measure);
+    const body = bodyRef.current;
+    if (observer && body) { observer.observe(body); const host = body.firstElementChild; if (host) observer.observe(host); }
+    window.addEventListener("resize", measure);
+    return () => { observer?.disconnect(); window.removeEventListener("resize", measure); };
+  }, [hasTabs, bodyRef, width, itemKey]);
   useEffect(() => {
     if (!tabsOut) return;
     const tuck = (event: PointerEvent) => {
@@ -556,7 +590,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   }, [activeId, placements]);
 
   if (marks) return <aside className={`document-margin is-marks${sheet ? " is-phone" : ""}${tabsOut ? " has-tabs-out" : ""}`} ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
-    style={{ width, flexBasis: width }}
+    style={{ width, flexBasis: width, ...(tabPeek !== null ? { "--tab-peek": `${tabPeek}px` } : {}) } as CSSProperties}
     onPointerDownCapture={() => { pointerInside.current = Date.now(); }}
     onWheel={(event) => {
       const body = bodyRef.current;
@@ -564,6 +598,9 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
       body.scrollTop += event.deltaY;
     }}>
     {linkedRule ? <style>{linkedRule}</style> : null}
+    {/* With the titles out, a tap anywhere else (even inside an HTML page, whose taps never reach
+        this document) lands here and tucks them back into the margin. */}
+    {tabsOut ? <div className="document-margin-tabs-backdrop" aria-hidden="true" onPointerDown={() => setTabsOut(false)} /> : null}
     <div className="document-margin-track" ref={trackRef} style={{ height }}>
       {items.map((item) => {
         const placement = placements[item.id];

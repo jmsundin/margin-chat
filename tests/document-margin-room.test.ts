@@ -31,3 +31,11 @@ describe("room for an open margin note", () => {
     expect(freeRoomRight(layout([890, 1440]))).toBe(0);
   });
 });
+
+describe("phone page-note tabs", () => {
+  test("a tucked tab shows only the margin beside the text, less a small gap", async () => {
+    const { tabPeekWidth, TAB_TEXT_GAP_PX, TAB_MIN_PEEK_PX } = await import("../client/src/components/DocumentMargin");
+    expect(tabPeekWidth(389, 362)).toBe(27 - TAB_TEXT_GAP_PX);
+    expect(tabPeekWidth(390, 388)).toBe(TAB_MIN_PEEK_PX);
+  });
+});
