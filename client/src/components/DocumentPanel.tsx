@@ -26,6 +26,7 @@ import AnnotationPreview from "./AnnotationPreview";
 import VaultFileViewer, { type VaultFileViewerProps } from "./VaultFileViewer";
 import type { HtmlPlayActions } from "./HtmlPageMenu";
 import { useHtmlPageLayout, useHtmlPagePrefs } from "../lib/htmlPagePrefs";
+import { OPEN_RIGHT_EVENT } from "../lib/frameEdgeSwipe";
 import MarkdownMessage from "./MarkdownMessage";
 import AIResponseDetails from "./AIResponseDetails";
 import MobileAIComposer from "./MobileAIComposer";
@@ -228,6 +229,14 @@ export default function DocumentPanel(props: DocumentPanelProps) {
   const showEditor = !board || editorBlocks.some((block) => block.content.trim());
   const bodyRef = useRef<HTMLDivElement>(null);
   const leaveHtmlFull = useCallback(() => setHtmlFullFor(null), []);
+  // On a phone, a swipe in from the right edge of the page brings its notes in, as the margin sits to the page's right on a wider screen.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!body || !htmlFill) return;
+    const openNotes = () => setHtmlViewFor({ id: conversation.id, view: "notes" });
+    body.addEventListener(OPEN_RIGHT_EVENT, openNotes);
+    return () => body.removeEventListener(OPEN_RIGHT_EVENT, openNotes);
+  }, [htmlFill, conversation.id]);
   const panelRoot = () => bodyRef.current?.closest<HTMLElement>(".document-panel") ?? null;
   useEffect(() => {
     if (!htmlFull) {

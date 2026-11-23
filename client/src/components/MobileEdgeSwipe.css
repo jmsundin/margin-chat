@@ -4,6 +4,8 @@
   :root.is-edge-swiping-sidebar .workspace-mobile-backdrop { opacity: var(--edge-swipe-progress, 1); }
   :root.is-edge-swipe-closing .thread-sidebar:not(.is-collapsed) { transform: translateX(-110%); transition: transform 200ms ease; }
   :root.is-edge-swipe-closing .workspace-mobile-backdrop { opacity: 0; transition: opacity 200ms ease; }
+  /* A swipe in from the right edge of an HTML page leans the page aside: its notes come in when the finger lets go. */
+  :root.is-edge-swiping-right .document-body.is-html-page[data-html-view="page"] > .vault-file-viewer { transform: translateX(var(--edge-swipe-right-x, 0px)); }
 }
 
 .mobile-sync-pull {

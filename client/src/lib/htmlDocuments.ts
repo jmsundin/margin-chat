@@ -27,7 +27,12 @@ export type HtmlFrameMessage =
   | { marginHtml: 1; type: "screen"; requestId: string; screen: HtmlScreen }
   | { marginHtml: 1; type: "content-request" }
   | { marginHtml: 1; type: "escape" }
-  | { marginHtml: 1; type: "asset-request"; id: string; path: string };
+  | { marginHtml: 1; type: "asset-request"; id: string; path: string }
+  | { marginHtml: 1; type: "edge-touch"; phase: HtmlEdgeTouchPhase; x: number; y: number; t: number };
+
+/** A swipe in from the frame's edge that the bridge took from the page, so the app can open its side panels. */
+export type HtmlEdgeTouchPhase = "start" | "move" | "end" | "cancel";
+const EDGE_TOUCH_PHASES: readonly string[] = ["start", "move", "end", "cancel"];
 
 /**
  * What a page shows at one moment, for Play's notes and Ask AI: the words in view, what the person
@@ -76,6 +81,8 @@ export function readHtmlFrameMessage(data: unknown): HtmlFrameMessage | null {
     case "clear": return { marginHtml: 1, type: "clear" };
     case "escape": return { marginHtml: 1, type: "escape" };
     case "content-request": return { marginHtml: 1, type: "content-request" };
+    case "edge-touch": return typeof message.phase === "string" && EDGE_TOUCH_PHASES.includes(message.phase) && finite(message.x) && finite(message.y) && finite(message.t)
+      ? { marginHtml: 1, type: "edge-touch", phase: message.phase as HtmlEdgeTouchPhase, x: message.x, y: message.y, t: message.t } : null;
     case "asset-request": return typeof message.id === "string" && message.id.length <= 40 && typeof message.path === "string" && message.path.length <= 1_000
       ? { marginHtml: 1, type: "asset-request", id: message.id, path: message.path } : null;
     case "open": return typeof message.id === "string" && message.id.length <= 200 ? { marginHtml: 1, type: "open", id: message.id } : null;
@@ -518,6 +525,81 @@ function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstT
     new MutationObserver(queueMarks).observe(document.body ?? document.documentElement, { childList: true, subtree: true, characterData: true });
   });
 
+  /*
+   * Swipes in from the frame's edges belong to the app on a phone, as they do everywhere else in it:
+   * the left one pulls out the sidebar, the right one shows the page's notes. Touches reach only the frame,
+   * so the bridge watches them before the page does. A touch that starts in an edge strip the app named and
+   * moves inward is taken from the page (it gets a cancel) and passed on; any other touch is the page's own.
+   */
+  let edgeZones = { left: 0, right: 0 };
+  let edge: { id: number; x: number; y: number; t: number; inward: 1 | -1; claimed: boolean; target: EventTarget | null; pointerId: number | null; touch: Touch } | null = null;
+  let cancelling = false;
+  const EDGE_SLOP = 10;
+  const claimEdge = (x: number, y: number) => {
+    const current = edge;
+    if (!current || current.claimed) return Boolean(current?.claimed);
+    const dx = x - current.x;
+    const dy = y - current.y;
+    if (Math.hypot(dx, dy) < EDGE_SLOP) return false;
+    if (!(Math.abs(dx) > Math.abs(dy) * 1.2 && dx * current.inward > 0)) { edge = null; return false; }
+    current.claimed = true;
+    post({ type: "edge-touch", phase: "start", x: current.x, y: current.y, t: current.t });
+    // The page saw the finger come down; it is told the touch was cancelled, as when the browser scrolls.
+    cancelling = true;
+    try {
+      const target = current.target instanceof EventTarget ? current.target : document;
+      if (current.pointerId !== null && typeof PointerEvent === "function") {
+        target.dispatchEvent(new PointerEvent("pointercancel", { pointerId: current.pointerId, pointerType: "touch", isPrimary: true, bubbles: true }));
+      }
+      if (typeof TouchEvent === "function") target.dispatchEvent(new TouchEvent("touchcancel", { bubbles: true, changedTouches: [current.touch] }));
+    } catch { /* An old browser without the constructors: the page just sees no more of the touch. */ }
+    cancelling = false;
+    return true;
+  };
+  // Pointer events come first, so the touch's pointer is known by the time its touchstart arrives.
+  let touchPointer: number | null = null;
+  window.addEventListener("pointerdown", (event) => { if (event.pointerType === "touch" && event.isPrimary) touchPointer = event.pointerId; }, true);
+  window.addEventListener("touchstart", (event) => {
+    if (edge?.claimed) return;
+    edge = null;
+    if (event.touches.length !== 1 || !(edgeZones.left || edgeZones.right)) return;
+    const touch = event.touches[0];
+    const inward = touch.clientX <= edgeZones.left ? 1 : touch.clientX >= window.innerWidth - edgeZones.right ? -1 : 0;
+    if (!inward || !(document.getSelection()?.isCollapsed ?? true)) return;
+    edge = { id: touch.identifier, x: touch.clientX, y: touch.clientY, t: event.timeStamp, inward: inward as 1 | -1, claimed: false, target: event.target, pointerId: touchPointer, touch };
+  }, { capture: true, passive: true });
+  // A page that uses pointer events doesn't feel the swipe either.
+  for (const type of ["pointermove", "pointerup", "pointercancel"]) {
+    window.addEventListener(type, (event) => {
+      const pointer = event as PointerEvent;
+      if (cancelling || !edge || pointer.pointerType !== "touch" || (edge.pointerId !== null && pointer.pointerId !== edge.pointerId)) return;
+      if (type === "pointermove") claimEdge(pointer.clientX, pointer.clientY);
+      if (edge?.claimed) event.stopImmediatePropagation();
+    }, true);
+  }
+  window.addEventListener("touchmove", (event) => {
+    const current = edge;
+    const touch = current && [...event.changedTouches].find((item) => item.identifier === current.id);
+    if (!current || !touch) return;
+    if (!claimEdge(touch.clientX, touch.clientY)) return;
+    if (event.cancelable) event.preventDefault();
+    event.stopImmediatePropagation();
+    post({ type: "edge-touch", phase: "move", x: touch.clientX, y: touch.clientY, t: event.timeStamp });
+  }, { capture: true, passive: false });
+  for (const type of ["touchend", "touchcancel"]) {
+    window.addEventListener(type, (event) => {
+      const current = edge;
+      const touch = current && [...(event as TouchEvent).changedTouches].find((item) => item.identifier === current.id);
+      if (cancelling || !current || !touch) return;
+      edge = null;
+      if (!current.claimed) return;
+      // No tap or click for the page at the end of a swipe.
+      if (event.cancelable) event.preventDefault();
+      event.stopImmediatePropagation();
+      post({ type: "edge-touch", phase: type === "touchend" ? "end" : "cancel", x: touch.clientX, y: touch.clientY, t: event.timeStamp });
+    }, { capture: true, passive: false });
+  }
+
   // A click on a marked passage opens its note or chat; links open in a new tab, not inside the frame.
   document.addEventListener("click", (event) => {
     const link = (event.target as Element | null)?.closest?.("a[href]");
@@ -640,7 +722,20 @@ function bridge(savedStorage: Record<string, string>, hasAssets: boolean, firstT
     }
     if (event.data.type === "anchors" && Array.isArray(event.data.anchors)) { anchors = event.data.anchors; reportMarks(); }
     if (event.data.type === "clear-selection") { selected = false; document.getSelection()?.removeAllRanges(); }
+    if (event.data.type === "edges") {
+      const width = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(64, value)) : 0;
+      edgeZones = { left: width(event.data.left), right: width(event.data.right) };
+    }
   });
+}
+
+/**
+ * Which strips along the frame's sides are the app's own edge-swipe zones (the screen's outer `edge` pixels),
+ * in the frame's own pixels; 0 where the frame doesn't reach the screen's edge.
+ */
+export function htmlEdgeZones(frame: { left: number; right: number }, viewportWidth: number, edge: number) {
+  const zone = (value: number) => Math.round(Math.max(0, Math.min(edge, value)));
+  return { marginHtml: 1 as const, type: "edges" as const, left: zone(edge - frame.left), right: zone(frame.right - (viewportWidth - edge)) };
 }
 
 /** What `htmlFrameDocument` is told about the page beyond its text. */
