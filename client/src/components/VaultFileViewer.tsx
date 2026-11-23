@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import type { PDFDocumentProxy, PDFPageProxy, RenderTask } from "pdfjs-dist";
 import type { Conversation, MessageAnchorLink, SelectionDraft, VaultFileReference } from "../types";
 import { useVaultMedia } from "../lib/vaultMedia";
+import { useFrameEdgeSwipes } from "../lib/frameEdgeSwipe";
 import { htmlPageTheme, useAppTheme, useHtmlPageLayout, useHtmlPagePrefs, useSmallScreen } from "../lib/htmlPagePrefs";
 import HtmlPageMenu, { type HtmlPlayActions } from "./HtmlPageMenu";
 import { htmlAssetContentType, htmlAssetPath, htmlPageHasAssets, inlineHtmlAssets } from "../lib/htmlAssets";
@@ -950,6 +951,9 @@ function HtmlView(props: VaultFileViewerProps & { blob: Blob; onLoadNewer?: () =
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
   }, []);
+
+  // On a phone, swipes in from the screen's edges open the app's panels over the page, as they do elsewhere.
+  useFrameEdgeSwipes(frameRef, `${reloads}:${source === null}`);
 
   const name = vaultFileTitle(props.file.path);
   /** Starts the page again with what it last saved; its runtime state (an open tab, a half-played round) is dropped. */
