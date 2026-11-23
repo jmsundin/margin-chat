@@ -56,8 +56,13 @@ const FOLDED_GAP = 2;
 export const DOCUMENT_MARGIN_GUTTER = 22;
 /** The margin's width in bubbles mode: room for a short bubble with the first words of each note. */
 export const DOCUMENT_MARKS_WIDTH = 136;
-/** On a phone the margin is narrower (its bubbles also reach into the page's right padding), so the text keeps most of the screen. */
-export const DOCUMENT_MARKS_PHONE_WIDTH = 66;
+/**
+ * On a phone the margin takes no room: a note on a passage is that passage, underlined, and a tap on it
+ * opens the note; a note about the whole page is a thin mark at the screen's edge (see PEEK_MS).
+ */
+export const DOCUMENT_MARKS_PHONE_WIDTH = 0;
+/** How long a phone's page-note marks show their names when a page opens, before they tuck in to the edge. */
+export const PEEK_MS = 2400;
 const MARK_SIZE = 26;
 /** Between bubbles on neighbouring lines. */
 const BUBBLE_GAP = 4;
@@ -126,6 +131,16 @@ function leftColumn(body: HTMLElement, aside: HTMLElement | null, width: number)
   if (noteWidth < LEFT_MIN_WIDTH) return null;
   const textX = textLeft - asideLeft;
   return { x: textX - DOCUMENT_MARGIN_GUTTER - noteWidth, width: noteWidth, textX };
+}
+
+/** The note a tap or pointer is on: the first of the passage's notes that is in this margin. */
+function noteAtTarget(body: HTMLElement, target: EventTarget | null, ids: readonly string[]) {
+  const mark = target instanceof Element ? target.closest<HTMLElement>(".message-anchor[data-annotation-branches]") : null;
+  if (!mark || !body.contains(mark)) return null;
+  try {
+    const found: unknown = JSON.parse(mark.dataset.annotationBranches ?? "[]");
+    return Array.isArray(found) ? found.find((id): id is string => typeof id === "string" && ids.includes(id)) ?? null : null;
+  } catch { return null; }
 }
 
 function anchorMarks(body: HTMLElement, id: string) {
@@ -389,20 +404,41 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   useEffect(() => {
     const body = bodyRef.current;
     if (!body) return;
-    const noteAt = (target: EventTarget | null) => {
-      const mark = target instanceof Element ? target.closest<HTMLElement>(".message-anchor[data-annotation-branches]") : null;
-      if (!mark || !body.contains(mark)) return null;
-      try {
-        const ids: unknown = JSON.parse(mark.dataset.annotationBranches ?? "[]");
-        return Array.isArray(ids) ? ids.find((id): id is string => typeof id === "string" && itemIds.current.includes(id)) ?? null : null;
-      } catch { return null; }
-    };
+    const noteAt = (target: EventTarget | null) => noteAtTarget(body, target, itemIds.current);
     const over = (event: PointerEvent) => { if (event.pointerType !== "touch") setPassageHoverId(noteAt(event.target)); };
     const out = (event: PointerEvent) => { if (!noteAt(event.relatedTarget)) setPassageHoverId(null); };
     body.addEventListener("pointerover", over);
     body.addEventListener("pointerout", out);
     return () => { body.removeEventListener("pointerover", over); body.removeEventListener("pointerout", out); };
   }, [bodyRef]);
+
+  // Phones: a noted passage is the note's button. A tap on it opens the note's sheet instead of
+  // putting the caret there (the keyboard would cover the sheet); the rest of the line edits as usual.
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (!sheet || !body) return;
+    const hold = (event: Event) => { if (noteAtTarget(body, event.target, itemIds.current)) { event.preventDefault(); event.stopPropagation(); } };
+    const open = (event: MouseEvent) => {
+      const id = noteAtTarget(body, event.target, itemIds.current);
+      if (!id) return;
+      event.preventDefault(); event.stopPropagation();
+      setOpenId(id);
+    };
+    body.addEventListener("mousedown", hold, true);
+    body.addEventListener("click", open, true);
+    return () => { body.removeEventListener("mousedown", hold, true); body.removeEventListener("click", open, true); };
+  }, [bodyRef, sheet]);
+
+  // A note about the whole page has no passage to underline. Its mark at the edge shows the note's
+  // name for a moment when the page opens (or the note is new), then tucks in, so you learn it's there.
+  const peekIds = sheet ? items.filter((item) => placements[item.id] && placements[item.id].anchorTop === null).map((item) => item.id).join("|") : "";
+  const [peeking, setPeeking] = useState(false);
+  useEffect(() => {
+    if (!peekIds) { setPeeking(false); return; }
+    setPeeking(true);
+    const timer = window.setTimeout(() => setPeeking(false), PEEK_MS);
+    return () => window.clearTimeout(timer);
+  }, [documentId, peekIds]);
 
   // A bubble's note opens out to the right, over the bubble, when there's room beside the page;
   // otherwise it opens over the page's edge to the left.
@@ -464,7 +500,11 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const escape = (value: string) => typeof CSS !== "undefined" && CSS.escape ? CSS.escape(value) : value.replace(/["\\]/g, "\\$&");
   const pendingRule = items.filter((item) => item.pending).map((item) =>
     `.document-panel-content:has(> .document-margin[data-margin-notes-for="${escape(documentId)}"]) > .document-body .message-anchor[data-annotation-branches*='"${escape(item.id)}"']`).join(",");
-  const linkedRule = (linkedId ? `.document-panel-content:has(> .document-margin[data-margin-notes-for="${escape(documentId)}"]) > .document-body .message-anchor[data-annotation-branches*='"${escape(linkedId)}"'] { background: var(--margin-linked-passage); box-shadow: 0 1.5px 0 var(--margin-linked-line); }` : "")
+  const passage = (id: string) => `.document-panel-content:has(> .document-margin[data-margin-notes-for="${escape(documentId)}"]) > .document-body .message-anchor[data-annotation-branches*='"${escape(id)}"']`;
+  // On a phone, the AI's notes underline their passages in the AI's ink.
+  const aiRule = sheet ? items.filter((item) => item.ai).map((item) => passage(item.id)).join(",") : "";
+  const linkedRule = (aiRule ? `${aiRule} { --note-ink: var(--quiet-ai-ink, var(--accent)); }` : "")
+    + (linkedId ? `${passage(linkedId)} { background-color: var(--margin-linked-passage); box-shadow: 0 1.5px 0 var(--margin-linked-line); }` : "")
     // Placed after the hover rule so a passage being thought about keeps its wave.
     + (pendingRule ? `${pendingRule} { background: var(--margin-thinking-wave) 0 100% / var(--margin-thinking-at) 5px no-repeat; box-shadow: none; text-decoration: none; padding-bottom: 4px; animation: margin-note-thinking 9s cubic-bezier(.15,.7,.3,1) forwards; }` : "");
 
@@ -487,7 +527,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     syncScroll();
   }, [activeId, placements]);
 
-  if (marks) return <aside className="document-margin is-marks" ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
+  if (marks) return <aside className={`document-margin is-marks${sheet ? " is-phone" : ""}${peeking ? " is-peeking" : ""}`} ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
     style={{ width, flexBasis: width }}
     onPointerDownCapture={() => { pointerInside.current = Date.now(); }}
     onWheel={(event) => {
@@ -501,8 +541,11 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
         const placement = placements[item.id];
         const open = openId === item.id;
         const text = bubbleText(item);
-        return <div key={item.id} className={`document-margin-mark-slot${open ? " is-open" : ""}`} style={{ top: placement?.top ?? 0, visibility: placement ? undefined : "hidden" }}>
-          <button type="button" className={`document-margin-mark${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${item.pending ? " is-pending" : ""}`}
+        // On a phone a note on a passage shows no button: its underlined passage is the button.
+        const underlined = sheet && placement?.anchorTop !== null && placement?.anchorTop !== undefined;
+        return <div key={item.id} className={`document-margin-mark-slot${open ? " is-open" : ""}${underlined ? " is-underlined" : ""}`} style={{ top: placement?.top ?? 0, visibility: placement ? undefined : "hidden" }}>
+          {/* Kept for keyboards and screen readers, out of sight: the passage is what you tap. */}
+          <button type="button" className={`document-margin-mark${underlined ? " is-offscreen" : sheet ? " is-peek" : ""}${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${item.pending ? " is-pending" : ""}`}
             ref={(element) => { itemRefs.current[item.id] = element; }}
             aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${text}`}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
