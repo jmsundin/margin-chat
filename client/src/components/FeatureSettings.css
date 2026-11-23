@@ -22,3 +22,7 @@
 }
 .feature-hint button { border: 0; background: transparent; padding: 0; font: inherit; cursor: pointer; color: var(--accent, var(--ink)); text-decoration: underline; text-underline-offset: 2px; }
 .feature-hint .feature-hint-dismiss { margin-left: auto; color: var(--muted); text-decoration: none; font-size: 1.1rem; line-height: 1; }
+/* Touch: the tip's × was a 12px target; it gets a 40px one without moving. */
+@media (pointer: coarse) {
+  .feature-hint .feature-hint-dismiss { min-width: 40px; min-height: 40px; margin: -10px -12px -10px auto; }
+}

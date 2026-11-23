@@ -90,3 +90,8 @@
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
 .document-inside-chip:hover { border-color: var(--accent); color: var(--accent); }
 .document-inside-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Touch: the map button keeps its look but takes a larger tap, short of the Write pill beside it. */
+@media (pointer: coarse) {
+  .document-map-button { position: relative; }
+  .document-map-button::after { content: ""; position: absolute; inset: -6px; }
+}
