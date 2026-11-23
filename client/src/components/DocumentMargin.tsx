@@ -58,11 +58,12 @@ export const DOCUMENT_MARGIN_GUTTER = 22;
 export const DOCUMENT_MARKS_WIDTH = 136;
 /**
  * On a phone the margin takes no room: a note on a passage is that passage, underlined, and a tap on it
- * opens the note; a note about the whole page is a thin mark at the screen's edge (see PEEK_MS).
+ * opens the note; a note about the whole page is a tab at the screen's edge, which slides out to show
+ * its title when you swipe the tabs left (or tap one).
  */
 export const DOCUMENT_MARKS_PHONE_WIDTH = 0;
-/** How long a phone's page-note marks show their names when a page opens, before they tuck in to the edge. */
-export const PEEK_MS = 2400;
+/** How far a finger has to move sideways on the phone's note tabs to slide them out or back in. */
+export const TAB_SWIPE_PX = 24;
 const MARK_SIZE = 26;
 /** Between bubbles on neighbouring lines. */
 const BUBBLE_GAP = 4;
@@ -429,16 +430,43 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     return () => { body.removeEventListener("mousedown", hold, true); body.removeEventListener("click", open, true); };
   }, [bodyRef, sheet]);
 
-  // A note about the whole page has no passage to underline. Its mark at the edge shows the note's
-  // name for a moment when the page opens (or the note is new), then tucks in, so you learn it's there.
-  const peekIds = sheet ? items.filter((item) => placements[item.id] && placements[item.id].anchorTop === null).map((item) => item.id).join("|") : "";
-  const [peeking, setPeeking] = useState(false);
+  // A note about the whole page has no passage to underline, so it's a tab at the screen's edge.
+  // Swiping the tabs left (or tapping one) slides them all out far enough to read each note's whole
+  // title, without covering the page until you ask; tapping a title then opens that note. A swipe
+  // right, a tap on the page or Escape tucks them back in.
+  const [tabsOut, setTabsOut] = useState(false);
+  const tabSwipe = useRef<{ x: number; y: number; id: number; slid: boolean } | null>(null);
+  useEffect(() => { setTabsOut(false); }, [documentId, sheet]);
   useEffect(() => {
-    if (!peekIds) { setPeeking(false); return; }
-    setPeeking(true);
-    const timer = window.setTimeout(() => setPeeking(false), PEEK_MS);
-    return () => window.clearTimeout(timer);
-  }, [documentId, peekIds]);
+    if (!tabsOut) return;
+    const tuck = (event: PointerEvent) => {
+      if (!(event.target instanceof Element && event.target.closest(".document-margin-mark.is-tab"))) setTabsOut(false);
+    };
+    const escape = (event: KeyboardEvent) => { if (event.key === "Escape") setTabsOut(false); };
+    document.addEventListener("pointerdown", tuck, true);
+    document.addEventListener("keydown", escape);
+    return () => { document.removeEventListener("pointerdown", tuck, true); document.removeEventListener("keydown", escape); };
+  }, [tabsOut]);
+  const tabPointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    tabSwipe.current = { x: event.clientX, y: event.clientY, id: event.pointerId, slid: false };
+  };
+  const tabPointerMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+    const start = tabSwipe.current;
+    if (!start || start.id !== event.pointerId || start.slid) return;
+    const dx = event.clientX - start.x;
+    if (Math.abs(dx) < TAB_SWIPE_PX || Math.abs(dx) < Math.abs(event.clientY - start.y)) return;
+    start.slid = true;
+    setTabsOut(dx < 0);
+  };
+  /** A tap on a tucked tab slides the tabs out; a tap on a title opens its note. A swipe does neither. */
+  const tabClick = (id: string) => {
+    const swiped = tabSwipe.current?.slid;
+    tabSwipe.current = null;
+    if (swiped) return;
+    if (!tabsOut) { setTabsOut(true); return; }
+    setTabsOut(false);
+    setOpenId(id);
+  };
 
   // A bubble's note opens out to the right, over the bubble, when there's room beside the page;
   // otherwise it opens over the page's edge to the left.
@@ -527,7 +555,7 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
     syncScroll();
   }, [activeId, placements]);
 
-  if (marks) return <aside className={`document-margin is-marks${sheet ? " is-phone" : ""}${peeking ? " is-peeking" : ""}`} ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
+  if (marks) return <aside className={`document-margin is-marks${sheet ? " is-phone" : ""}${tabsOut ? " has-tabs-out" : ""}`} ref={asideRef} aria-label={label} data-margin-notes-for={documentId}
     style={{ width, flexBasis: width }}
     onPointerDownCapture={() => { pointerInside.current = Date.now(); }}
     onWheel={(event) => {
@@ -545,11 +573,15 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
         const underlined = sheet && placement?.anchorTop !== null && placement?.anchorTop !== undefined;
         return <div key={item.id} className={`document-margin-mark-slot${open ? " is-open" : ""}${underlined ? " is-underlined" : ""}`} style={{ top: placement?.top ?? 0, visibility: placement ? undefined : "hidden" }}>
           {/* Kept for keyboards and screen readers, out of sight: the passage is what you tap. */}
-          <button type="button" className={`document-margin-mark${underlined ? " is-offscreen" : sheet ? " is-peek" : ""}${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${item.pending ? " is-pending" : ""}`}
+          {/* On a phone, a note about the whole page is a tab at the edge (see tabClick). */}
+          <button type="button" className={`document-margin-mark${underlined ? " is-offscreen" : sheet ? " is-tab" : ""}${item.ai ? " is-ai" : ""}${open ? " is-open" : ""}${item.id === passageHoverId ? " is-pointed" : ""}${item.pending ? " is-pending" : ""}`}
             ref={(element) => { itemRefs.current[item.id] = element; }}
-            aria-expanded={open} aria-label={`${open ? "Close" : "Open"} note: ${text}`}
+            aria-expanded={open} aria-label={sheet && !underlined && !tabsOut ? `Show the titles of this page's notes: ${text}` : `${open ? "Close" : "Open"} note: ${text}`}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}
-            onClick={() => setOpenId((current) => current === item.id ? null : item.id)}>
+            {...(sheet && !underlined ? { onPointerDown: tabPointerDown, onPointerMove: tabPointerMove, onClick: () => tabClick(item.id) }
+              : { onClick: () => setOpenId((current) => current === item.id ? null : item.id) })}>
+            {sheet && !underlined ? <svg className="document-margin-tab-icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path d="M5 4h14v12H10l-5 4z" /><path d="M9 9h6M9 12h4" /></svg> : null}
             <span className="document-margin-mark-dot" aria-hidden="true" />
             <span className="document-margin-mark-text">{text}</span>
           </button>
