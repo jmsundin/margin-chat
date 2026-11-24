@@ -1,8 +1,9 @@
 import OpenBesideIcon from "./OpenBesideIcon";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import "./DocumentMargin.css";
 import { MobileKeyboardDirect } from "./MobileKeyboard";
+import { DEFAULT_NOTEBOOK_PREFS, readNotebookPrefs, subscribeNotebookPrefs } from "../lib/notebookPrefs";
 
 export interface DocumentMarginItem {
   id: string;
@@ -260,6 +261,8 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const [openId, setOpenId] = useState<string | null>(null);
   /** On phones the open note is a sheet: half the screen, so its passage stays in view above it, or all of it. */
   const sheet = useNoteSheet(marks);
+  /** Settings can open the phone note from the right side instead, leaving a strip of the page on the left. */
+  const sideSheet = useSyncExternalStore(subscribeNotebookPrefs, readNotebookPrefs, () => DEFAULT_NOTEBOOK_PREFS).phoneNotesFrom === "side";
   /** The sheet's height: a share of the screen ("free", any height), its title bar alone ("min"), or the whole screen ("full"). */
   const [sheetMode, setSheetMode] = useState<"free" | "min" | "full">("free");
   /** The free height to come back to from minimized or full screen. */
@@ -616,11 +619,15 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
             <span className="document-margin-mark-dot" aria-hidden="true" />
             <span className="document-margin-mark-text">{text}</span>
           </button>
-          {open && sheet ? createPortal(<div className={`note-sheet${sheetFull && sheetDrag === null ? " is-full" : ""}${sheetMin && sheetDrag === null ? " is-min" : ""}${sheetDrag !== null ? " is-dragging" : ""}`} ref={sheetRef} data-note-sheet
-            data-sheet-mode={sheetMode}
-            style={{ height: sheetDrag !== null ? `${sheetDrag}px` : sheetMode === "free" ? `${sheetShare * 100}dvh` : undefined }}
+          {open && sheet ? createPortal(<>{sideSheet ? <button type="button" className="note-sheet-strip" aria-label="Back to the page" onClick={() => setOpenId(null)} /> : null}<div className={`note-sheet${sideSheet ? " is-side" : ""}${sheetFull && sheetDrag === null ? " is-full" : ""}${sheetMin && sheetDrag === null ? " is-min" : ""}${sheetDrag !== null ? " is-dragging" : ""}`} ref={sheetRef} data-note-sheet
+            data-sheet-mode={sideSheet ? "side" : sheetMode}
+            style={sideSheet ? undefined : { height: sheetDrag !== null ? `${sheetDrag}px` : sheetMode === "free" ? `${sheetShare * 100}dvh` : undefined }}
             data-margin-note-id={item.id} data-mobile-keyboard-direct role="dialog" aria-label={`Note: ${item.label || "Margin note"}`}>
-            <div className="note-sheet-top" onPointerDown={sheetHandleDown} onPointerMove={sheetHandleMove} onPointerUp={sheetHandleEnd} onPointerCancel={sheetHandleEnd}
+            {sideSheet ? <div className="note-sheet-top is-side">
+              <button type="button" className="note-sheet-size" aria-label="Close the note" title="Close" onClick={() => setOpenId(null)}>
+                <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M6 3l5 5-5 5" /></svg>
+              </button>
+            </div> : <div className="note-sheet-top" onPointerDown={sheetHandleDown} onPointerMove={sheetHandleMove} onPointerUp={sheetHandleEnd} onPointerCancel={sheetHandleEnd}
               onClick={sheetHandleClick}>
               <button type="button" className="note-sheet-size is-min-button" aria-label={sheetMin ? "Restore the note" : "Minimize the note"} title={sheetMin ? "Restore" : "Minimize"}
                 onClick={(event) => { event.stopPropagation(); setSheetMode((mode) => mode === "min" ? "free" : "min"); }}>
@@ -633,11 +640,11 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
                 onClick={(event) => { event.stopPropagation(); setSheetMode((mode) => mode === "full" ? "free" : "full"); }}>
                 <svg viewBox="0 0 16 16" aria-hidden="true">{sheetFull ? <path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3" /> : <path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3" />}</svg>
               </button>
-            </div>
-            {sheetFull ? <button type="button" className="note-sheet-back" onClick={() => setOpenId(null)}>‹ {label.replace(/^Notes for /, "")}</button> : null}
+            </div>}
+            {sheetFull && !sideSheet ? <button type="button" className="note-sheet-back" onClick={() => setOpenId(null)}>‹ {label.replace(/^Notes for /, "")}</button> : null}
             <NoteHead item={item} />
             <div className="note-sheet-body"><MobileKeyboardDirect>{item.node}</MobileKeyboardDirect></div>
-          </div>, asideRef.current?.closest(".app-shell") ?? document.body) : null}
+          </div></>, asideRef.current?.closest(".app-shell") ?? document.body) : null}
           {open && !sheet ? <div className={`document-margin-mark-note${openRight ? " is-right" : ""}`} data-margin-note-id={item.id} data-mobile-keyboard-direct style={{ width: noteWidth }}
             onPointerEnter={() => setHoverId(item.id)} onPointerLeave={() => setHoverId((current) => current === item.id ? null : current)}>
             <NoteHead item={item} />

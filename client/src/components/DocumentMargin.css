@@ -169,6 +169,21 @@
   flex: 0 0 auto; display: flex; align-items: center; height: 36px; padding: 0 8px;
   touch-action: none; -webkit-user-select: none; user-select: none; cursor: ns-resize;
 }
+/* Settings → On a phone, notes open from: Side. The note covers all but a thin strip of the page on the
+   left, the way the note tabs show at the right edge; tapping the strip goes back to the page. */
+.note-sheet.is-side {
+  top: 0; left: var(--note-side-strip, 28px); height: 100dvh; max-height: none;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) 0;
+  border-top: 0; border-left: 1px solid var(--line); border-radius: 18px 0 0 18px;
+  box-shadow: -12px 0 32px rgba(40, 32, 20, .2); animation: note-sheet-side-in .2s ease;
+}
+@keyframes note-sheet-side-in { from { transform: translateX(100%); } }
+.note-sheet-strip {
+  position: fixed; z-index: 60; top: 0; bottom: 0; left: 0; width: var(--note-side-strip, 28px); padding: 0; border: 0;
+  background: color-mix(in srgb, var(--bg, #000) 25%, transparent); cursor: pointer;
+}
+.note-sheet-top.is-side { touch-action: auto; cursor: default; }
+@media (prefers-reduced-motion: reduce) { .note-sheet.is-side { animation: none; } }
 .note-sheet-size {
   flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; padding: 0;
   border: 0; border-radius: 8px; background: transparent; color: var(--muted, var(--ink)); cursor: pointer;
