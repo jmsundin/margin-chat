@@ -210,27 +210,20 @@ export function keepsNoteOpen(aside: HTMLElement | null, target: EventTarget | n
 }
 
 /**
- * Where a note sheet comes to rest after its handle is dragged, as a share of the screen's height:
- * a short peek, half (the default, so the passage stays in view above), or the whole screen.
- * Dragged well below the peek, it closes. A quick flick goes one stop in the flick's direction.
+ * Where a note sheet stays after its handle is dragged: wherever it is let go, at any height.
+ * Let go near the top, it fills the screen; squeezed down to its title bar, it minimizes to that bar;
+ * dragged below the bar, it closes. Heights are shares of the screen's height.
  */
-export const NOTE_SHEET_STOPS = [0.3, 0.52, 1] as const;
-export type NoteSheetStop = 0 | 1 | 2;
-export function noteSheetRest(height: number, viewport: number, velocity = 0): NoteSheetStop | "close" {
-  const share = viewport > 0 ? height / viewport : NOTE_SHEET_STOPS[1];
-  if (share < NOTE_SHEET_STOPS[0] * 0.6) return "close";
-  let nearest: NoteSheetStop = 0;
-  NOTE_SHEET_STOPS.forEach((stop, index) => {
-    if (Math.abs(stop - share) < Math.abs(NOTE_SHEET_STOPS[nearest] - share)) nearest = index as NoteSheetStop;
-  });
-  // velocity is px/ms, positive = growing taller.
-  if (Math.abs(velocity) > 0.5) {
-    const above = NOTE_SHEET_STOPS.findIndex((stop) => stop > share + 0.01);
-    if (velocity > 0) return (above === -1 ? 2 : above) as NoteSheetStop;
-    const below = [...NOTE_SHEET_STOPS].reverse().findIndex((stop) => stop < share - 0.01);
-    return below === -1 ? "close" : (NOTE_SHEET_STOPS.length - 1 - below) as NoteSheetStop;
-  }
-  return nearest;
+export const NOTE_SHEET_DEFAULT = 0.52;
+/** Height in px of a minimized sheet: the handle row and the note's title. */
+export const NOTE_SHEET_MIN_PX = 92;
+export type NoteSheetRest = { mode: "free"; share: number } | { mode: "min" } | { mode: "full" } | "close";
+export function noteSheetRest(height: number, viewport: number): NoteSheetRest {
+  if (viewport <= 0) return { mode: "free", share: NOTE_SHEET_DEFAULT };
+  if (height < NOTE_SHEET_MIN_PX * 0.6) return "close";
+  if (height <= NOTE_SHEET_MIN_PX + 24) return { mode: "min" };
+  if (height >= viewport - 40) return { mode: "full" };
+  return { mode: "free", share: height / viewport };
 }
 
 /** Phones open a note as a sheet from the bottom of the screen, over the page, instead of beside its dot. */
@@ -267,50 +260,53 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
   const [openId, setOpenId] = useState<string | null>(null);
   /** On phones the open note is a sheet: half the screen, so its passage stays in view above it, or all of it. */
   const sheet = useNoteSheet(marks);
-  /** Which of NOTE_SHEET_STOPS the sheet rests at; dragging its handle moves it between them. */
-  const [sheetStop, setSheetStop] = useState<NoteSheetStop>(1);
-  const sheetFull = sheetStop === 2;
+  /** The sheet's height: a share of the screen ("free", any height), its title bar alone ("min"), or the whole screen ("full"). */
+  const [sheetMode, setSheetMode] = useState<"free" | "min" | "full">("free");
+  /** The free height to come back to from minimized or full screen. */
+  const [sheetShare, setSheetShare] = useState(NOTE_SHEET_DEFAULT);
+  const sheetFull = sheetMode === "full";
+  const sheetMin = sheetMode === "min";
   /** The sheet's height in px while its handle is being dragged. */
   const [sheetDrag, setSheetDrag] = useState<number | null>(null);
-  const sheetDragStart = useRef<{ pointer: number; y: number; height: number; moved: boolean; samples: { y: number; t: number }[] } | null>(null);
+  const sheetDragStart = useRef<{ pointer: number; y: number; height: number; moved: boolean } | null>(null);
   /** Set when a drag ends, so the click the browser sends after it does not also toggle the sheet. */
   const sheetDragged = useRef(false);
   const sheetRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (!openId) { setSheetStop(1); setSheetDrag(null); } }, [openId]);
-  const sheetHandleDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  useEffect(() => { if (!openId) { setSheetMode("free"); setSheetShare(NOTE_SHEET_DEFAULT); setSheetDrag(null); } }, [openId]);
+  const sheetHandleDown = (event: ReactPointerEvent<HTMLElement>) => {
     if (event.button !== 0 || !sheetRef.current) return;
-    sheetDragStart.current = { pointer: event.pointerId, y: event.clientY, height: sheetRef.current.getBoundingClientRect().height, moved: false, samples: [{ y: event.clientY, t: event.timeStamp }] };
+    if ((event.target as Element | null)?.closest?.(".note-sheet-size")) return; // minimize / maximize buttons are plain taps
+    sheetDragStart.current = { pointer: event.pointerId, y: event.clientY, height: sheetRef.current.getBoundingClientRect().height, moved: false };
     try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* the pointer may already be gone */ }
   };
-  const sheetHandleMove = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const sheetHandleMove = (event: ReactPointerEvent<HTMLElement>) => {
     const start = sheetDragStart.current;
     if (!start || start.pointer !== event.pointerId) return;
     const dy = event.clientY - start.y;
     if (!start.moved && Math.abs(dy) < 6) return;
     start.moved = true;
-    start.samples = [...start.samples.slice(-4), { y: event.clientY, t: event.timeStamp }];
     event.preventDefault();
-    setSheetDrag(Math.max(48, Math.min(window.innerHeight, start.height - dy)));
+    setSheetDrag(Math.max(40, Math.min(window.innerHeight, start.height - dy)));
   };
-  const sheetHandleEnd = (event: ReactPointerEvent<HTMLButtonElement>) => {
+  const sheetHandleEnd = (event: ReactPointerEvent<HTMLElement>) => {
     const start = sheetDragStart.current;
     if (!start || start.pointer !== event.pointerId) return;
     sheetDragStart.current = null;
-    if (!start.moved) return; // a tap: the click toggles half and full screen
+    if (!start.moved) return; // a tap: the click toggles full screen
     sheetDragged.current = true;
     window.setTimeout(() => { sheetDragged.current = false; }, 400);
-    const first = start.samples[0], last = start.samples[start.samples.length - 1];
-    const velocity = last.t > first.t ? (first.y - last.y) / (last.t - first.t) : 0;
-    const height = Math.max(48, Math.min(window.innerHeight, start.height - (event.clientY - start.y)));
-    const rest = event.type === "pointercancel" ? sheetStop : noteSheetRest(height, window.innerHeight, velocity);
+    const height = Math.max(40, Math.min(window.innerHeight, start.height - (event.clientY - start.y)));
     setSheetDrag(null);
-    if (rest === "close") setOpenId(null);
-    else setSheetStop(rest);
+    if (event.type === "pointercancel") return;
+    const rest = noteSheetRest(height, window.innerHeight);
+    if (rest === "close") { setOpenId(null); return; }
+    setSheetMode(rest.mode);
+    if (rest.mode === "free") setSheetShare(rest.share);
   };
-  /** A drag ends without a click; only a plain tap toggles. */
-  const sheetHandleClick = (_event: ReactMouseEvent<HTMLButtonElement>) => {
+  /** A drag ends without a click; only a plain tap on the handle toggles full screen. */
+  const sheetHandleClick = (_event: ReactMouseEvent<HTMLElement>) => {
     if (sheetDragged.current) { sheetDragged.current = false; return; }
-    setSheetStop((stop) => stop === 2 ? 1 : 2);
+    setSheetMode((mode) => mode === "full" ? "free" : "full");
   };
   const frame = useRef(0);
   const itemKey = items.map((item) => `${item.id}:${item.anchored ? 1 : 0}`).join("|");
@@ -620,14 +616,24 @@ export default function DocumentMargin({ bodyRef, documentId, label, items, widt
             <span className="document-margin-mark-dot" aria-hidden="true" />
             <span className="document-margin-mark-text">{text}</span>
           </button>
-          {open && sheet ? createPortal(<div className={`note-sheet${sheetFull && sheetDrag === null ? " is-full" : ""}${sheetDrag !== null ? " is-dragging" : ""}`} ref={sheetRef} data-note-sheet
-            data-sheet-stop={["peek", "half", "full"][sheetStop]}
-            style={{ height: sheetDrag !== null ? `${sheetDrag}px` : sheetStop === 2 ? undefined : `${NOTE_SHEET_STOPS[sheetStop] * 100}dvh` }}
+          {open && sheet ? createPortal(<div className={`note-sheet${sheetFull && sheetDrag === null ? " is-full" : ""}${sheetMin && sheetDrag === null ? " is-min" : ""}${sheetDrag !== null ? " is-dragging" : ""}`} ref={sheetRef} data-note-sheet
+            data-sheet-mode={sheetMode}
+            style={{ height: sheetDrag !== null ? `${sheetDrag}px` : sheetMode === "free" ? `${sheetShare * 100}dvh` : undefined }}
             data-margin-note-id={item.id} data-mobile-keyboard-direct role="dialog" aria-label={`Note: ${item.label || "Margin note"}`}>
-            <button type="button" className="note-sheet-handle" aria-expanded={sheetFull}
-              aria-label={sheetFull ? "Show the page above the note (or drag to resize)" : "Make the note full screen (or drag to resize)"}
-              onPointerDown={sheetHandleDown} onPointerMove={sheetHandleMove} onPointerUp={sheetHandleEnd} onPointerCancel={sheetHandleEnd}
-              onClick={sheetHandleClick}><span aria-hidden="true" /></button>
+            <div className="note-sheet-top" onPointerDown={sheetHandleDown} onPointerMove={sheetHandleMove} onPointerUp={sheetHandleEnd} onPointerCancel={sheetHandleEnd}
+              onClick={sheetHandleClick}>
+              <button type="button" className="note-sheet-size is-min-button" aria-label={sheetMin ? "Restore the note" : "Minimize the note"} title={sheetMin ? "Restore" : "Minimize"}
+                onClick={(event) => { event.stopPropagation(); setSheetMode((mode) => mode === "min" ? "free" : "min"); }}>
+                <svg viewBox="0 0 16 16" aria-hidden="true">{sheetMin ? <path d="M4 10l4-4 4 4" /> : <path d="M4 8h8" />}</svg>
+              </button>
+              <button type="button" className="note-sheet-handle" aria-expanded={sheetFull}
+                aria-label={sheetFull ? "Show the page above the note (or drag to resize)" : "Make the note full screen (or drag to resize)"}
+><span aria-hidden="true" /></button>
+              <button type="button" className="note-sheet-size is-max-button" aria-label={sheetFull ? "Restore the note" : "Maximize the note"} title={sheetFull ? "Restore" : "Maximize"}
+                onClick={(event) => { event.stopPropagation(); setSheetMode((mode) => mode === "full" ? "free" : "full"); }}>
+                <svg viewBox="0 0 16 16" aria-hidden="true">{sheetFull ? <path d="M6 3v3H3M10 3v3h3M6 13v-3H3M10 13v-3h3" /> : <path d="M3 6V3h3M13 6V3h-3M3 10v3h3M13 10v3h-3" />}</svg>
+              </button>
+            </div>
             {sheetFull ? <button type="button" className="note-sheet-back" onClick={() => setOpenId(null)}>‹ {label.replace(/^Notes for /, "")}</button> : null}
             <NoteHead item={item} />
             <div className="note-sheet-body"><MobileKeyboardDirect>{item.node}</MobileKeyboardDirect></div>

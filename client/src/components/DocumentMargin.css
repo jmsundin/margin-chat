@@ -151,8 +151,9 @@
 .document-margin-item .rich-document-editor { padding-inline: 0; }
 
 /* ---- Phones: an open note is a sheet from the bottom ----
-   Half the screen at first, so the passage stays in view above it. Dragging the handle resizes it and it
-   rests at a peek, half or full screen (dragged right down, it closes); a tap toggles half and full.
+   Half the screen at first, so the passage stays in view above it. Dragging the handle resizes it to any
+   height and it stays where it is let go (near the top it fills the screen; squeezed to its title it
+   minimizes; dragged below that, it closes). Minimize (left) and maximize (right) sit beside the handle.
    It is the same editable note as in the margin: tap in it to type, with the usual menus. */
 .note-sheet {
   position: fixed; z-index: 60; left: 0; right: 0; bottom: 0; height: 52dvh; max-height: calc(100dvh - 56px);
@@ -162,8 +163,21 @@
 }
 .note-sheet.is-dragging { transition: none; user-select: none; -webkit-user-select: none; }
 .note-sheet.is-full { height: 100dvh; max-height: none; border-radius: 0; border-top: 0; }
+.note-sheet.is-min { height: 92px; }
+.note-sheet.is-min .note-sheet-body { display: none; }
+.note-sheet-top {
+  flex: 0 0 auto; display: flex; align-items: center; height: 36px; padding: 0 8px;
+  touch-action: none; -webkit-user-select: none; user-select: none; cursor: ns-resize;
+}
+.note-sheet-size {
+  flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; padding: 0;
+  border: 0; border-radius: 8px; background: transparent; color: var(--muted, var(--ink)); cursor: pointer;
+}
+.note-sheet-size svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.note-sheet-size:active { background: color-mix(in srgb, var(--ink) 8%, transparent); }
+.note-sheet-size:focus-visible { outline: 2px solid var(--focus-ring, var(--accent)); outline-offset: -2px; }
 .note-sheet-handle {
-  flex: 0 0 auto; display: flex; justify-content: center; align-items: center; width: 100%; height: 30px;
+  flex: 1 1 auto; display: flex; justify-content: center; align-items: center; min-width: 0; height: 100%;
   padding: 0; border: 0; background: transparent; cursor: ns-resize; touch-action: none;
   -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
 }
