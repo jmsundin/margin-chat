@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { copySelection, cutSelection, isIOS, pasteIntoSelection, selectAllAround, selectionEditingHost } from "../lib/selectionMenu";
 import { useVisualViewport } from "../lib/useVisualViewport";
 import { SelectionIcon, type SelectionIconName } from "./SelectionToolbar";
+import { PASTE_BLOCKED_HINT } from "./CaretActions";
 import "./MobileSelectionActions.css";
 
 type SelectionRect = { top: number; left: number; width: number; height: number };
@@ -50,6 +51,7 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
   const [editable, setEditable] = useState(() => Boolean(selectionEditingHost()));
   const [copied, setCopied] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [pasteBlocked, setPasteBlocked] = useState(false);
 
   useEffect(() => {
     if (!copied) return;
@@ -134,6 +136,8 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
     <div className="mobile-selection-actions-row">
       {/* The system menu is replaced here, so Copy stays in reach; Highlight waits in More. */}
       {item("copy", copied ? "Copied" : "Copy", () => { void copySelection(quote).then((done) => setCopied(done)); })}
+      {/* In text that can be written in, Paste sits beside Copy, as in the phone's own menu. */}
+      {editable ? item("paste", "Paste", () => { void pasteIntoSelection().then((done) => setPasteBlocked(!done)); }) : null}
       {item("note", "Note", onMarginNote, { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note" : "Create a side note" })}
       {item("link", "Link", onLink, { ariaLabel: "Link selected text to an existing document or block" })}
       {item("ai", "Ask AI", onAsk, { ariaLabel: "Ask AI about this passage", ai: true, disabled })}
@@ -141,10 +145,10 @@ export function MobileSelectionActions({ rect, formRef, onExplain, onRewrite, on
         <SelectionIcon name="more" /><span>More</span>
       </button>
     </div>
+    {pasteBlocked ? <p className="caret-actions-hint" role="status">{PASTE_BLOCKED_HINT}</p> : null}
     {moreOpen ? <div className="mobile-selection-actions-more" role="group" aria-label="More selection actions">
       {onHighlight ? item("highlight", "Highlight", onHighlight, { ariaLabel: highlighted ? "Remove highlight" : "Highlight selected text", pressed: highlighted }) : null}
       {editable ? item("cut", "Cut", () => { void cutSelection(); }) : null}
-      {editable ? item("paste", "Paste", () => { void pasteIntoSelection(); }) : null}
       {item("select", "Select all", () => selectAllAround())}
       {item("find", "Find related", onFindRelated)}
       {onQuestion ? item("question", "Question this", onQuestion, { ai: true, disabled }) : null}

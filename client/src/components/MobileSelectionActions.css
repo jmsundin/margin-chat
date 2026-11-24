@@ -67,3 +67,14 @@
 /* Docked on iOS, the row sits over the floating keyboard and back-to-top buttons while text is selected. */
 .mobile-selection-actions[data-placement="bottom"],
 .mobile-selection-actions[data-placement="top"] { z-index: 66; }
+
+/* Said when the browser wouldn't hand over the clipboard to the app's own Paste. */
+.caret-actions-hint {
+  margin: 0;
+  padding: 6px 8px 4px;
+  max-width: 360px;
+  color: var(--muted, var(--ink));
+  font-size: 12px;
+  line-height: 1.35;
+  white-space: normal;
+}

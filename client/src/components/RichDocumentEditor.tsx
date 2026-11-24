@@ -77,7 +77,8 @@ export interface RichDocumentCaretMenu {
   paragraph?: RichDocumentSelection;
   rect: RichDocumentRect;
   askAI: () => void;
-  paste: () => void;
+  /** Resolves false when the browser wouldn't hand over the clipboard (blocked, or nothing to paste). */
+  paste: () => Promise<boolean>;
   selectParagraph: () => void;
 }
 export interface RichDocumentDecoration {
