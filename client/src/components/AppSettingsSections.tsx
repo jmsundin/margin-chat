@@ -107,6 +107,15 @@ export function AppearanceSettings({ onSetTheme, theme }: {
           options={[["bubbles", "Bubbles"], ["full", "Full notes"]]} value={notebook.marginMode} />
       </div>
 
+      <div className="app-settings-section">
+        <div className="app-settings-copy">
+          <span className="app-settings-label">On a phone, notes open from</span>
+          <p className="app-settings-description">The bottom, as a sheet you drag to any height, or the side, covering all but a thin strip of the page on the left. Tap the strip to go back to the page.</p>
+        </div>
+        <OptionGroup label="On a phone, notes open from" onChange={(phoneNotesFrom) => saveNotebookPrefs({ phoneNotesFrom })}
+          options={[["bottom", "Bottom"], ["side", "Side"]]} value={notebook.phoneNotesFrom} />
+      </div>
+
     </div>
   );
 }

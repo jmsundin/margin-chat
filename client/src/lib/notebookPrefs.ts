@@ -10,18 +10,22 @@
  *   "full": every note sits open in a wide right margin beside its passage (phones keep bubbles
  *   while the quiet page is on). Settings saved before bubbles ("right", "marks") read as bubbles,
  *   so everyone starts from the narrow margin.
+ * - phoneNotesFrom: where an open note comes from on a phone. "bottom" (the default): a sheet from the
+ *   bottom you can drag to any height. "side": a panel from the right that covers all but a thin strip
+ *   of the page on the left; tapping that strip goes back to the page.
  * - proactive: no longer used (Thinks with you now asks on Enter); kept so saved settings still read.
  * - stance: how its questions lean: supportive, neutral or antagonistic.
  */
 export type AIBehaviour = "thinks" | "asks";
 export type MarginMode = "bubbles" | "full";
+export type PhoneNotesFrom = "bottom" | "side";
 export type AIStance = "supportive" | "neutral" | "antagonistic";
-export interface NotebookPrefs { aiBehaviour: AIBehaviour; marginMode: MarginMode; proactive: boolean; stance: AIStance }
+export interface NotebookPrefs { aiBehaviour: AIBehaviour; marginMode: MarginMode; phoneNotesFrom: PhoneNotesFrom; proactive: boolean; stance: AIStance }
 
 import { onSyncedSettingChange, writeSyncedSetting } from "./interfaceSettings";
 
 const KEY = "margin-chat:notebook";
-export const DEFAULT_NOTEBOOK_PREFS: NotebookPrefs = { aiBehaviour: "thinks", marginMode: "bubbles", proactive: false, stance: "supportive" };
+export const DEFAULT_NOTEBOOK_PREFS: NotebookPrefs = { aiBehaviour: "thinks", marginMode: "bubbles", phoneNotesFrom: "bottom", proactive: false, stance: "supportive" };
 const listeners = new Set<() => void>();
 let cached: { raw: string | null; prefs: NotebookPrefs } | null = null;
 
@@ -31,6 +35,7 @@ export function parseNotebookPrefs(raw: string | null): NotebookPrefs {
   return {
     aiBehaviour: value.aiBehaviour === "asks" ? "asks" : "thinks",
     marginMode: (value.marginMode as string) === "full" ? "full" : "bubbles",
+    phoneNotesFrom: value.phoneNotesFrom === "side" ? "side" : "bottom",
     proactive: value.proactive === true,
     stance: value.stance === "neutral" || value.stance === "antagonistic" ? value.stance : "supportive",
   };
