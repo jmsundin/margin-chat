@@ -272,3 +272,8 @@ h4.language-reader-paragraph { font-size: 1.1em; font-weight: 600; }
 .language-reader-done-actions p { margin: 0; color: var(--lr-muted); font-size: .85rem; }
 .language-reader-toggle { display: flex; gap: 8px; align-items: flex-start; font: .85rem/1.4 var(--ui-font, system-ui, sans-serif); color: var(--lr-ink); cursor: pointer; }
 .language-reader-toggle input { margin-top: 2px; accent-color: var(--lr-pick); }
+/* Touch: Aa and Page / Focus keep their look but take a taller tap. */
+@media (pointer: coarse) {
+  .language-reader-aa, .language-reader-views button { position: relative; }
+  .language-reader-aa::after, .language-reader-views button::after { content: ""; position: absolute; inset: -10px 0; }
+}

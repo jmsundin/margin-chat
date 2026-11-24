@@ -10,3 +10,9 @@
 }
 .language-learning-new { font: inherit; font-weight: 600; color: var(--ink); background: var(--panel-strong); border: 1px solid var(--line); border-radius: 7px; padding: 3px 10px; cursor: pointer; }
 .language-learning-new:hover, .language-learning-new:focus-visible { border-color: var(--sage); }
+/* Touch: the language pickers and Study this / New lesson were 24px; they get finger-sized taps
+   (the pickers 34px tall, the buttons a larger invisible tap area) while the bar stays compact. */
+@media (pointer: coarse) {
+  .language-learning-bar select { min-height: 34px; }
+  .language-learning-new { position: relative; min-height: 34px; }
+}
