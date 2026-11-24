@@ -6,22 +6,22 @@ for (const name of ["window", "document", "HTMLElement", "Element", "getComputed
   const value = name === "window" ? browser : (browser as any)[name];
   Object.defineProperty(globalThis, name, { configurable: true, writable: true, value: name === "getComputedStyle" ? value.bind(browser) : value });
 }
-const { noteSheetRest, keepsNoteOpen } = await import("../client/src/components/DocumentMargin");
+const { noteSheetRest, keepsNoteOpen, NOTE_SHEET_MIN_PX } = await import("../client/src/components/DocumentMargin");
 
-describe("phone note sheet: where a dragged handle comes to rest", () => {
+describe("phone note sheet: resizes to any height", () => {
   const screen = 844;
-  test("rests at the nearest of peek, half and full", () => {
-    expect(noteSheetRest(screen * 0.33, screen)).toBe(0);
-    expect(noteSheetRest(screen * 0.5, screen)).toBe(1);
-    expect(noteSheetRest(screen * 0.85, screen)).toBe(2);
+  test("stays wherever it is let go", () => {
+    for (const share of [0.2, 0.37, 0.83]) {
+      const rest = noteSheetRest(screen * share, screen);
+      expect(rest !== "close" && rest.mode === "free" ? rest.share : -1).toBeCloseTo(share, 5);
+    }
   });
-  test("dragged right down, it closes", () => {
-    expect(noteSheetRest(60, screen)).toBe("close");
+  test("near the top it fills the screen", () => {
+    expect(noteSheetRest(screen - 10, screen)).toEqual({ mode: "full" });
   });
-  test("a quick flick goes one stop in its direction", () => {
-    expect(noteSheetRest(screen * 0.55, screen, 1.2)).toBe(2);
-    expect(noteSheetRest(screen * 0.5, screen, -1.2)).toBe(0);
-    expect(noteSheetRest(screen * 0.28, screen, -1.2)).toBe("close");
+  test("squeezed to its title it minimizes, below that it closes", () => {
+    expect(noteSheetRest(NOTE_SHEET_MIN_PX + 10, screen)).toEqual({ mode: "min" });
+    expect(noteSheetRest(40, screen)).toBe("close");
   });
 });
 
