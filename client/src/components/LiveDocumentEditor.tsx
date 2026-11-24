@@ -38,6 +38,7 @@ import WikiLinkMenu, { type WikiLinkMenuState } from "./WikiLinkMenu";
 import { LanguageLearningBar } from "./LanguageLookup";
 import { LanguageReader } from "./LanguageReader";
 import { defaultLanguagePair, rememberLanguagePair } from "../lib/languageLearning";
+import { watchLongPress, type LongPressPoint } from "../lib/longPress";
 import "./LiveDocumentEditor.css";
 const DocumentDrawing = lazy(() => import("./DocumentDrawing"));
 const DrawingDialog = lazy(() => import("./DocumentDrawing").then((module) => ({ default: module.DrawingDialog })));
@@ -829,14 +830,16 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       paragraph: paragraphOf(view, block),
       rect: selectionRect(view),
       askAI() { const target = back(); if (target) invoke(target); },
-      paste() {
-        if (!writable) return;
-        void navigator.clipboard?.readText().then((text) => {
-          const target = back();
-          if (!target || !text) return;
-          target.dispatch({ changes: { from: target.state.selection.main.head, insert: text }, selection: EditorSelection.cursor(target.state.selection.main.head + text.length),
-            userEvent: "input.paste", scrollIntoView: true });
-        }).catch(() => undefined);
+      async paste() {
+        // Read in the tap itself: iOS asks with its own small Paste bubble unless the text was copied here.
+        if (!writable || !navigator.clipboard?.readText) return false;
+        let text: string;
+        try { text = await navigator.clipboard.readText(); } catch { return false; }
+        const target = back();
+        if (!target || !text) return false;
+        target.dispatch({ changes: { from: target.state.selection.main.head, insert: text }, selection: EditorSelection.cursor(target.state.selection.main.head + text.length),
+          userEvent: "input.paste", scrollIntoView: true });
+        return true;
       },
       selectParagraph() {
         const target = back();
@@ -847,6 +850,20 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       },
     });
     return true;
+  }
+
+  /**
+   * Press and hold on a phone: with nothing selected, the caret moves under the finger and the
+   * menu at the caret opens, Paste first. A hold that selected a word leaves the selection bar,
+   * which has Paste in its row too.
+   */
+  function longPress(view: EditorView, point: LongPressPoint) {
+    if (viewRef.current !== view || stateOf(view).mode === "reading" || !view.state.selection.main.empty) return;
+    const native = window.getSelection();
+    if (native && !native.isCollapsed && native.anchorNode && view.dom.contains(native.anchorNode)) return;
+    const position = view.posAtCoords({ x: point.x, y: point.y }, false);
+    if (position !== null) view.dispatch({ selection: EditorSelection.cursor(position) });
+    openCaretMenu(view);
   }
 
   /** Space on an empty line opens Ask AI; so do two spaces after a word, or iOS's ". ", except on phones and tablets. */
@@ -1195,8 +1212,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   }
 
   // The editor is created once per document; its handlers reach this render through these proxies.
-  const handlers = useRef({ commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey, openWikiLinkTarget });
-  handlers.current = { commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, updateLinkMenu, linkMenuKey, openWikiLinkTarget };
+  const handlers = useRef({ commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, longPress, updateLinkMenu, linkMenuKey, openWikiLinkTarget });
+  handlers.current = { commit, editorCommand, notifySelection, notifyPreviewSelection, clearDiagramSelection, aiInput, enter, backspace, deleteForward, moveBlock, insertMediaFiles, setMode, invoke, placeAskButton, openCaretMenu, longPress, updateLinkMenu, linkMenuKey, openWikiLinkTarget };
   useEffect(() => {
     let frame = 0;
     const changed = () => { window.cancelAnimationFrame(frame); frame = window.requestAnimationFrame(() => handlers.current.notifyPreviewSelection()); };
@@ -1373,8 +1390,13 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     viewRef.current = view;
     widgets.view = view;
     const stopCommands = listenForEditorCommands(view.contentDOM, (command) => proxy.current.editorCommand(view, command));
+    const stopLongPress = watchLongPress(view.dom, {
+      enabled: () => mobileRef.current && Boolean(latest.current.onCaretMenu),
+      onLongPress: (point) => proxy.current.longPress(view, point),
+    });
     return () => {
       stopCommands();
+      stopLongPress();
       widgets.view = null;
       viewRef.current = null;
       clearTimeout(typingTimer.current);

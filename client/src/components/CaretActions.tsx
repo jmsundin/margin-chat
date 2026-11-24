@@ -19,6 +19,7 @@ type CaretActionsProps = {
 };
 
 const VIEWPORT_MARGIN = 12;
+export const PASTE_BLOCKED_HINT = "The browser didn't share the clipboard. Allow clipboard access, or use the keyboard's own paste.";
 
 /**
  * The selection toolbar's twin for when nothing is selected: the same row at the caret, with
@@ -31,6 +32,11 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
   const viewport = useVisualViewport(true);
   const paragraph = Boolean(menu.paragraph);
   const run = (action: () => void) => () => { onClose(); action(); };
+  /** Set when the browser wouldn't hand over the clipboard, so the menu says what to do instead. */
+  const [pasteBlocked, setPasteBlocked] = useState(false);
+  // The menu stays up while the clipboard is read: iOS may first ask with its own Paste bubble.
+  const paste = () => { void menu.paste().then((done) => { if (done) onClose(); else setPasteBlocked(true); }, () => setPasteBlocked(true)); };
+  const hint = pasteBlocked ? <p className="caret-actions-hint" role="status">{PASTE_BLOCKED_HINT}</p> : null;
 
   useLayoutEffect(() => {
     const element = ref.current;
@@ -69,7 +75,7 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
       <SelectionToolbarRow
         label="Actions at the cursor"
         actions={[
-          { icon: "paste", label: "Paste", ariaLabel: "Paste at the cursor", onSelect: run(menu.paste) },
+          { icon: "paste", label: "Paste", ariaLabel: "Paste at the cursor", onSelect: paste },
           ...(paragraph ? [
             { icon: "note" as const, label: "Note", ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note to this paragraph" : "Create a side note on this paragraph", onSelect: run(onNote) },
             { icon: "side" as const, label: "Side doc", ariaLabel: "Create a side document from this paragraph", onSelect: run(onSideDocument) },
@@ -82,6 +88,7 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
         ]}
         ask={{ icon: "ai", label: "Ask AI", ariaLabel: "Ask AI here", onSelect: run(menu.askAI) }}
       />
+      {hint}
     </div>, document.body);
   }
 
@@ -98,7 +105,7 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
   return createPortal(<div ref={ref} className="mobile-selection-actions caret-actions" data-testid="caret-actions" role="group" aria-label="Actions at the cursor"
     style={{ top, left, width }} onMouseDown={(event) => event.preventDefault()}>
     <div className="mobile-selection-actions-row">
-      {item("paste", "Paste", run(menu.paste), { ariaLabel: "Paste at the cursor" })}
+      {item("paste", "Paste", paste, { ariaLabel: "Paste at the cursor" })}
       {paragraph ? item("note", "Note", run(onNote), { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note to this paragraph" : "Create a side note on this paragraph" }) : null}
       {paragraph ? item("side", "Side doc", run(onSideDocument), { ariaLabel: "Create a side document from this paragraph" }) : null}
       {paragraph ? item("link", "Link", run(onLink), { ariaLabel: "Link this paragraph to an existing document or block" }) : null}
@@ -107,6 +114,7 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
         <SelectionIcon name="more" /><span>More</span>
       </button>
     </div>
+    {hint}
     {moreOpen ? <div className="mobile-selection-actions-more" role="group" aria-label="More actions at the cursor">
       {/* Select waits here so Note and Side doc both fit in the row. */}
       {item("select", "Select", run(menu.selectParagraph), { ariaLabel: "Select paragraph" })}
