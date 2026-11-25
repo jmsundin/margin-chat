@@ -80,6 +80,8 @@ export interface RichDocumentCaretMenu {
   /** Resolves false when the browser wouldn't hand over the clipboard (blocked, or nothing to paste). */
   paste: () => Promise<boolean>;
   selectParagraph: () => void;
+  /** Select the word at the caret (phones: what a hold used to do before it opened this menu). */
+  selectWord?: () => void;
 }
 export interface RichDocumentDecoration {
   from: number;

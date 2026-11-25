@@ -54,6 +54,27 @@ describe("press and hold opens the app's menu at that spot", () => {
     stop();
   });
 
+  test("a finger that drifts a few pixels while holding still counts as a hold", async () => {
+    const { presses, text, stop } = setup();
+    touch(text, "touchstart", [[40, 60]]);
+    touch(text, "touchmove", [[48, 67]]);
+    await wait(LONG_PRESS_MS + 20);
+    touch(text, "touchend", []);
+    await wait(LONG_PRESS_SETTLE_MS + 20);
+    expect(presses).toEqual([{ x: 40, y: 60 }]);
+    stop();
+  });
+
+  test("the press tells the caller what the finger is on", async () => {
+    document.body.innerHTML = `<div id="page"><p id="text">Words</p></div>`;
+    const seen: Array<string | undefined> = [];
+    const stop = watchLongPress(document.getElementById("page") as HTMLElement, { enabled: (target) => { seen.push(target?.id); return true; }, onLongPress: () => {} });
+    touch(document.getElementById("text")!, "touchstart", [[1, 1]]);
+    touch(document.getElementById("text")!, "touchend", []);
+    expect(seen).toEqual(["text"]);
+    stop();
+  });
+
   test("iOS cancelling the touch after the hold still counts as the lift", async () => {
     const { presses, text, stop } = setup();
     touch(text, "touchstart", [[10, 20]]);
