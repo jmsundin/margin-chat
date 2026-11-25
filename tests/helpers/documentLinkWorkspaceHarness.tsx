@@ -169,10 +169,10 @@ async function testMobileSelectionActions() {
   const sourceBlocks = structuredClone(latest.conversations.source.document!.blocks);
   const { current, from } = await selectSourcePassage();
   const actionBar = element('[data-testid="branch-composer"]');
-  for (const label of ["Copy", "Note", "Link", "Ask AI", "More"]) assert(button(label, actionBar), `The selection bar offers ${label}.`);
+  for (const label of ["Copy", "Paste", "Note", "Link", "Ask AI", "More"]) assert(button(label, actionBar), `The selection bar offers ${label}.`);
   await click(button("More", actionBar));
   const more = actionBar.querySelector('[role="group"][aria-label="More selection actions"]'); assert(more, "Missing More actions");
-  for (const label of ["Cut", "Paste", "Select all", "Highlight", "Explain", "Rewrite"]) assert(button(label, more), `More offers ${label} in place of the system menu.`);
+  for (const label of ["Cut", "Select all", "Highlight", "Explain", "Rewrite"]) assert(button(label, more), `More offers ${label} in place of the system menu.`);
   await click(button("More", actionBar));
   const longPress = new browser.MouseEvent("contextmenu", { bubbles: true, cancelable: true });
   current.view.dom.dispatchEvent(longPress);
