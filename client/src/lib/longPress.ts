@@ -6,7 +6,7 @@
 
 export const LONG_PRESS_MS = 500;
 /** A finger that moves farther than this is scrolling or dragging handles, not holding. */
-export const LONG_PRESS_SLOP = 10;
+export const LONG_PRESS_SLOP = 16;
 /** Time after lifting for the phone's own selection to settle before the menu decides what to show. */
 export const LONG_PRESS_SETTLE_MS = 80;
 /** Long presses here keep the phone's own menu: links, media and form fields have their own. */
@@ -16,8 +16,8 @@ export type LongPressPoint = { x: number; y: number; target: Element | null };
 
 type Options = {
   onLongPress: (point: LongPressPoint) => void;
-  /** Checked when the press starts; false leaves the press to the phone. */
-  enabled?: () => boolean;
+  /** Checked when the press starts, with what the finger is on; false leaves the press to the phone. */
+  enabled?: (target: Element | null) => boolean;
   delay?: number;
   settle?: number;
 };
@@ -30,9 +30,9 @@ export function watchLongPress(element: HTMLElement, { onLongPress, enabled = ()
   const cancel = () => { window.clearTimeout(holdTimer); holdTimer = 0; press = null; };
   const onTouchStart = (event: TouchEvent) => {
     cancel();
-    if (event.touches.length !== 1 || !enabled()) return;
+    if (event.touches.length !== 1) return;
     const target = event.target instanceof Element ? event.target : null;
-    if (target?.closest(NATIVE_TARGETS)) return;
+    if (target?.closest(NATIVE_TARGETS) || !enabled(target)) return;
     const touch = event.touches[0];
     press = { x: touch.clientX, y: touch.clientY, target, held: false };
     holdTimer = window.setTimeout(() => { if (press) press.held = true; }, delay);

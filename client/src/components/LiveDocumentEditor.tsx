@@ -826,6 +826,13 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       target.dispatch({ selection: EditorSelection.cursor(Math.min(head, target.state.doc.length)) });
       return target;
     };
+    const selectParagraph = () => {
+      const target = back();
+      const layout = target ? stateOf(target).layout.find((item) => item.id === block.id) : undefined;
+      if (!target || !layout) return;
+      target.dispatch({ selection: EditorSelection.range(layout.from, visibleEnd(textOf(target.state.doc), layout)) });
+      notifySelection(target);
+    };
     current.onCaretMenu({
       paragraph: paragraphOf(view, block),
       rect: selectionRect(view),
@@ -841,28 +848,35 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
           userEvent: "input.paste", scrollIntoView: true });
         return true;
       },
-      selectParagraph() {
+      selectWord() {
         const target = back();
-        const layout = target ? stateOf(target).layout.find((item) => item.id === block.id) : undefined;
-        if (!target || !layout) return;
-        target.dispatch({ selection: EditorSelection.range(layout.from, visibleEnd(textOf(target.state.doc), layout)) });
+        if (!target) return;
+        const at = target.state.selection.main.head;
+        const word = target.state.wordAt(at) ?? target.state.wordAt(Math.max(0, at - 1));
+        if (!word) { selectParagraph(); return; }
+        target.dispatch({ selection: EditorSelection.range(word.from, word.to) });
         notifySelection(target);
       },
+      selectParagraph,
     });
     return true;
   }
 
   /**
-   * Press and hold on a phone: with nothing selected, the caret moves under the finger and the
-   * menu at the caret opens, Paste first. A hold that selected a word leaves the selection bar,
-   * which has Paste in its row too.
+   * Press and hold on a phone opens the menu at the finger, Paste first, wherever the hold lands:
+   * on a word, between lines, or in the empty page below the text (the caret goes to the end).
+   * The phone may select the word under a hold on its own; that selection gives way to the caret,
+   * so a hold always brings the same menu. Text selected before the hold keeps its selection bar.
    */
-  function longPress(view: EditorView, point: LongPressPoint) {
-    if (viewRef.current !== view || stateOf(view).mode === "reading" || !view.state.selection.main.empty) return;
-    const native = window.getSelection();
-    if (native && !native.isCollapsed && native.anchorNode && view.dom.contains(native.anchorNode)) return;
+  function longPress(view: EditorView, point: LongPressPoint, selectedBefore: boolean) {
+    if (viewRef.current !== view || stateOf(view).mode === "reading") return;
+    if (selectedBefore && !view.state.selection.main.empty) return;
     const position = view.posAtCoords({ x: point.x, y: point.y }, false);
-    if (position !== null) view.dispatch({ selection: EditorSelection.cursor(position) });
+    const head = position ?? view.state.selection.main.head;
+    view.dispatch({ selection: EditorSelection.cursor(head) });
+    // The phone's own word selection can outlive the editor's; clear it so the menu isn't swapped for the selection bar.
+    const native = window.getSelection();
+    if (native && !native.isCollapsed && native.anchorNode && view.dom.contains(native.anchorNode)) native.collapse(native.focusNode, native.focusOffset);
     openCaretMenu(view);
   }
 
@@ -1390,9 +1404,19 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
     viewRef.current = view;
     widgets.view = view;
     const stopCommands = listenForEditorCommands(view.contentDOM, (command) => proxy.current.editorCommand(view, command));
-    const stopLongPress = watchLongPress(view.dom, {
-      enabled: () => mobileRef.current && Boolean(latest.current.onCaretMenu),
-      onLongPress: (point) => proxy.current.longPress(view, point),
+    // The whole page under the editor answers a hold, not only its lines: a short note leaves most
+    // of the screen empty, and a hold there should paste at the end.
+    const pressArea = view.dom.closest<HTMLElement>(".panel-body") ?? view.dom;
+    let selectedBefore = false;
+    const stopLongPress = watchLongPress(pressArea, {
+      enabled: (target) => {
+        if (!mobileRef.current || !latest.current.onCaretMenu) return false;
+        // Outside the editor, leave other editors, margin notes, forms and dialogs to themselves.
+        if (target && !view.dom.contains(target) && target.closest(".rich-document-editor, [contenteditable], .document-margin, [role='dialog'], form, [role='toolbar']")) return false;
+        selectedBefore = !view.state.selection.main.empty;
+        return true;
+      },
+      onLongPress: (point) => proxy.current.longPress(view, point, selectedBefore),
     });
     return () => {
       stopCommands();

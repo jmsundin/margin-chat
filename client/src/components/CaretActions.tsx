@@ -59,11 +59,14 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
     };
     document.addEventListener("pointerdown", outside, true);
     document.addEventListener("keydown", key, true);
-    window.addEventListener("resize", onClose);
+    // Only a turn of the phone moves the page under the menu; iOS's toolbars resize the window height as they slide.
+    let width = window.innerWidth;
+    const resize = () => { if (window.innerWidth !== width) onClose(); width = window.innerWidth; };
+    window.addEventListener("resize", resize);
     return () => {
       document.removeEventListener("pointerdown", outside, true);
       document.removeEventListener("keydown", key, true);
-      window.removeEventListener("resize", onClose);
+      window.removeEventListener("resize", resize);
     };
   }, [onClose]);
 
@@ -107,7 +110,8 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
     <div className="mobile-selection-actions-row">
       {item("paste", "Paste", paste, { ariaLabel: "Paste at the cursor" })}
       {paragraph ? item("note", "Note", run(onNote), { ariaLabel: marginNoteLabel === "Margin note" ? "Add a margin note to this paragraph" : "Create a side note on this paragraph" }) : null}
-      {paragraph ? item("side", "Side doc", run(onSideDocument), { ariaLabel: "Create a side document from this paragraph" }) : null}
+      {/* A hold opens this menu instead of selecting a word, so Select is one tap away. */}
+      {item("select", "Select", run(menu.selectWord ?? menu.selectParagraph), { ariaLabel: menu.selectWord ? "Select the word here" : "Select paragraph" })}
       {paragraph ? item("link", "Link", run(onLink), { ariaLabel: "Link this paragraph to an existing document or block" }) : null}
       {item("ai", "Ask AI", run(menu.askAI), { ariaLabel: "Ask AI here", ai: true })}
       <button type="button" aria-label="More actions at the cursor" aria-expanded={moreOpen} onClick={() => setMoreOpen((open) => !open)}>
@@ -116,8 +120,8 @@ export function CaretActions({ menu, mobile, onNote, onSideDocument, onLink, onF
     </div>
     {hint}
     {moreOpen ? <div className="mobile-selection-actions-more" role="group" aria-label="More actions at the cursor">
-      {/* Select waits here so Note and Side doc both fit in the row. */}
-      {item("select", "Select", run(menu.selectParagraph), { ariaLabel: "Select paragraph" })}
+      {paragraph ? item("side", "Side doc", run(onSideDocument), { ariaLabel: "Create a side document from this paragraph" }) : null}
+      {menu.selectWord ? item("select", "Paragraph", run(menu.selectParagraph), { ariaLabel: "Select paragraph" }) : null}
       {paragraph ? item("find", "Find related", run(onFindRelated)) : null}
       <button type="button" aria-label="Dismiss actions" onClick={onClose}>
         <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" aria-hidden="true"><path d="m5 5 8 8M13 5l-8 8" /></svg><span>Close</span>
