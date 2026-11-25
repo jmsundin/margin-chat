@@ -868,11 +868,31 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
    * The phone may select the word under a hold on its own; that selection gives way to the caret,
    * so a hold always brings the same menu. Text selected before the hold keeps its selection bar.
    */
+  /**
+   * The caret for a hold: on the line drawn under the finger. CodeMirror's nearest position for an
+   * empty line can fall on the hidden blank lines between blocks, which then step the caret onto
+   * the next line, so the touched line is found on screen first and the caret kept inside it.
+   */
+  function caretAtPoint(view: EditorView, point: LongPressPoint) {
+    const lines = [...view.contentDOM.querySelectorAll<HTMLElement>(".cm-line")]
+      .map((element) => ({ element, rect: element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.height > 0);
+    if (!lines.length) return view.posAtCoords({ x: point.x, y: point.y }, false);
+    const touched = lines.find(({ rect }) => point.y >= rect.top && point.y < rect.bottom)
+      // Between lines or below the last one: the nearest line.
+      ?? lines.reduce((best, item) => Math.min(Math.abs(point.y - item.rect.top), Math.abs(point.y - item.rect.bottom))
+        < Math.min(Math.abs(point.y - best.rect.top), Math.abs(point.y - best.rect.bottom)) ? item : best);
+    let line;
+    try { line = view.state.doc.lineAt(view.posAtDOM(touched.element, 0)); } catch { return view.posAtCoords({ x: point.x, y: point.y }, false); }
+    const y = Math.max(touched.rect.top + 1, Math.min(point.y, touched.rect.bottom - 1));
+    const position = view.posAtCoords({ x: point.x, y }, false) ?? line.from;
+    return Math.max(line.from, Math.min(position, line.to));
+  }
+
   function longPress(view: EditorView, point: LongPressPoint, selectedBefore: boolean) {
     if (viewRef.current !== view || stateOf(view).mode === "reading") return;
     if (selectedBefore && !view.state.selection.main.empty) return;
-    const position = view.posAtCoords({ x: point.x, y: point.y }, false);
-    const head = position ?? view.state.selection.main.head;
+    const head = caretAtPoint(view, point) ?? view.state.selection.main.head;
     view.dispatch({ selection: EditorSelection.cursor(head) });
     // The phone's own word selection can outlive the editor's; clear it so the menu isn't swapped for the selection bar.
     const native = window.getSelection();
@@ -1412,7 +1432,9 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
       enabled: (target) => {
         if (!mobileRef.current || !latest.current.onCaretMenu) return false;
         // Outside the editor, leave other editors, margin notes, forms and dialogs to themselves.
-        if (target && !view.dom.contains(target) && target.closest(".rich-document-editor, [contenteditable], .document-margin, [role='dialog'], form, [role='toolbar']")) return false;
+        const other = target && !view.dom.contains(target) ? target.closest(".rich-document-editor, [contenteditable], .document-margin, [role='dialog'], form, [role='toolbar']") : null;
+        // This editor's own wrapper (its padding under the last line) is part of the page, not another field.
+        if (other && !other.contains(view.dom)) return false;
         selectedBefore = !view.state.selection.main.empty;
         return true;
       },
