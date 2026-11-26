@@ -7259,7 +7259,7 @@ function WorkspaceAppContent({
           inherited={inheritedAIInstruction(conversation)} onChange={(text) => handleSetAIInstruction(conversation.id, text)} /> : null}
       </div> : undefined}
       htmlPlay={view === "chat" && isPlayPage(conversation) ? playActions(conversation) : undefined}
-      htmlControlsTarget={isMobileViewport && conversation.id === activeConversation.id ? htmlHeaderSlot : undefined}
+      htmlControlsTarget={isMobileViewport && conversation.id === headerConversation.id ? htmlHeaderSlot : undefined}
       roadmapFill={roadmapPage && view === "chat"}
       roadmap={roadmapPage ? <RoadmapView conversation={conversation} conversations={state.conversations} fill={view === "chat"}
         renderDocument={(docId) => state.conversations[docId] ? renderConversationChatPanel(state.conversations[docId], "chat", undefined, true) : null}
