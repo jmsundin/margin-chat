@@ -12,8 +12,8 @@ export function FeatureSettings({ guest = false }: { guest?: boolean }) {
   return (
     <div className="app-settings-body feature-settings">
       <p className="feature-settings-intro">
-        Margin Chat starts with your documents, the map beside them, and Ask AI. Turn on what else you want; turning something off
-        only hides its buttons, and everything you made with it stays in your documents.
+        {/* The page title already says Margin Chat starts simple; this adds only what turning things off means. */}
+        Turning something off only hides its buttons; everything you made with it stays in your documents.
         {guest ? " These choices are kept in this browser." : " Your choices are saved to your account, so every device matches."}
       </p>
 

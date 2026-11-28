@@ -1461,7 +1461,8 @@ export default function LiveDocumentEditor(props: RichDocumentEditorProps) {
   const emptyBlockId = props.hidePlaceholder ? undefined
     : (visibleBlocks.find((block) => !block.content && !readOnlyIds.has(block.id) && block.id === focusedBlockId) ?? visibleBlocks.filter((block) => !block.content && !readOnlyIds.has(block.id)).at(-1))?.id;
   // The Ask AI buttons sit on the line below the caret; the empty line's hint would show through them.
-  const placeholderId = askShown && emptyBlockId !== focusedBlockId ? undefined : emptyBlockId;
+  // On a phone, typing elsewhere hides it too, so a second "Write here…" doesn't sit under the line being written.
+  const placeholderId = (askShown || (mobileKeyboard.mobile && editorFocused && focusedBlockId)) && emptyBlockId !== focusedBlockId ? undefined : emptyBlockId;
   const [syncRetry, setSyncRetry] = useState(0);
   useLayoutEffect(() => {
     const view = viewRef.current;
