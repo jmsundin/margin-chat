@@ -73,7 +73,7 @@ export function layoutCourse(path: MapPath, width: number): CourseLayout {
 const finished = (step: MapPathStep) => step.status === "done" || step.status === "skipped";
 
 /** Learn: the active roadmap filling the map pane as a course. Any lesson opens; nothing is locked. */
-export function MapRoadmapCourse({ path, trail, conversations, currentDocId, stepStrip, drafting, titleMenu, onOpen, onOpenStage, onGoIn, onGoTo, onClose }: {
+export function MapRoadmapCourse({ path, trail, conversations, currentDocId, stepStrip, drafting, titleMenu, switcher, onOpen, onOpenStage, onGoIn, onGoTo, onClose }: {
   path: MapPath;
   trail: MapPathSummary[];
   conversations: Record<string, Conversation>;
@@ -92,6 +92,8 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, ste
   onClose?(): void;
   /** The roadmap's name as a menu: switch roadmaps, see them all, change this one. */
   titleMenu?: ReactNode;
+  /** Learn | Explore, shown on top where the map's own bar is hidden (beside a document on a phone). */
+  switcher?: ReactNode;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(720);
@@ -130,6 +132,7 @@ export function MapRoadmapCourse({ path, trail, conversations, currentDocId, ste
     element.scrollIntoView?.({ block: "nearest" });
   }, [streamed]);
   return <div className={`map-course${drafting ? " is-drafting" : ""}`} ref={hostRef} data-graph-ui="true" aria-label={`Roadmap: ${path.name}`}>
+    {switcher ? <div className="map-course-switch">{switcher}</div> : null}
     <div className="map-course-head">
       <span className="map-course-trail">
         {trail.map((item) => <button key={item.id} type="button" onClick={() => onGoTo(item.id)}>{item.name}<span aria-hidden="true"> ›</span></button>)}
@@ -193,10 +196,11 @@ const STATUS_WORDS = { "not-started": "not started", learning: "learning", done:
 export { lessonSummary } from "../lib/roadmapStageDocument";
 
 /** Learn with no roadmap yet: say what Learn is and start one. */
-export function MapCourseEmpty({ onDraft, onNew }: { onDraft(goal: string): string | null; onNew(): void }) {
+export function MapCourseEmpty({ onDraft, onNew, switcher }: { onDraft(goal: string): string | null; onNew(): void; switcher?: ReactNode }) {
   const [goal, setGoal] = useState("");
   const [error, setError] = useState<string | null>(null);
   return <div className="map-course is-empty" data-graph-ui="true">
+    {switcher ? <div className="map-course-switch">{switcher}</div> : null}
     <form className="map-course-start-form" onSubmit={(event) => { event.preventDefault(); const reason = onDraft(goal); if (reason) setError(reason); else setGoal(""); }}>
       <h2>Learn something in order</h2>
       <p>A roadmap is a course through your notes: stages to take one after another, and lessons in each. You can still open any lesson whenever you like.</p>

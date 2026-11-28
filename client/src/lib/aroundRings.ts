@@ -61,6 +61,12 @@ export function topicQuery(title: string): string {
     .replace(/\s+/gu, " ").trim().slice(0, 80);
 }
 
+/** Whether an article's name is the note's title, ignoring case, punctuation and a "(disambiguation)" part. */
+export function sameTopicName(label: string, title: string) {
+  const plain = (text: string) => text.toLocaleLowerCase().replace(/\s*\([^)]*\)\s*/gu, " ").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  return plain(label) === plain(title);
+}
+
 export interface RingPoint { x: number; y: number }
 
 /** Evenly spaced points on an ellipse, starting at the top and turned by `turn` (a share of a full circle). */

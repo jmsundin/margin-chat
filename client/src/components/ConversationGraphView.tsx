@@ -331,6 +331,8 @@ export function getCanvasNodeFootprint(placement: ConversationGraphNodePlacement
 
 export interface ConversationGraphViewProps {
   toolbarLeading?: ReactNode;
+  /** Shown before Explore's Layout menu, where the map's bar is hidden (beside a document on a phone or in a margin). */
+  exploreLeading?: ReactNode;
   toolbarTrailing?: ReactNode;
   /** More actions for the map's ⋯ menu (explore, history, add). */
   menuItems?: ReactNode;
@@ -1250,6 +1252,7 @@ function GraphGroupRegion({
 
 export default function ConversationGraphView({
   toolbarLeading,
+  exploreLeading,
   toolbarTrailing,
   menuItems,
   menuFooter,
@@ -1944,7 +1947,7 @@ export default function ConversationGraphView({
     return names.size ? names : EMPTY_NAMES;
   }, [canvasGroupBoxes, levelLabels.labels, conversations]);
   // Explore's library: the same themes, topics and blocks, as sections inside sections.
-  const layoutMenu = exploreLayout && onExploreLayoutChange && !scopeHidden
+  const layoutMenuOnly = exploreLayout && onExploreLayoutChange && !scopeHidden
     // Around one document the map is drawn as Rings or the Canvas, whatever was picked for All; picking Tiles or
     // Clusters there widens it to All, where the library has sections to show.
     ? <ExploreLayoutMenu value={scope.kind === "focus" ? ringsActive ? "rings" : "canvas" : exploreLayout} publicSource={Boolean(renderPublicExplore)}
@@ -1954,6 +1957,7 @@ export default function ConversationGraphView({
         if (scope.kind === "focus") chooseScope("all");
         onExploreLayoutChange(layout);
       }} /> : null;
+  const layoutMenu = layoutMenuOnly && exploreLeading ? <><span className="explore-leading-docked">{exploreLeading}</span>{layoutMenuOnly}</> : layoutMenuOnly;
   const libraryRoot = useMemo(() => libraryActive ? buildLibrary({ themes: canvasThemeBoxes, boxes: canvasGroupBoxes, blockNames, summaries: levelSummaries,
     titleOf: (id) => conversations[id]?.title?.trim() || "Untitled" }) : null,
   [libraryActive, canvasThemeBoxes, canvasGroupBoxes, blockNames, levelSummaries, conversations]);
