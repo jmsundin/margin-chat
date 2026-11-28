@@ -27,6 +27,7 @@ import type { MapSpotlight } from "../lib/mapSpotlight";
 import { readExploreLayout, writeExploreLayout, type ExploreLayout } from "../lib/exploreLibrary";
 import { readAroundLayout, writeAroundLayout, type AroundLayout } from "../lib/aroundRings";
 import { getCurrentDocumentText } from "../lib/documentSources";
+import { bestResultPerDocument, searchGraphSources } from "../lib/graphExploration";
 import AroundRings from "./AroundRings";
 import { readExploreSource, writeExploreSource, type BrowseNode, type ExploreSource } from "../lib/exploreSources";
 import ExploreSourceMenu from "./ExploreSourceMenu";
@@ -336,6 +337,9 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
   const publicActions = { ask: askSubtopics, noteFor, onOpenNote: (id: string) => personalProps.onOpenConversation(id), onRead: setReaderTitle, onKeep: keepPublic,
     onDetails: (node: BrowseNode) => setSidePane({ kind: "details", node }), onNewNote: newPublicNote,
     ...(pathActions ? { onRoadmap: roadmapFor } : {}) };
+  /** Your notes that mention a public topic, the best match first, for the ring around that topic. */
+  const notesAbout = useCallback((label: string) => bestResultPerDocument(searchGraphSources(conversations, label))
+    .map((result) => result.evidence.conversationId).filter((id) => Boolean(conversations[id])).slice(0, 8), [conversations]);
   function roadmapFor(node: BrowseNode): string | null {
     if (!pathActions) return "Roadmaps are off. Turn them on in Settings → Features.";
     const goal = node.article ? `Learn ${node.label}: ${wikipediaArticleUrl(node.article)}` : `Learn ${node.label}`;
@@ -687,6 +691,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         </>}
         renderNodeMenuActions={renderMenuActions} connectingConversationId={connectingId}
         toolbarLeading={<>{sidebarToggle}{sidebarToggle ? viewToggle : null}{pathActions ? <MapModeSwitch mode={mapMode} onChange={chooseMapMode} /> : null}</>}
+        exploreLeading={pathActions ? <MapModeSwitch mode={mapMode} onChange={chooseMapMode} /> : undefined}
         scopeHidden={mapMode === "learn"}
         // Picking notes for a roadmap, or a roadmap lit on the map, needs the map itself.
         exploreLayout={picking || activePath ? "canvas" : exploreLayout} onExploreLayoutChange={picking || activePath ? undefined : chooseExploreLayout}
@@ -695,6 +700,7 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         renderAround={({ centerId, neighbours, leading, select }) => <AroundRings center={{ id: centerId, title: conversations[centerId]?.title?.trim() || "Untitled" }}
           neighbours={neighbours} titleOf={(id) => conversations[id]?.title?.trim() || "Untitled"}
           textOf={(id) => conversations[id] ? getCurrentDocumentText(conversations[id]).slice(0, 20000) : ""}
+          notesAbout={notesAbout}
           leading={leading} actions={publicActions} reader={readerPane} onSelect={(id) => { setSidePane(null); select(id); }} />}
         renderPublicExplore={exploreSource.kind === "notes" ? undefined : (layout, leading) => <ExplorePublic source={exploreSource} layout={layout} leading={leading} sourceMenu={renderSourceMenu}
           onPlace={(place) => { publicPlace.current = place; }}
@@ -712,14 +718,14 @@ export default function KnowledgeGraphWorkspace({ isVisible = true, onToggleSide
         if ("error" in made) { setPathMessage(made.error); return; }
         setPicking(null); setActivePath(made.id);
       }} /> : null}
-      {!exploring && !picking && !activePath && learnEmpty && pathActions ? <MapCourseEmpty onNew={() => { setLearnEmpty(false); startPicking(); }}
+      {!exploring && !picking && !activePath && learnEmpty && pathActions ? <MapCourseEmpty switcher={<MapModeSwitch mode={mapMode} onChange={chooseMapMode} />} onNew={() => { setLearnEmpty(false); startPicking(); }}
         onDraft={(goal) => {
           const made = pathActions.onDraftPath(goal);
           if ("error" in made) return made.error;
           setLearnEmpty(false); setActivePath(made.id); return null;
         }} /> : null}
       {!exploring && !picking && activePath && pathActions ? <>
-        {pathLayout === "list" ? <MapRoadmapCourse path={coursePath ?? activePath} conversations={conversations} currentDocId={mapSelection}
+        {pathLayout === "list" ? <MapRoadmapCourse switcher={<MapModeSwitch mode={mapMode} onChange={chooseMapMode} />} path={coursePath ?? activePath} conversations={conversations} currentDocId={mapSelection}
           drafting={activePathDrafting ? { label: draftingLabel(pathActions.progress[activePath.id], coursePath ?? activePath), onStop: () => pathActions.onStopDraft(activePath.id) } : null}
           stepStrip={(() => {
             const step = activePath.steps.find((item) => item.docId === mapSelection && !item.drafting);

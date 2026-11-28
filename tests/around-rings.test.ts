@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { pickAroundNeighbours, ringPoints, topicQuery, wikipediaTitlesIn } from "../client/src/lib/aroundRings";
+import { pickAroundNeighbours, ringPoints, topicQuery, sameTopicName, wikipediaTitlesIn } from "../client/src/lib/aroundRings";
 
 describe("pickAroundNeighbours", () => {
   const exists = (id: string) => id !== "gone";
@@ -30,4 +30,15 @@ describe("public topic lookups", () => {
 test("ringPoints starts at the top and goes round evenly", () => {
   const points = ringPoints(4, 100, 100, 50, 20);
   expect(points.map(({ x, y }) => [Math.round(x), Math.round(y)])).toEqual([[100, 80], [150, 100], [100, 120], [50, 100]]);
+});
+
+describe("sameTopicName", () => {
+  test("matches a title to its article, ignoring case, punctuation and a bracketed part", () => {
+    expect(sameTopicName("Deep learning", "deep learning")).toBe(true);
+    expect(sameTopicName("Transformer (deep learning)", "Transformer")).toBe(true);
+    expect(sameTopicName("CRISPR gene editing", "CRISPR: gene editing")).toBe(true);
+  });
+  test("does not take a search hit that only shares a word", () => {
+    expect(sameTopicName("Second Boer War", "Second note")).toBe(false);
+  });
 });

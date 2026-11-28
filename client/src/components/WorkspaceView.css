@@ -9,3 +9,14 @@
 @media (max-width: 900px) {
   .workspace-view.is-docked :is(.graph-map-navigation, .graph-map-neighborhood, .conversation-graph-zoom) { display: none; }
 }
+/* Learn and Explore ride along in Explore's own row only where the map's bar is hidden, so they show once. */
+.explore-leading-docked, .map-course-switch { display: none; }
+.workspace-view.is-docked.is-narrow .explore-leading-docked { display: contents; }
+.workspace-view.is-docked.is-narrow .map-course-switch { display: flex; }
+.workspace-view.is-docked.is-narrow .map-course { top: 0; }
+@media (max-width: 900px) {
+  .workspace-view.is-docked .explore-leading-docked { display: contents; }
+  .workspace-view.is-docked .map-course-switch { display: flex; }
+  .workspace-view.is-docked .map-course { top: 0; }
+}
+.map-course-switch { padding: 8px 0 12px; }

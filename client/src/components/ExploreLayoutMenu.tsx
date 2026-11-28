@@ -6,7 +6,7 @@ import { EXPLORE_LAYOUTS, EXPLORE_LAYOUT_LABELS, type ExploreLayout } from "../l
 export type ExploreMenuLayout = ExploreLayout | "rings";
 const LABELS: Record<ExploreMenuLayout, { name: string; description: string }> = {
   ...EXPLORE_LAYOUT_LABELS,
-  rings: { name: "Rings", description: "This note in the middle, your linked notes and public topics around it" },
+  rings: { name: "Around this note", description: "This note in the middle, your linked notes and public topics around it. Tap a topic to go there." },
 };
 
 const ICONS: Record<ExploreMenuLayout, ReactElement> = {
